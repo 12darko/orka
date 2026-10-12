@@ -130,7 +130,11 @@ export function parseReview(reply: string): Pick<SupervisorReview, 'verdict' | '
   const message = /<message>([\s\S]*?)(<\/message>|$)/i.exec(reply)?.[1]?.trim();
   if (verdict === 'intervene' && message) return { verdict: 'intervene', message };
   if (verdict === 'intervene') {
-    const rest = reply.replace(/<verdict>[\s\S]*?<\/verdict>/i, '').trim();
+    // indexOf rather than a lazy regex: linear even on a reply full of unclosed <verdict> tags.
+    const lower = reply.toLowerCase();
+    const start = lower.indexOf('<verdict>');
+    const end = start === -1 ? -1 : lower.indexOf('</verdict>', start);
+    const rest = (end === -1 ? reply : reply.slice(0, start) + reply.slice(end + '</verdict>'.length)).trim();
     if (rest) return { verdict: 'intervene', message: rest };
   }
   return { verdict: 'ok', message: message ?? '' };

@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 import {
@@ -208,15 +208,26 @@ export function collectAttachments(text: string, root: string): { attachments: A
     const rel = m[1].replace(/^"|"$/g, '').replace(/[.,;:!?)]+$/, '');
     const abs = path.resolve(root, rel);
     const inside = path.relative(root, abs);
-    if (!inside || inside.startsWith('..') || path.isAbsolute(inside) || !existsSync(abs)) continue;
-    const stat = statSync(abs);
-    if (!stat.isFile()) continue;
-    const mediaType = IMAGE_TYPES[path.extname(abs).toLowerCase()];
-    if (mediaType) {
-      if (stat.size <= MAX_IMAGE_BYTES && images.length < 5) images.push({ name: path.basename(abs), mediaType, data: readFileSync(abs).toString('base64') });
-    } else if (stat.size <= MAX_ATTACHMENT_BYTES && !attachments.some((a) => a.path === inside)) {
-      const content = readFileSync(abs, 'utf8');
-      if (!content.includes('\u0000')) attachments.push({ path: inside.split(path.sep).join('/'), content });
+    if (!inside || inside.startsWith('..') || path.isAbsolute(inside)) continue;
+    // Size check and read on one open file, so it cannot be swapped in between.
+    let fd: number;
+    try {
+      fd = openSync(abs, 'r');
+    } catch {
+      continue;
+    }
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile()) continue;
+      const mediaType = IMAGE_TYPES[path.extname(abs).toLowerCase()];
+      if (mediaType) {
+        if (stat.size <= MAX_IMAGE_BYTES && images.length < 5) images.push({ name: path.basename(abs), mediaType, data: readFileSync(fd).toString('base64') });
+      } else if (stat.size <= MAX_ATTACHMENT_BYTES && !attachments.some((a) => a.path === inside)) {
+        const content = readFileSync(fd, 'utf8');
+        if (!content.includes('\u0000')) attachments.push({ path: inside.split(path.sep).join('/'), content });
+      }
+    } finally {
+      closeSync(fd);
     }
   }
   return { attachments, images };

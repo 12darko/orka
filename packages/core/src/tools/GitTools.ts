@@ -69,11 +69,12 @@ export function riskForHardenedGit(keys: readonly string[]): string[] {
 async function repoConfigFiles(root: string): Promise<string[]> {
   for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
     const dotGit = path.join(dir, '.git');
-    const stat = await fs.stat(dotGit).catch(() => undefined);
-    if (stat?.isDirectory()) return [path.join(dotGit, 'config'), path.join(dotGit, 'config.worktree')];
-    if (stat?.isFile()) {
+    // One read tells both: a folder (EISDIR) is the git dir itself, a file points to one.
+    const content = await fs.readFile(dotGit, 'utf8').catch((error: NodeJS.ErrnoException) => (error.code === 'EISDIR' ? null : undefined));
+    if (content === null) return [path.join(dotGit, 'config'), path.join(dotGit, 'config.worktree')];
+    if (content !== undefined) {
       // A worktree or submodule: ".git" names the real git dir, which may share a common one.
-      const pointer = /^gitdir:\s*(.+)$/m.exec(await fs.readFile(dotGit, 'utf8').catch(() => ''))?.[1].trim();
+      const pointer = /^gitdir:\s*(.+)$/m.exec(content)?.[1].trim();
       if (!pointer) return [];
       const gitDir = path.resolve(dir, pointer);
       const common = (await fs.readFile(path.join(gitDir, 'commondir'), 'utf8').catch(() => '')).trim();

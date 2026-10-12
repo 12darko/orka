@@ -60,7 +60,7 @@ const MAX_LESSON_CHARS = 300;
 export function parseLessons(reply: string, max = 3): string[] {
   return reply
     .split(/\r?\n/)
-    .map((line) => /^\s*[-*]\s+(.+)$/.exec(line)?.[1].trim())
+    .map((line) => /^[ \t]*[-*][ \t]+(\S.*)$/.exec(line)?.[1].trim())
     .filter((line): line is string => !!line && line.length >= 12)
     .map((line) => (line.length > MAX_LESSON_CHARS ? `${line.slice(0, MAX_LESSON_CHARS - 1)}…` : line))
     .slice(0, max);

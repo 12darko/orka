@@ -65,7 +65,7 @@ export const webFetchTool: Tool<WebFetchInput> = {
     }
     const type = (response.headers.get('content-type') ?? '').toLowerCase();
     const head = [`URL: ${url.href}`, `Status: ${response.status} ${response.statusText}`.trim(), type ? `Content-Type: ${type}` : ''];
-    if (/^(image|audio|video|font)\/|application\/(pdf|zip|octet-stream|x-|vnd\.)/.test(type) && !/json|xml/.test(type)) {
+    if (/^(?:(image|audio|video|font)\/|application\/(pdf|zip|octet-stream|x-|vnd\.))/.test(type) && !/json|xml/.test(type)) {
       await response.body?.cancel().catch(() => {});
       return { content: `${head.filter(Boolean).join('\n')}\n\n(binary content; not shown)`, isError: !response.ok };
     }
@@ -275,22 +275,80 @@ function decodeEntities(text: string): string {
   });
 }
 
-const stripTags = (html: string) => html.replace(/<[^>]+>/g, '');
+// Tags never contain "<", so each attempt stops at the next one: linear on any input.
+const stripTags = (html: string) => html.replace(/<[^<>]+>/g, '');
+
+/** Remove <!-- comments --> (an unclosed one hides the rest of the page, as in a browser). */
+function dropComments(html: string): string {
+  let out = '';
+  for (let i = 0; ; ) {
+    const start = html.indexOf('<!--', i);
+    if (start === -1) return out + html.slice(i);
+    out += html.slice(i, start);
+    const end = html.indexOf('-->', start + 4);
+    if (end === -1) return out;
+    i = end + 3;
+  }
+}
+
+/**
+ * Replace every <tag ...>…</tag> element with the given names in one forward pass: the element
+ * ends at the first closing tag after its opener (like a lazy regex), found with indexOf so that a
+ * page full of unclosed tags cannot make it slow. `replace` gets the lowercase tag, the opener's
+ * attributes and the inner HTML. An opener without a closing tag stays as it is, or with
+ * `dropUnclosed` the rest of the page is dropped.
+ */
+function replaceElements(html: string, tags: string, replace: (tag: string, attrs: string, inner: string) => string, dropUnclosed = false): string {
+  const lower = html.toLowerCase();
+  const opener = new RegExp(`<(${tags})\\b([^<>]*)>`, 'gi');
+  const unclosed = new Set<string>();
+  let out = '';
+  let last = 0;
+  for (let m = opener.exec(html); m; m = opener.exec(html)) {
+    const tag = m[1].toLowerCase();
+    const close = unclosed.has(tag) ? -1 : lower.indexOf(`</${tag}`, opener.lastIndex);
+    if (close === -1) {
+      unclosed.add(tag);
+      if (!dropUnclosed) continue;
+      out += html.slice(last, m.index);
+      return out;
+    }
+    const end = lower.indexOf('>', close);
+    const after = end === -1 ? html.length : end + 1;
+    out += html.slice(last, m.index) + replace(tag, m[2], html.slice(opener.lastIndex, close));
+    last = after;
+    opener.lastIndex = after;
+  }
+  return out + html.slice(last);
+}
+
+/** The inner HTML of the first such element, if it is closed. */
+function firstElement(html: string, tags: string): string | undefined {
+  let inner: string | undefined;
+  replaceElements(html, tags, (_tag, _attrs, content) => {
+    inner ??= content;
+    return '';
+  });
+  return inner;
+}
+
+/** Link targets that are not pages: kept as plain text. */
+const NOT_A_PAGE = /^\s*(#|javascript:|data:|vbscript:)/i;
 
 /**
  * Readable text from HTML: the main content (main/article when present), headings, links,
  * lists, tables and code blocks as Markdown-like text; scripts, styles and navigation dropped.
+ * Runs in linear time: the HTML comes from the internet.
  */
 export function htmlToText(html: string, baseUrl?: string): { title?: string; text: string } {
-  const title = decodeEntities(stripTags(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? '')).replace(/\s+/g, ' ').trim() || undefined;
-  let s = html
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<(script|style|noscript|svg|iframe|template|head|nav|footer|form)\b[\s\S]*?<\/\1\s*>/gi, '');
-  const main = /<(main|article)\b[^>]*>([\s\S]*?)<\/\1\s*>/i.exec(s);
-  if (main && stripTags(main[2]).trim().length > 200) s = main[2];
+  const titleHtml = firstElement(html, 'title');
+  const title = titleHtml === undefined ? undefined : decodeEntities(stripTags(titleHtml)).replace(/\s+/g, ' ').trim() || undefined;
+  let s = replaceElements(dropComments(html), 'script|style|noscript|svg|iframe|template|head|nav|footer|form', () => '', true);
+  const main = firstElement(s, 'main|article');
+  if (main !== undefined && stripTags(main).trim().length > 200) s = main;
   // Keep code blocks verbatim through the whitespace clean-up below.
   const blocks: string[] = [];
-  s = s.replace(/<pre\b[^>]*>([\s\S]*?)<\/pre\s*>/gi, (_, inner: string) => {
+  s = replaceElements(s, 'pre', (_tag, _attrs, inner) => {
     blocks.push(`\n\n\`\`\`\n${decodeEntities(stripTags(inner.replace(/<br\s*\/?>/gi, '\n'))).replace(/\n+$/, '')}\n\`\`\`\n\n`);
     return `\u0000${blocks.length - 1}\u0000`;
   });
@@ -302,20 +360,22 @@ export function htmlToText(html: string, baseUrl?: string): { title?: string; te
       return href;
     }
   };
+  s = replaceElements(s, 'h[1-6]', (tag, _attrs, inner) => `\n\n${'#'.repeat(Number(tag[1]))} ${inline(inner)}\n\n`);
+  s = replaceElements(s, 'a', (_tag, attrs, inner) => {
+    const href = /\bhref\s*=\s*["']([^"']*)["']/i.exec(attrs)?.[1];
+    const label = inline(inner);
+    if (href === undefined) return inner;
+    if (!label) return '';
+    return NOT_A_PAGE.test(href) ? label : `[${label}](${absolute(decodeEntities(href))})`;
+  });
+  s = replaceElements(s, 'code', (_tag, _attrs, inner) => `\`${inline(inner)}\``);
+  s = replaceElements(s, 'strong|b', (_tag, _attrs, inner) => `**${inline(inner)}**`);
   s = s
-    .replace(/<(h[1-6])\b[^>]*>([\s\S]*?)<\/\1\s*>/gi, (_, tag: string, inner: string) => `\n\n${'#'.repeat(Number(tag[1]))} ${inline(inner)}\n\n`)
-    .replace(/<a\b[^>]*?href\s*=\s*["']([^"']*)["'][^>]*>([\s\S]*?)<\/a\s*>/gi, (_, href: string, inner: string) => {
-      const label = inline(inner);
-      if (!label) return '';
-      return href.startsWith('#') || href.startsWith('javascript:') ? label : `[${label}](${absolute(decodeEntities(href))})`;
-    })
-    .replace(/<code\b[^>]*>([\s\S]*?)<\/code\s*>/gi, (_, inner: string) => `\`${inline(inner)}\``)
-    .replace(/<(strong|b)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi, (_, _tag: string, inner: string) => `**${inline(inner)}**`)
-    .replace(/<li\b[^>]*>/gi, '\n- ')
+    .replace(/<li\b[^<>]*>/gi, '\n- ')
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<(td|th)\b[^>]*>/gi, ' | ')
+    .replace(/<(td|th)\b[^<>]*>/gi, ' | ')
     .replace(/<\/(p|div|section|article|header|ul|ol|table|tr|blockquote|h[1-6]|dl|dt|dd|figure|main)\s*>/gi, '\n\n')
-    .replace(/<(p|div|section|tr|blockquote|dl|dt|dd|figure)\b[^>]*>/gi, '\n');
+    .replace(/<(p|div|section|tr|blockquote|dl|dt|dd|figure)\b[^<>]*>/gi, '\n');
   const text = decodeEntities(stripTags(s))
     .split('\n')
     .map((line) => line.replace(/[ \t ]+/g, ' ').trim())

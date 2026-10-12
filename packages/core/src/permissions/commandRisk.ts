@@ -57,13 +57,25 @@ const DANGEROUS: Array<[RegExp, string]> = [
  * cannot be read off the command line the way a plain command's can, so code that uses any of
  * them asks for approval; harmless one-liners (printing a version, a quick calculation) do not.
  */
-const INLINE_CODE =
-  /\b(node|nodejs|bun|deno|python[0-9.]*|py|perl|ruby|php|lua|osascript)(\.exe)?\s+(.*\s)?(-e|--eval|-p|--print|-c|-r|eval|-command)\s/i;
+const INTERPRETER = /^(node|nodejs|bun|deno|python[0-9.]*|py|perl|ruby|php|lua|osascript)(\.exe)?$/i;
+const INLINE_FLAG = /^(-e|--eval|-p|--print|-c|-r|eval|-command)$/i;
+
+/** An interpreter started with inline code (node -e, python -c, ...), found token by token (linear). */
+function hasInlineCode(command: string): boolean {
+  let interpreter = false;
+  for (const token of command.split(/[\s;&|()]+/)) {
+    const name = token.replace(/^["']+|["']+$/g, '').split(/[\\/]/).pop() ?? '';
+    if (INTERPRETER.test(name)) interpreter = true;
+    else if (interpreter && INLINE_FLAG.test(token)) return true;
+  }
+  return false;
+}
 const INLINE_SENSITIVE = new RegExp(
   [
     // files
     'write(file|filesync)?|appendfile|createwritestream|copyfile|rename(sync)?\\(|unlink|\\brm(sync|dir)?\\(|mkdir|chmod|symlink',
-    "open\\([^)]*['\"](w|a|x|r\\+)",
+    // Bounded, so a long line of "open(" without ")" stays fast.
+    "open\\([^)]{0,300}['\"](w|a|x|r\\+)",
     'shutil|pathlib|os\\.(remove|unlink|rename|replace|makedirs|system|popen|chmod)',
     // processes
     'child_process|\\bexec(sync|file)?\\(|\\bspawn|subprocess|process\\.(kill|dlopen)|\\beval\\(|\\bfunction\\(',
@@ -124,7 +136,7 @@ export function classifyCommand(command: string, context: CommandContext = {}): 
       return { category: /\bgit\b/i.test(trimmed) ? 'git' : 'command', risk: 'dangerous', reason };
     }
   }
-  if (INLINE_CODE.test(trimmed) && INLINE_SENSITIVE.test(trimmed)) {
+  if (hasInlineCode(trimmed) && INLINE_SENSITIVE.test(trimmed)) {
     return { category: 'command', risk: 'dangerous', reason: 'inline script with file, process or network access' };
   }
   if (context.workspaceRoot && writesOutside(trimmed, context.workspaceRoot, context.cwd ?? context.workspaceRoot)) {

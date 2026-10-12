@@ -609,7 +609,10 @@ export class AppController implements Disposable {
     if (!name) return;
     await fs.mkdir(USER_SKILLS_DIR, { recursive: true });
     const file = path.join(USER_SKILLS_DIR, `${name}.md`);
-    if (!existsSync(file)) await fs.writeFile(file, skillTemplate(name), 'utf8');
+    // "wx": create only if missing, in one step (an existing skill is opened as it is).
+    await fs.writeFile(file, skillTemplate(name), { encoding: 'utf8', flag: 'wx' }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EEXIST') throw error;
+    });
     await this.shell.openFile(file);
     await this.reloadSkills();
   }

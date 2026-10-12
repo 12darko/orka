@@ -66,5 +66,6 @@ export const runCommandTool: Tool<RunCommandInput> = {
 
 export function stripAnsi(text: string): string {
   // eslint-disable-next-line no-control-regex
-  return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007/g, '');
+  // An OSC sequence ends at BEL; stopping at the next ESC too keeps this linear on unterminated ones.
+  return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*\u0007/g, '');
 }

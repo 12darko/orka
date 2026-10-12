@@ -895,7 +895,7 @@ function renderTopbar(): void {
   const warn = main && !providerView(main.provider)?.ready;
   const folderName = config?.folder?.split(/[\\/]/).filter(Boolean).pop();
   el.topbar.innerHTML = `
-    <div class="phase" data-phase="${phase}"><span class="dot"></span><span class="phase-label">${escapeHtml(phaseLabel(phase))}</span></div>
+    <div class="phase" data-phase="${attr(phase)}"><span class="dot"></span><span class="phase-label">${escapeHtml(phaseLabel(phase))}</span></div>
     ${
       config?.canOpenFolder && folderName
         ? `<button class="folder-btn" data-action="open-folder" title="${attr(`${config.folder} - ${t('Open folder…')}`)}">${icon('folder')}<span>${escapeHtml(folderName)}</span></button>`
@@ -1147,7 +1147,7 @@ function supervisorCard(): string {
         : ''
     }
     <div class="row"><span class="grow">${escapeHtml(t('Max corrections per request'))}</span>
-      <div class="stepper"><button data-action="step-setting" data-delta="-1" aria-label="${attr(t('Fewer'))}">−</button><span>${s.maxInterventions}</span><button data-action="step-setting" data-delta="1" aria-label="${attr(t('More'))}">+</button></div>
+      <div class="stepper"><button data-action="step-setting" data-delta="-1" aria-label="${attr(t('Fewer'))}">−</button><span>${escapeHtml(String(s.maxInterventions))}</span><button data-action="step-setting" data-delta="1" aria-label="${attr(t('More'))}">+</button></div>
     </div>
     ${agentUsageLine('supervisor')}`
         : ''
@@ -1176,7 +1176,7 @@ function subagentsCard(): string {
         ? `<div class="row"><span class="grow">${escapeHtml(t('Sub-agents at the same time'))}<br><span class="muted small">${escapeHtml(
             t('explore, review and workers called together run side by side, up to this many'),
           )}</span></span>
-      <input class="num" type="number" min="1" max="8" data-type="int" data-setting="subagents.maxParallel" value="${config.settings.subagentsMaxParallel}" aria-label="${attr(t('Parallel sub-agents'))}"></div>
+      <input class="num" type="number" min="1" max="8" data-type="int" data-setting="subagents.maxParallel" value="${attr(String(config.settings.subagentsMaxParallel))}" aria-label="${attr(t('Parallel sub-agents'))}"></div>
       <label class="check"><input type="checkbox" data-setting="subagents.parallelWorkers"${config.settings.parallelWorkers ? ' checked' : ''}><span>${escapeHtml(
         t('Workers side by side in copies of the project'),
       )}<br><span class="muted">${escapeHtml(t('Each worker edits its own copy; the changes are merged afterwards and overlaps are reported. Off: workers run one at a time in the project.'))}</span></span></label>`
@@ -1230,7 +1230,7 @@ function renderAgentsPanel(): void {
 // ------------------------------------------------------------------ settings view
 
 function select(setting: string, options: Array<[string, string]>, value: string, label: string): string {
-  return `<select data-setting="${setting}" aria-label="${attr(label)}">${options
+  return `<select data-setting="${attr(setting)}" aria-label="${attr(label)}">${options
     .map(([v, l]) => `<option value="${attr(v)}"${v === value ? ' selected' : ''}>${escapeHtml(l)}</option>`)
     .join('')}</select>`;
 }
@@ -1510,7 +1510,7 @@ function controlTab(s: SettingsView): string {
       ${modes
         .map(
           ([value, label, text]) => `<label class="radio-card${s.permissionMode === value ? ' on' : ''}">
-        <input type="radio" name="permission-mode" data-setting="permissionMode" value="${value}"${s.permissionMode === value ? ' checked' : ''}>
+        <input type="radio" name="permission-mode" data-setting="permissionMode" value="${attr(value)}"${s.permissionMode === value ? ' checked' : ''}>
         <span><span class="radio-title">${escapeHtml(label)}</span><span class="radio-text">${escapeHtml(text)}</span></span></label>`,
         )
         .join('')}
@@ -1542,11 +1542,11 @@ function controlTab(s: SettingsView): string {
           ? t('Not available here: {reason}.', { reason: s.trackCommandChanges.unavailable })
           : t('Files changed by terminal commands (npm install, generators, formatters) join the Changes list and can be reverted. Uses a private snapshot, never your own git repository.'),
       )}</span></span></label>
-      <div class="row"><span class="grow">${escapeHtml(t('Max steps per request'))}</span><input class="num" type="number" min="1" max="500" data-type="int" data-setting="maxIterations" value="${s.maxIterations}"></div>
+      <div class="row"><span class="grow">${escapeHtml(t('Max steps per request'))}</span><input class="num" type="number" min="1" max="500" data-type="int" data-setting="maxIterations" value="${attr(String(s.maxIterations))}"></div>
       <div class="row"><span class="grow">${escapeHtml(t('Token budget per request'))}<br><span class="muted small">${escapeHtml(
         t('Pauses the request when all agents together used this many new tokens (cache reads not counted). 0 = no limit.'),
-      )}</span></span><input class="num wide" type="number" min="0" step="50000" data-type="int" data-setting="tokenBudget" value="${s.tokenBudget}"></div>
-      <div class="row"><span class="grow">${escapeHtml(t('Command timeout'))}</span><input class="num" type="number" min="5" max="3600" data-type="int" data-setting="commandTimeoutSeconds" value="${s.commandTimeoutSeconds}"><span class="muted">s</span></div>
+      )}</span></span><input class="num wide" type="number" min="0" step="50000" data-type="int" data-setting="tokenBudget" value="${attr(String(s.tokenBudget))}"></div>
+      <div class="row"><span class="grow">${escapeHtml(t('Command timeout'))}</span><input class="num" type="number" min="5" max="3600" data-type="int" data-setting="commandTimeoutSeconds" value="${attr(String(s.commandTimeoutSeconds))}"><span class="muted">s</span></div>
       <div class="row"><span class="grow">Shell</span>${select('shell', s.shellChoices.map((v) => [v, shellLabel(v)] as [string, string]), s.shell, 'Shell')}</div>
       <label class="field"><span class="field-label">${escapeHtml(t('Custom instructions'))}</span>
         <textarea data-setting="customInstructions" rows="4" placeholder="${attr(t('e.g. Use UniTask instead of coroutines. Comments in Turkish.'))}">${escapeHtml(s.customInstructions)}</textarea></label>
@@ -1556,7 +1556,7 @@ function controlTab(s: SettingsView): string {
       <label class="check"><input type="checkbox" data-setting="compaction.auto"${s.compaction.auto ? ' checked' : ''}><span>${escapeHtml(t('Compact automatically'))}<br><span class="muted">${escapeHtml(
         t("Past the threshold, the conversation is replaced by a handoff note: the model's summary plus the orchestrator's record of plan, changed files, your requests and supervisor corrections. Or type /compact."),
       )}</span></span></label>
-      <div class="row"><span class="grow">${escapeHtml(t('Threshold'))}</span><input class="num wide" type="number" min="10000" step="10000" data-type="int" data-setting="compaction.thresholdTokens" value="${s.compaction.thresholdTokens}"><span class="muted">token</span></div>
+      <div class="row"><span class="grow">${escapeHtml(t('Threshold'))}</span><input class="num wide" type="number" min="10000" step="10000" data-type="int" data-setting="compaction.thresholdTokens" value="${attr(String(s.compaction.thresholdTokens))}"><span class="muted">token</span></div>
     </div>
     <div class="card">
       <div class="card-head"><strong>${escapeHtml(t('Workspace'))}</strong></div>
@@ -1658,7 +1658,7 @@ function renderPlan(): void {
       ui.planCollapsed
         ? ''
         : `${plan.explanation ? `<p class="plan-explanation">${escapeHtml(plan.explanation)}</p>` : ''}
-    <ol class="steps">${plan.steps.map((s) => `<li data-status="${s.status}">${mark(s)}<span>${escapeHtml(s.title)}</span></li>`).join('')}</ol>`
+    <ol class="steps">${plan.steps.map((s) => `<li data-status="${attr(s.status)}">${mark(s)}<span>${escapeHtml(s.title)}</span></li>`).join('')}</ol>`
     }`;
 }
 
@@ -1702,9 +1702,9 @@ function renderChanges(): void {
               ? `<button class="icon-btn hunk-toggle${open ? ' open' : ''}" data-action="toggle-hunks" data-path="${attr(c.absPath)}" aria-expanded="${open}" aria-label="${attr(t('Show changed parts'))}" title="${attr(t('Show changed parts'))}">${icon('chevron')}</button>`
               : '<span class="hunk-toggle-space"></span>'
           }
-          <span class="badge ${c.status}">${badge[c.status]}</span>
+          <span class="badge ${attr(c.status)}">${escapeHtml(badge[c.status] ?? '')}</span>
           <button class="file" data-action="diff" data-path="${attr(c.absPath)}" title="${attr(t('Show diff'))}">${escapeHtml(c.relPath)}</button>
-          ${c.added ? `<span class="stat add">+${c.added}</span>` : ''}${c.removed ? `<span class="stat del">−${c.removed}</span>` : ''}
+          ${c.added ? `<span class="stat add">+${Number(c.added) || 0}</span>` : ''}${c.removed ? `<span class="stat del">−${Number(c.removed) || 0}</span>` : ''}
           <button class="icon-btn" data-action="accept" data-path="${attr(c.absPath)}" aria-label="${attr(t('Accept'))}" title="${attr(t('Accept'))}">${icon('check')}</button>
           <button class="icon-btn" data-action="revert" data-path="${attr(c.absPath)}" aria-label="${attr(t('Revert'))}" title="${attr(t('Revert'))}">${icon('undo')}</button>
           </div>
@@ -1799,7 +1799,7 @@ function itemHtml(item: TranscriptItem, nested: boolean): string {
     }
     case 'tool':
       if (nested && item.call.status !== 'awaiting_approval' && item.call.name !== 'run_subagent') return timelineRow(item);
-      return `<div class="tool status-${item.call.status}${item.call.name === 'run_subagent' ? ' subagent' : ''}${item.call.name === 'ask_supervisor' ? ' ask-sup' : ''}${nested ? ' nested' : ''}" data-id="${attr(item.id)}" data-tool-id="${attr(item.id)}">${renderTool(item.call, item.liveOutput, item.sub)}</div>`;
+      return `<div class="tool status-${attr(item.call.status)}${item.call.name === 'run_subagent' ? ' subagent' : ''}${item.call.name === 'ask_supervisor' ? ' ask-sup' : ''}${nested ? ' nested' : ''}" data-id="${attr(item.id)}" data-tool-id="${attr(item.id)}">${renderTool(item.call, item.liveOutput, item.sub)}</div>`;
     case 'notice':
       return `<div class="notice ${item.level}" data-id="${attr(item.id)}">${icon(item.level === 'info' ? 'info' : 'warn')}<span>${escapeHtml(item.message)}</span>${noticeAction(item.action)}</div>`;
     case 'supervisor':
@@ -1910,7 +1910,7 @@ function renderTool(call: ToolCallView, liveOutput: string, sub?: SubagentView):
       <span class="tool-title mono" title="${attr(call.title)}">${escapeHtml(call.title)}</span>
       ${canDiff ? `<button class="link" data-action="diff" data-path="${attr(call.path!)}">diff</button>` : ''}
       ${call.risk === 'dangerous' ? `<span class="risk">${escapeHtml(t('RISKY'))}</span>` : ''}
-      <span class="tool-status" title="${call.status}">${STATUS_ICON[call.status]}</span>
+      <span class="tool-status" title="${attr(call.status)}">${STATUS_ICON[call.status] ?? ''}</span>
     </div>`;
   const shot = call.image?.startsWith('data:image/') ? `<img class="tool-shot" src="${attr(call.image)}" alt="${attr(t('Screenshot'))}">` : '';
   const showOutput = output && call.status !== 'awaiting_approval' && call.name !== 'update_plan';
@@ -1942,7 +1942,7 @@ function renderSupervisorQuestion(call: ToolCallView): string {
   const answer = (call.output ?? '').replace(/^\[Supervisor advice[^\]]*\]\n/, '');
   const running = call.status === 'running';
   return `<div class="sup-head">${icon('eye', 'sup')}<span class="sup-label">${escapeHtml(t('Agent asked the supervisor'))}</span><span class="spacer"></span>
-      <span class="tool-status" title="${call.status}">${STATUS_ICON[call.status]}</span></div>
+      <span class="tool-status" title="${attr(call.status)}">${STATUS_ICON[call.status] ?? ''}</span></div>
     <div class="sup-question">${escapeHtml(call.detail ?? '')}</div>
     ${running ? `<div class="muted small">${escapeHtml(t('Waiting for the supervisor…'))}</div>` : answer ? `<div class="sup-body markdown">${renderMarkdown(answer)}</div>` : ''}`;
 }
@@ -1971,7 +1971,7 @@ function renderSubagent(call: ToolCallView, sub?: SubagentView): string {
       <span class="sub-name">${escapeHtml(agent)}</span>
       <span class="tool-title" title="${attr(task)}">${escapeHtml(task)}</span>
       ${sub?.model ? `<span class="model-tag" title="${attr(sub.model)}">${escapeHtml(sub.model)}${sub.usage ? ` · ${t('{n} tok', { n: fmt(totalTokens(sub.usage)) })}` : ''}</span>` : ''}
-      <span class="tool-status" title="${call.status}">${STATUS_ICON[call.status]}</span>
+      <span class="tool-status" title="${attr(call.status)}">${STATUS_ICON[call.status] ?? ''}</span>
     </div>${body}${taskBlock}${report}`;
 }
 
@@ -2168,7 +2168,7 @@ function dialogHtml(id: string, d: DialogView): string {
       const close = d.modal
         ? cancel(d.actions.length ? t('Cancel') : t('OK'), d.actions.length ? 'btn' : 'btn primary')
         : `<button class="icon-btn" type="button" data-action="dialog-cancel" ${ref} aria-label="${attr(t('Close'))}" title="${attr(t('Close'))}">${icon('x')}</button>`;
-      return `<div class="dialog ${d.modal ? 'modal' : 'toast'} ${d.level}" role="${d.modal ? 'alertdialog' : 'status'}" ${ref}>
+      return `<div class="dialog ${d.modal ? 'modal' : 'toast'} ${attr(d.level)}" role="${d.modal ? 'alertdialog' : 'status'}" ${ref}>
         <div class="dialog-body">${icon(d.level === 'info' ? 'info' : 'warn')}<span>${escapeHtml(d.text)}${d.detail ? `<br><span class="muted">${escapeHtml(d.detail)}</span>` : ''}</span></div>
         <div class="dialog-actions">${actions}${close}</div></div>`;
     }
@@ -2243,7 +2243,18 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+/**
+ * Messages come from the app itself: the desktop bridge posts them to this page's own origin, VS
+ * Code's webview host shares the vscode-webview origin, and the preview dispatches them directly
+ * (no origin). Anything else (another window or frame) is ignored.
+ */
+function fromApp(e: MessageEvent): boolean {
+  if (e.origin === '' || e.origin === window.location.origin) return true;
+  return window.location.protocol === 'vscode-webview:' && e.origin.startsWith('vscode-webview://');
+}
+
 window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
+  if (!fromApp(e)) return;
   const message = e.data;
   switch (message.type) {
     case 'dialog':

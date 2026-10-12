@@ -1,6 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { t } from '../i18n';
@@ -242,8 +241,8 @@ class CliSession {
   ) {
     // A neutral working directory keeps project CLAUDE.md files out of the model's context;
     // the orchestrator supplies project context itself.
-    this.dir = path.join(tmpdir(), 'orka-claude-code', randomUUID());
-    mkdirSync(this.dir, { recursive: true });
+    // A fresh, private folder (mkdtemp creates it with a random name, readable only by this user).
+    this.dir = mkdtempSync(path.join(tmpdir(), 'orka-claude-code-'));
     const systemFile = path.join(this.dir, 'system-prompt.md');
     writeFileSync(systemFile, system, 'utf8');
     const env = { ...process.env };

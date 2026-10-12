@@ -46,7 +46,7 @@ export class OpenAIProvider implements AIProvider {
     this.id = options.providerId ?? PROVIDER_ID;
     // Local servers (Ollama, LM Studio) need no key, but the SDK insists on one.
     this.client = new OpenAI({ apiKey: options.apiKey || 'not-needed', baseURL: options.baseURL || undefined, maxRetries: 4 });
-    this.label = options.label ?? (options.baseURL && !options.baseURL.includes('api.openai.com') ? 'OpenAI-compatible' : 'OpenAI');
+    this.label = options.label ?? (options.baseURL && hostOf(options.baseURL) !== 'api.openai.com' ? 'OpenAI-compatible' : 'OpenAI');
   }
 
   async chat(request: ChatRequest, onEvent: (event: ProviderStreamEvent) => void): Promise<ChatResponse> {
@@ -235,4 +235,12 @@ function mapApiError(error: unknown): Error {
     return new ProviderError(`OpenAI API error: ${error.message}`, 'server', error.status);
   }
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function hostOf(url: string): string | undefined {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
 }
