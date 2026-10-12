@@ -38,6 +38,12 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Orka edits files and runs commands in the open folder, so it only runs in trusted workspaces."
+    }
+  },
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -574,6 +580,62 @@
               },
               "disabled": {
                 "type": "boolean"
+              }
+            }
+          }
+        },
+        "orka.hooks": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "%config.hooks%",
+          "properties": {
+            "afterEdit": {
+              "type": "array",
+              "description": "%config.hooks.afterEdit%",
+              "items": {
+                "type": "object",
+                "required": [
+                  "command"
+                ],
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "match": {
+                    "type": [
+                      "string",
+                      "array"
+                    ],
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "timeoutSeconds": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 3600
+                  }
+                }
+              }
+            },
+            "beforeFinish": {
+              "type": "array",
+              "description": "%config.hooks.beforeFinish%",
+              "items": {
+                "type": "object",
+                "required": [
+                  "command"
+                ],
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "timeoutSeconds": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 3600
+                  }
+                }
               }
             }
           }

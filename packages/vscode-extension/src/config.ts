@@ -14,6 +14,12 @@ export class VSCodeSettings implements SettingsStore {
     return i?.globalValue !== undefined || i?.workspaceValue !== undefined || i?.workspaceFolderValue !== undefined;
   }
 
+  scopeOf(key: string): 'user' | 'workspace' | undefined {
+    const i = vscode.workspace.getConfiguration(SECTION).inspect(key);
+    if (i?.workspaceFolderValue !== undefined || i?.workspaceValue !== undefined) return 'workspace';
+    return i?.globalValue !== undefined ? 'user' : undefined;
+  }
+
   /**
    * Write a setting where the user already keeps it; otherwise in the workspace (or, for settings
    * that describe the user rather than the project, such as custom providers, globally).

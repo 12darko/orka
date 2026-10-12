@@ -22,12 +22,16 @@ import {
   lineText,
   listModels,
   loadSkills,
+  hasHooks,
+  type HooksConfig,
   McpManager,
   type McpServerConfig,
   MODEL_CATALOG,
   type ModelInfo,
   type NodeHost,
   newTaskId,
+  NO_HOOKS,
+  type OrchestratorSettings,
   normalizeLocale,
   Orchestrator,
   PermissionManager,
@@ -97,6 +101,7 @@ const MAX_ATTACHMENT_BYTES = 200_000;
 const MCP_TRUST_STATE = 'orka.mcpTrust';
 const MODEL_CACHE_STATE = 'orka.modelCache';
 const CLAUDE_UPDATE_STATE = 'orka.claudeCodeUpdatedAt';
+const HOOKS_TRUST_STATE = 'orka.hooksTrust';
 /** How often model lists and Claude Code are refreshed in the background. */
 const MODEL_REFRESH_MS = 24 * 60 * 60 * 1000;
 const MAX_HUNKS = 40;
@@ -381,6 +386,7 @@ export class AppController implements Disposable {
     // A new task picks up skills added or edited since the last one.
     if (!orchestrator.history.length) await this.reloadSkills(false);
     const invoked = [...new Set(skillNames)].map((name) => this.skills.find((s) => s.name === name)).filter((s): s is Skill => !!s);
+    await this.confirmWorkspaceHooks();
     const attachments = await this.readAttachments(files);
     await orchestrator.run(trimmed, this.shell.editorContext(this.host!.workspaceRoot), attachments, { skills: invoked, images: validImages(images) });
   }
@@ -1555,6 +1561,35 @@ export class AppController implements Disposable {
 
   // ---------------------------------------------------------------- state plumbing
 
+  /** The agents' settings; hooks from the folder's own settings only once the user allowed them. */
+  private orchestratorSettings(): OrchestratorSettings {
+    const s = this.settings;
+    if (!s.hooksFromWorkspace || !hasHooks(s.orchestrator.hooks)) return s.orchestrator;
+    const trust = this.shell.workspaceState.get<{ hash: string; allowed: boolean }>(HOOKS_TRUST_STATE);
+    return trust?.hash === hooksHash(s.orchestrator.hooks) && trust.allowed ? s.orchestrator : { ...s.orchestrator, hooks: NO_HOOKS };
+  }
+
+  /**
+   * Hooks defined in the open folder's settings run commands without asking, and a cloned
+   * repository controls those settings: ask once for each version of them.
+   */
+  private async confirmWorkspaceHooks(): Promise<void> {
+    const hooks = this.settings.orchestrator.hooks;
+    if (!this.settings.hooksFromWorkspace || !hasHooks(hooks)) return;
+    const hash = hooksHash(hooks);
+    if (this.shell.workspaceState.get<{ hash: string }>(HOOKS_TRUST_STATE)?.hash === hash) return;
+    const commands = [...(hooks?.afterEdit ?? []), ...(hooks?.beforeFinish ?? [])].map((h) => h.command);
+    const allow = t('Allow');
+    const choice = await this.shell.message(
+      'warning',
+      t('This folder\'s settings define hooks that run commands on your machine while the agent works: {commands}. Allow them?', { commands: commands.join(' · ') }),
+      { modal: true },
+      allow,
+      t('Not now'),
+    );
+    await this.shell.workspaceState.update(HOOKS_TRUST_STATE, { hash, allowed: choice === allow });
+  }
+
   private recreateOrchestrator(): void {
     void this.saveTask();
     // A hand-off belongs to the workspace and change list being replaced.
@@ -1597,7 +1632,7 @@ export class AppController implements Disposable {
       },
       getFallbackProvider: () => (this.settings.fallback.provider === 'inherit' ? undefined : this.providerFor('fallback')),
       permissions: this.permissions,
-      getSettings: () => this.settings.orchestrator,
+      getSettings: () => this.orchestratorSettings(),
       subagents: {
         getProfiles: () => (this.settings.subagents.enabled ? DEFAULT_SUBAGENTS : []),
         getProvider: (name) => this.providerFor(name),
@@ -1859,4 +1894,8 @@ function slug(text: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 30);
+}
+
+function hooksHash(hooks: HooksConfig | undefined): string {
+  return createHash('sha1').update(JSON.stringify(hooks ?? {})).digest('hex');
 }

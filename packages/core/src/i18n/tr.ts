@@ -202,6 +202,11 @@ export const TR: Record<string, string> = {
   "Unofficial: Orka is not affiliated with Anthropic. It runs your own Claude Code login, so make sure your use follows Anthropic's terms. For teams and products, use a Claude API key.":
     "Resmi değildir: Orka'nın Anthropic ile bir bağı yoktur. Kendi Claude Code girişinizi kullanır; kullanımınızın Anthropic'in koşullarına uygun olduğundan emin olun. Ekipler ve ürünler için Claude API anahtarı kullanın.",
   'Claude Code is turned off. Turn it on in Settings > Providers.': 'Claude Code kapalı. Settings > Providers ekranından açın.',
+  'Hook: {command}': 'Hook: {command}',
+  "This folder's settings define hooks that run commands on your machine while the agent works: {commands}. Allow them?":
+    'Bu klasörün ayarları, agent çalışırken bilgisayarınızda komut çalıştıran hooks tanımlıyor: {commands}. İzin verilsin mi?',
+  'The project checks (hooks) still fail after {n} rounds; the agent stops trying.':
+    'Proje kontrolleri (hooks) {n} turdan sonra hâlâ başarısız; agent denemeyi bırakıyor.',
   'Opus (latest)': 'Opus (en yeni)',
   'Sonnet (latest)': 'Sonnet (en yeni)',
   'Haiku (latest)': 'Haiku (en yeni)',

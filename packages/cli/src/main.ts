@@ -24,6 +24,7 @@ import {
   Orchestrator,
   PermissionManager,
   PROVIDERS,
+  readHooks,
   setLocale,
   ShadowGit,
   systemLocale,
@@ -110,6 +111,7 @@ class Session {
       maxParallelSubagents: 3,
       compaction: { auto: true, thresholdTokens: 150_000 },
       tokenBudget: c.tokenBudget && c.tokenBudget > 0 ? c.tokenBudget : undefined,
+      hooks: readHooks(c.hooks),
     };
   }
 

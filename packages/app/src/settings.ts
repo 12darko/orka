@@ -2,6 +2,7 @@ import {
   type ClaudeEffort,
   DEFAULT_SUBAGENTS,
   isPrice,
+  readHooks,
   type McpServerConfig,
   type OrchestratorSettings,
   type PermissionMode,
@@ -25,6 +26,11 @@ export interface SettingsStore {
   get<T>(key: string, fallback: T): T;
   /** The user set this key (anywhere), rather than relying on its default. */
   isSet(key: string): boolean;
+  /**
+   * Where the effective value comes from: the user's own settings, or the open folder's (which a
+   * cloned repository controls). Stores without per-folder settings omit it.
+   */
+  scopeOf?(key: string): 'user' | 'workspace' | undefined;
   update(key: string, value: unknown, options?: { preferGlobal?: boolean }): Promise<void>;
   onDidChange(listener: () => void): Disposable;
 }
@@ -93,6 +99,8 @@ export interface AppSettings {
   inlineReview: boolean;
   /** Chrome/Edge/Chromium for the browser tool; empty = auto-detect. */
   browserPath?: string;
+  /** The hooks come from the open folder's settings (they run commands, so they need the user's OK first). */
+  hooksFromWorkspace: boolean;
 }
 
 export function isCustomRef(ref: string): ref is `custom:${string}` {
@@ -174,6 +182,7 @@ export function readSettings(c: SettingsStore): AppSettings {
         thresholdTokens: Math.max(10_000, c.get<number>('compaction.thresholdTokens', 150_000)),
       },
       tokenBudget: Math.max(0, c.get<number>('tokenBudget', 0)),
+      hooks: readHooks(c.get<unknown>('hooks', {})),
     },
     shell: c.get<string>('shell', '').trim() || undefined,
     language: (['en', 'tr'] as const).find((l) => l === c.get<string>('language', '')) ?? 'auto',
@@ -185,6 +194,7 @@ export function readSettings(c: SettingsStore): AppSettings {
     trackCommandChanges: c.get<boolean>('trackCommandChanges', true),
     inlineReview: c.get<boolean>('inlineReview', true),
     browserPath: c.get<string>('browser.path', '').trim() || undefined,
+    hooksFromWorkspace: c.scopeOf?.('hooks') === 'workspace',
     mcp: { enabled: c.get<boolean>('mcp.enabled', true), servers: readMcpServers(c.get<Record<string, unknown>>('mcpServers', {})) },
   };
 }

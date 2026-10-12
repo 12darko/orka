@@ -33,6 +33,8 @@ import {
 } from '../types';
 import type { AgentEvent, AgentPhase, AgentUsage, RunEndReason, ToolCallView } from './events';
 import { recordChangesSince } from '../handoff/Handoff';
+import { describeHookResult, type HookCommand, type HookResult, hooksForFile, type HooksConfig, runHook } from '../hooks/Hooks';
+import { toRelative } from '../tools/workspace';
 import { isSimpleRequest } from './routing';
 
 export interface OrchestratorSettings {
@@ -51,6 +53,8 @@ export interface OrchestratorSettings {
    * agent; cache reads are not counted). 0 or undefined: no limit.
    */
   tokenBudget?: number;
+  /** The user's commands to run after edits and before the agent finishes (formatters, linters, tests). */
+  hooks?: HooksConfig;
 }
 
 /** An image the user attached to a request (e.g. a pasted screenshot). */
@@ -115,6 +119,8 @@ const SHOW_TOOLS = new Set(['open_file', 'open_browser', SUPERVISOR_TOOL]);
 const PROGRESS_STEPS = 12;
 /** Tool activity lines kept for the supervisor's briefs. */
 const ACTIVITY_LINES = 12;
+/** beforeFinish hooks that keep failing send the agent back at most this many times per request. */
+const MAX_HOOK_ROUNDS = 3;
 
 /** Per-request supervisor state. */
 interface Watch {
@@ -465,7 +471,7 @@ export class Orchestrator {
     });
     this.userRequests.push(userText);
 
-    const task = { codeChangedSinceCheck: false, verifyNudged: false };
+    const task = { codeChangedSinceCheck: false, verifyNudged: false, changedSinceHooks: false, hookRounds: 0 };
     const oversight = this.supervisor ? this.options.supervisor!.getSettings() : undefined;
     const watch: Watch = {
       active: !!oversight?.enabled,
@@ -605,6 +611,24 @@ export class Orchestrator {
           this.messages.push({ role: 'user', content: [{ type: 'text', text: interventionText(late) }] });
           continue;
         }
+        // The user's own checks run before the agent may finish; failures go back to it.
+        const finishHooks = this.options.role ? [] : (settings.hooks?.beforeFinish ?? []);
+        if (finishHooks.length && task.changedSinceHooks) {
+          task.changedSinceHooks = false;
+          if (task.hookRounds >= MAX_HOOK_ROUNDS) {
+            this.emit({ type: 'notice', level: 'warning', message: t('The project checks (hooks) still fail after {n} rounds; the agent stops trying.', { n: MAX_HOOK_ROUNDS }) });
+          } else {
+            task.hookRounds++;
+            const failed = (await this.runHooks('beforeFinish', finishHooks, signal)).filter((r) => !r.ok);
+            if (signal.aborted) return 'stopped';
+            if (failed.length) {
+              this.messages.push({ role: 'user', content: [{ type: 'text', text: hookFailureText(failed) }] });
+              continue;
+            }
+            // Passing project checks count as verification.
+            task.codeChangedSinceCheck = false;
+          }
+        }
         if (settings.autoVerify && task.codeChangedSinceCheck && !task.verifyNudged) {
           task.verifyNudged = true;
           this.messages.push({ role: 'user', content: [{ type: 'text', text: this.verifyNudge() }] });
@@ -661,6 +685,7 @@ export class Orchestrator {
           results.push(outcome.result);
           if (outcome.changedCode) {
             task.codeChangedSinceCheck = true;
+            task.changedSinceHooks = true;
             progressed = true;
           }
           if (outcome.ranCommand) task.codeChangedSinceCheck = false;
@@ -1050,19 +1075,24 @@ export class Orchestrator {
     // A command that can change files runs between two snapshots, so its changes can be reviewed and reverted.
     const snapshots = call.name === 'run_command' && action.risk !== 'safe' ? this.options.commandSnapshots : undefined;
     const before = snapshots ? await snapshots.snapshot() : undefined;
+    // A worker sub-agent's edits land in the shared change list rather than in this call's category.
+    let delegatedEdits = false;
+    const watchDelegate = call.name === SUBAGENT_TOOL ? this.changes.onDidChange(() => (delegatedEdits = true)) : undefined;
     try {
-      const result = await tool.execute(call.input, ctx);
+      const result = await tool.execute(call.input, ctx).finally(() => watchDelegate?.());
       const byCommand = before ? await this.recordCommandChanges(snapshots!, before) : [];
       const note = byCommand.length
         ? `\n\nFiles changed by this command (revertible in the Changes panel): ${byCommand.slice(0, 30).map((c) => `${c.path} (${c.status})`).join(', ')}${byCommand.length > 30 ? `, and ${byCommand.length - 30} more` : ''}`
         : '';
-      const content = truncateMiddle(result.content, MAX_TOOL_RESULT_CHARS) + note;
+      const hooks = action.category === 'edit' && !result.isError && view.path ? await this.afterEditHooks(view.path, signal) : '';
+      const content = truncateMiddle(result.content, MAX_TOOL_RESULT_CHARS) + note + hooks;
       this.emit({ type: 'tool_call', call: { ...view, status: result.isError ? 'error' : 'done', output: content, image: result.thumb } });
       const changedCode =
         ((action.category === 'edit' || action.category === 'delete') &&
           !result.isError &&
           !NON_CODE_EXTENSIONS.has(path.extname(view.path ?? '').toLowerCase())) ||
-        byCommand.some((c) => !NON_CODE_EXTENSIONS.has(path.extname(c.path).toLowerCase()));
+        byCommand.some((c) => !NON_CODE_EXTENSIONS.has(path.extname(c.path).toLowerCase())) ||
+        delegatedEdits;
       const ranCommand = call.name === 'run_command' && !signal.aborted;
       if (!result.isError && this.secretFile === undefined) this.secretFile = secretTouched(call);
       const images = result.images?.length ? { images: result.images } : {};
@@ -1089,6 +1119,38 @@ export class Orchestrator {
     } catch {
       return [];
     }
+  }
+
+  /** The user's afterEdit hooks for a file an agent just changed; returns what the agent should know. */
+  private async afterEditHooks(absPath: string, signal: AbortSignal): Promise<string> {
+    const relPath = toRelative(this.options.host.workspaceRoot, absPath);
+    const hooks = hooksForFile(this.options.getSettings().hooks?.afterEdit ?? [], relPath);
+    if (!hooks.length) return '';
+    const results = await this.runHooks('afterEdit', hooks, signal, relPath);
+    if (!results.length) return '';
+    return `\n\n${results.map((r) => describeHookResult('afterEdit', r)).join('\n')}\nThe hooks may have changed this file; read it again before editing it further.`;
+  }
+
+  /** Run hooks one after another, each shown in the chat like a command. */
+  private async runHooks(point: 'afterEdit' | 'beforeFinish', hooks: readonly HookCommand[], signal: AbortSignal, relPath?: string): Promise<HookResult[]> {
+    const results: HookResult[] = [];
+    // Project-wide checks can change any file (e.g. "eslint --fix"): keep those changes revertible.
+    const snapshots = point === 'beforeFinish' ? this.options.commandSnapshots : undefined;
+    const before = snapshots ? await snapshots.snapshot() : undefined;
+    for (const hook of hooks) {
+      if (signal.aborted) break;
+      const id = this.nextId('h');
+      const title = (command: string) => t('Hook: {command}', { command: oneLine(command, 80) });
+      const view: ToolCallView = { id, name: 'hook', title: title(hook.command), category: 'command', risk: 'normal', status: 'running', detail: `$ ${hook.command}` };
+      this.setPhase('verifying');
+      this.emit({ type: 'tool_call', call: view });
+      const result = await runHook(this.options.host, hook, signal, relPath, (chunk) => this.emit({ type: 'tool_output', id, chunk }));
+      const output = `${result.summary}${result.output ? `\n${result.output}` : ''}`;
+      this.emit({ type: 'tool_call', call: { ...view, title: title(result.command), status: result.ok ? 'done' : signal.aborted ? 'cancelled' : 'error', output } });
+      results.push(result);
+    }
+    if (before) await this.recordCommandChanges(snapshots!, before);
+    return results;
   }
 
   /** Every tool call must get a result, or the next request is rejected. */
@@ -1272,6 +1334,15 @@ Include, specifically:
 - anything the user or the supervisor asked that still applies.
 
 Be complete but compact (at most about 800 words).`;
+
+/** What the agent is told when the user's beforeFinish checks fail. */
+function hookFailureText(failed: readonly HookResult[]): string {
+  return [
+    '[Orchestrator] The project checks the user configured as hooks failed, so the task is not done yet:',
+    ...failed.map((r) => describeHookResult('beforeFinish', r)),
+    'Fix the problems, then finish. If a failure is unrelated to this task and cannot be fixed here, say so in one sentence and finish.',
+  ].join('\n\n');
+}
 
 /** Rough token estimate (4 characters per token) for messages we have not sent yet. */
 function estimateTokens(messages: readonly ChatMessage[]): number {

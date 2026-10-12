@@ -59,6 +59,8 @@ export interface OrkaConfig {
   /** Snapshot the files terminal commands change, so /undo covers them too (needs git). */
   trackCommandChanges?: boolean;
   browserPath?: string;
+  /** Commands run after edits ("afterEdit") and before the agent finishes ("beforeFinish"); see the README. */
+  hooks?: { afterEdit?: unknown[]; beforeFinish?: unknown[] };
 }
 
 export function loadConfig(file = CONFIG_FILE): { config: OrkaConfig; error?: string } {
