@@ -1,3 +1,5 @@
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { t } from '../i18n';
 import type { Tool } from './Tool';
 import { ToolError, truncateMiddle } from './Tool';
@@ -7,6 +9,7 @@ const FETCH_TIMEOUT_MS = 30_000;
 const MAX_BODY_BYTES = 3_000_000;
 const DEFAULT_MAX_CHARS = 40_000;
 const MAX_CHARS = 100_000;
+const MAX_REDIRECTS = 5;
 
 interface WebFetchInput {
   url: string;
@@ -33,33 +36,42 @@ export const webFetchTool: Tool<WebFetchInput> = {
     return { category: 'network', risk: 'normal', title: t('Fetch {url}', { url: shortUrl(url) }), detail: url.href };
   },
   async execute(input, ctx) {
-    const url = parseHttpUrl(input.url);
+    let url = parseHttpUrl(input.url);
     const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
     const signal = AbortSignal.any([ctx.signal, timeout]);
     let response: Response;
-    try {
-      response = await fetch(url, {
-        redirect: 'follow',
-        signal,
-        headers: {
-          'user-agent': 'Mozilla/5.0 (compatible; Orka)',
-          accept: 'text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.5',
-        },
-      });
-    } catch (error) {
-      if (ctx.signal.aborted) throw error;
-      if (timeout.aborted) throw new ToolError(`Timed out after ${FETCH_TIMEOUT_MS / 1000}s: ${url.href}`);
-      throw new ToolError(`Could not fetch ${url.href}: ${causeMessage(error)}`);
+    // Redirects are followed by hand so that every hop is checked against the blocked addresses.
+    for (let hop = 0; ; hop++) {
+      await assertReachable(url);
+      try {
+        response = await fetch(url, {
+          redirect: 'manual',
+          signal,
+          headers: {
+            'user-agent': 'Mozilla/5.0 (compatible; Orka)',
+            accept: 'text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.5',
+          },
+        });
+      } catch (error) {
+        if (ctx.signal.aborted) throw error;
+        if (timeout.aborted) throw new ToolError(`Timed out after ${FETCH_TIMEOUT_MS / 1000}s: ${url.href}`);
+        throw new ToolError(`Could not fetch ${url.href}: ${causeMessage(error)}`);
+      }
+      const location = response.status >= 300 && response.status < 400 ? response.headers.get('location') : null;
+      if (!location) break;
+      await response.body?.cancel().catch(() => {});
+      if (hop >= MAX_REDIRECTS) throw new ToolError(`Too many redirects: ${input.url}`);
+      url = parseHttpUrl(new URL(location, url).href);
     }
     const type = (response.headers.get('content-type') ?? '').toLowerCase();
-    const head = [`URL: ${response.url || url.href}`, `Status: ${response.status} ${response.statusText}`.trim(), type ? `Content-Type: ${type}` : ''];
+    const head = [`URL: ${url.href}`, `Status: ${response.status} ${response.statusText}`.trim(), type ? `Content-Type: ${type}` : ''];
     if (/^(image|audio|video|font)\/|application\/(pdf|zip|octet-stream|x-|vnd\.)/.test(type) && !/json|xml/.test(type)) {
       await response.body?.cancel().catch(() => {});
       return { content: `${head.filter(Boolean).join('\n')}\n\n(binary content; not shown)`, isError: !response.ok };
     }
     const body = await readLimited(response, MAX_BODY_BYTES);
     const html = /html|xml/.test(type) || (!type && /^\s*</.test(body.text));
-    const page = html ? htmlToText(body.text, response.url || url.href) : { text: body.text };
+    const page = html ? htmlToText(body.text, url.href) : { text: body.text };
     if (page.title) head.push(`Title: ${page.title}`);
     if (body.truncated) head.push(`(only the first ${MAX_BODY_BYTES / 1_000_000} MB were downloaded)`);
     const text = truncateMiddle(page.text.trim() || '(empty page)', Math.min(input.max_chars ?? DEFAULT_MAX_CHARS, MAX_CHARS));
@@ -160,6 +172,30 @@ function resolveTarget(raw: string, root: string): { url: URL; file?: undefined 
     throw new ToolError(`Only web pages, images, PDFs and text files can be opened in the browser: ${raw}. Use open_file to show other files in the editor.`);
   }
   return { file };
+}
+
+/** Hosts of cloud metadata services, which hand out the machine's credentials. */
+const METADATA_HOSTS = new Set(['metadata', 'metadata.google.internal', 'metadata.goog', 'instance-data', 'instance-data.ec2.internal']);
+
+/** Link-local (169.254.0.0/16, fe80::/10) and metadata addresses: never something the agent needs to reach. */
+export function isBlockedAddress(address: string): boolean {
+  const ip = address.toLowerCase().replace(/^\[|\]$/g, '').replace(/^::ffff:/, '');
+  if (isIP(ip) === 4) return ip.startsWith('169.254.') || ip === '100.100.100.200' || ip === '0.0.0.0';
+  if (isIP(ip) === 6) return /^fe[89ab][0-9a-f]:/.test(ip) || ip === 'fd00:ec2::254' || ip === '::';
+  return false;
+}
+
+/** Refuse cloud metadata and link-local targets, also when a public name resolves to one (DNS rebinding). */
+export async function assertReachable(url: URL): Promise<void> {
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const blocked = (why: string) => new ToolError(`Blocked: ${url.hostname} ${why}. Orka never fetches cloud metadata or link-local addresses.`);
+  if (METADATA_HOSTS.has(host)) throw blocked('is a cloud metadata service');
+  if (isIP(host)) {
+    if (isBlockedAddress(host)) throw blocked('is a link-local address');
+    return;
+  }
+  const addresses = await lookup(host, { all: true }).catch(() => []);
+  if (addresses.some((a) => isBlockedAddress(a.address))) throw blocked('resolves to a link-local address');
 }
 
 function isLocalHost(url: URL): boolean {

@@ -106,10 +106,11 @@ export class McpManager {
       description: `[MCP server "${server}"] ${info.description?.trim() || info.annotations?.title || info.name}`,
       inputSchema: schema,
       describe: (input) => ({
-        // MCP tools act outside the workspace (an editor, a database, ...): treat them like commands
-        // unless the server marks them read-only.
-        category: readOnly ? 'read' : 'command',
-        risk: readOnly ? 'safe' : destructive ? 'dangerous' : 'normal',
+        // MCP tools act outside the workspace (an editor, a database, ...): treat them like commands.
+        // The server's own hints may only raise the risk, never lower it: a "read-only" tool still
+        // follows the terminal rules (Ask mode asks), so a server cannot vouch for itself.
+        category: 'command',
+        risk: destructive ? 'dangerous' : 'normal',
         title: t('MCP {server}: {tool}', { server, tool: info.annotations?.title || info.name }),
         detail: `${server} / ${info.name}\n${JSON.stringify(input, null, 2).slice(0, 2000)}`,
       }),

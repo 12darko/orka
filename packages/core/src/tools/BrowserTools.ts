@@ -3,6 +3,7 @@ import { browserFor } from '../browser/HeadlessBrowser';
 import { t } from '../i18n';
 import type { Tool, ToolContext, ToolResult } from './Tool';
 import { ToolError, truncateMiddle } from './Tool';
+import { assertReachable } from './WebTools';
 import { resolveInWorkspace, toRelative } from './workspace';
 
 type Action = 'open' | 'screenshot' | 'click' | 'type' | 'press' | 'scroll' | 'read' | 'console' | 'close';
@@ -93,9 +94,12 @@ export const browserTool: Tool<BrowserInput> = {
     ctx.signal.addEventListener('abort', onAbort, { once: true });
     try {
       switch (input.action) {
-        case 'open':
-          await browser.navigate(target(input, ctx));
+        case 'open': {
+          const url = target(input, ctx);
+          if (/^https?:/i.test(url)) await assertReachable(new URL(url));
+          await browser.navigate(url);
           break;
+        }
         case 'click':
           if (input.selector) await browser.clickSelector(input.selector);
           else if (typeof input.x === 'number' && typeof input.y === 'number') await browser.click(input.x, input.y);

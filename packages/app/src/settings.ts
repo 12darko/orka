@@ -286,5 +286,24 @@ export const WEBVIEW_SETTINGS: Record<string, (value: unknown) => boolean> = {
   'claudeCode.effort': (v) => ['', 'low', 'medium', 'high', 'xhigh', 'max'].includes(v as string),
 };
 
+/**
+ * Settings a folder's own settings must not change: programs Orka starts, where API keys are sent,
+ * and permission overrides. A cloned repository controls its folder settings, so these only come
+ * from the user's own settings (VS Code: machine scope) and are always written there.
+ */
+export const MACHINE_SETTINGS = new Set([
+  'shell',
+  'claudeCode.path',
+  'browser.path',
+  'mcpServers',
+  'customProviders',
+  'openai.baseUrl',
+  'permissions.fileEdit',
+  'permissions.terminal',
+  'permissions.git',
+  'permissions.delete',
+  'permissions.network',
+]);
+
 /** Settings that describe the user rather than a project; written globally unless already set elsewhere. */
-export const USER_LEVEL_SETTINGS = new Set(['mcpServers', 'mcp.enabled', 'claudeCode.enabled', 'claudeCode.autoUpdate', 'language', 'skills.disabled', 'skills.enabled', 'customProviders', 'pricing']);
+export const USER_LEVEL_SETTINGS = new Set(['mcp.enabled', 'claudeCode.enabled', 'claudeCode.autoUpdate', 'language', 'skills.disabled', 'skills.enabled', 'pricing', ...MACHINE_SETTINGS]);

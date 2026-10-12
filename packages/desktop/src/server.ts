@@ -6,6 +6,8 @@ import type { AddressInfo } from 'node:net';
 import * as path from 'node:path';
 
 const MAX_BODY = 25 * 1024 * 1024; // pasted images
+/** How long the start URL works (the window opens well within this; the app quits after 90 s without one). */
+const LAUNCH_CODE_TTL_MS = 3 * 60_000;
 const STATIC: Record<string, string> = {
   '/webview.js': 'text/javascript; charset=utf-8',
   '/webview.css': 'text/css; charset=utf-8',
@@ -36,7 +38,14 @@ export class UiServer {
   /** Messages posted while no page was connected (e.g. between a reload and its reconnect). */
   private backlog: ToWebview[] = [];
   private heartbeat?: NodeJS.Timeout;
-  readonly token = randomBytes(24).toString('base64url');
+  /**
+   * One-time code in the start URL. The browser's command line shows it to other local processes,
+   * so it works once, within a few minutes, and the session cookie is a different secret.
+   */
+  private launchCode?: string = randomBytes(24).toString('base64url');
+  private launchCodeExpires = 0;
+  /** The session cookie's value; never on a command line or in a URL. */
+  private readonly session = randomBytes(24).toString('base64url');
   port = 0;
 
   constructor(private readonly options: UiServerOptions) {
@@ -56,15 +65,16 @@ export class UiServer {
       this.server.listen(port, '127.0.0.1', () => resolve());
     });
     this.port = (this.server.address() as AddressInfo).port;
+    this.launchCodeExpires = Date.now() + LAUNCH_CODE_TTL_MS;
     this.heartbeat = setInterval(() => {
       for (const res of this.clients) res.write(': ping\n\n');
     }, 15_000);
     return this.port;
   }
 
-  /** The address that lets a browser in (it sets the session cookie). */
+  /** The address that lets a browser in, once (it sets the session cookie). */
   get startUrl(): string {
-    return `http://127.0.0.1:${this.port}/?t=${this.token}`;
+    return `http://127.0.0.1:${this.port}/?t=${this.launchCode ?? 'used'}`;
   }
 
   get connected(): boolean {
@@ -97,17 +107,18 @@ export class UiServer {
     const url = new URL(req.url ?? '/', `http://${host}`);
     const security = { 'x-content-type-options': 'nosniff', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' };
 
-    // The start URL: trade the token for a cookie, then load the page without the token in it.
+    // The start URL: trade the one-time code for the session cookie, then load the page without the code in it.
     if (req.method === 'GET' && url.pathname === '/' && url.searchParams.has('t')) {
-      if (url.searchParams.get('t') !== this.token) {
+      if (!this.launchCode || url.searchParams.get('t') !== this.launchCode || Date.now() > this.launchCodeExpires) {
         res.writeHead(403, security).end('Forbidden');
         return;
       }
-      res.writeHead(303, { ...security, location: '/', 'set-cookie': `orka=${this.token}; HttpOnly; SameSite=Strict; Path=/` });
+      this.launchCode = undefined;
+      res.writeHead(303, { ...security, location: '/', 'set-cookie': `orka=${this.session}; HttpOnly; SameSite=Strict; Path=/` });
       res.end();
       return;
     }
-    if (cookie(req.headers.cookie, 'orka') !== this.token) {
+    if (cookie(req.headers.cookie, 'orka') !== this.session) {
       res.writeHead(403, security).end('Forbidden: open Orka from its own window.');
       return;
     }

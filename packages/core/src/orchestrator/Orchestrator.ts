@@ -1023,7 +1023,8 @@ export class Orchestrator {
     }
     // Once this task has read something that may hold secrets, nothing goes to the internet
     // without the user seeing it: a prompt injection could otherwise send the secrets out.
-    const secretsGuard = action.category === 'network' && this.secretFile !== undefined;
+    // MCP tools reach outside the machine too (a browser, a database, a web service).
+    const secretsGuard = (action.category === 'network' || call.name.startsWith('mcp__')) && this.secretFile !== undefined;
     if (secretsGuard) {
       action = {
         ...action,
@@ -1260,10 +1261,13 @@ export class Orchestrator {
       getExtraTools: async () => (profile.access === 'full' ? this.extraTools : this.extraTools.filter((tool) => tool.readOnly)),
     });
     child.on((event) => this.emit({ type: 'subagent', parentId: ctx.callId, agent: profile.name, event }));
+    // The secrets guard spans the whole task: what one agent read, no agent may quietly send out.
+    child.secretFile = this.secretFile;
     const stopChild = () => child.stop();
     ctx.signal.addEventListener('abort', stopChild, { once: true });
     try {
       const reason = await child.run(input.task);
+      this.secretFile ??= child.secretFile;
       const own = child.usageByAgent.find((u) => u.agent === profile.name);
       if (own) this.recordUsage(profile.name, own.provider, own.model, own.usage, own.calls);
       this.emitUsage();
@@ -1406,7 +1410,7 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 }
 
 /** Files that commonly hold credentials or keys. */
-const SECRET_FILE = /(^|[\\/])(\.env(\.[\w.-]+)?|[\w.-]*\.(pem|key|p12|pfx|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|credentials(\.json)?|secrets?\.(json|ya?ml|toml|env)|\.npmrc|\.pypirc|\.netrc|\.git-credentials|service-account[\w.-]*\.json)$/i;
+const SECRET_FILE = /(^|[\\/])(\.env(\.[\w.-]+)?|[\w.-]*\.(pem|key|p12|pfx|jks|keystore|tfstate|tfvars)(\.backup)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|credentials(\.json)?|secrets?\.(json|ya?ml|toml|env)|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.htpasswd|service-account[\w.-]*\.json|firebase-adminsdk[\w.-]*\.json|google-services\.json|GoogleService-Info\.plist|appsettings(\.[\w-]+)?\.json|local\.settings\.json|wp-config\.php|kubeconfig)$/i;
 
 /** The secret-looking file a read / search / command touched, if any (workspace-relative). */
 function secretTouched(call: ToolCallBlock): string | undefined {

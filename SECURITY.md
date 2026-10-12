@@ -12,6 +12,12 @@ Please **do not open a public issue** for security problems. Report them private
 
 You will get an answer within a few days. Once a fix is released, the advisory is published with credit to you, unless you prefer otherwise.
 
+## Security model in short
+
+- In *Balanced* and *Autonomous* mode the agent edits files and runs the project's commands (builds, tests, scripts) without asking. Destructive or system-wide commands, downloads to files, inline scripts with file/process/network access, writes outside the workspace, git history changes and deletes ask. Use *Ask* mode for repositories or content you do not trust.
+- Settings that start programs (shell, executables, MCP servers), decide where API keys are sent (custom providers, base URLs) or loosen permissions only come from the user's own settings, never from a repository's. Hooks and `.mcp.json` servers a repository defines need the user's approval first.
+- After a task read a likely secret, any web access and MCP tool asks, in every mode.
+
 ## Scope
 
 Examples of what counts as a vulnerability:

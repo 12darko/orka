@@ -174,6 +174,8 @@ describe('Orka desktop app', { skip: (!existsSync(APP) && 'build first (npm run 
     assert.equal(await get('/?t=wrong'), 403, 'wrong token');
     assert.equal(await get(new URL(url).pathname + new URL(url).search, { host: `evil.example:${port}` }), 421, 'DNS rebinding');
     assert.equal(await get(new URL(url).pathname + new URL(url).search), 303, 'the start URL sets the cookie');
+    // Its code is visible on the browser's command line, so it works only once.
+    assert.equal(await get(new URL(url).pathname + new URL(url).search), 403, 'the start URL is single-use');
   });
 
   it('keeps API keys protected by the operating system', { skip: process.platform !== 'win32' && 'DPAPI check is Windows-only' }, async () => {

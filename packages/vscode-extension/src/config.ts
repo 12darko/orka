@@ -1,4 +1,4 @@
-import { type SettingsStore, USER_LEVEL_SETTINGS } from '@orka/app';
+import { MACHINE_SETTINGS, type SettingsStore, USER_LEVEL_SETTINGS } from '@orka/app';
 import * as vscode from 'vscode';
 
 export const SECTION = 'orka';
@@ -30,6 +30,8 @@ export class VSCodeSettings implements SettingsStore {
         ? vscode.ConfigurationTarget.Global
         : vscode.ConfigurationTarget.Workspace;
     const c = vscode.workspace.getConfiguration(SECTION);
+    // Machine-scoped settings only exist in the user's settings.
+    if (MACHINE_SETTINGS.has(key)) return c.update(key, value, vscode.ConfigurationTarget.Global);
     const inspected = c.inspect(key);
     const where =
       inspected?.workspaceFolderValue !== undefined

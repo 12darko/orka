@@ -3,7 +3,7 @@ import type { Host } from '../host/Host';
 import { loadProjectMemory, MEMORY_DIR } from '../memory/ProjectMemory';
 import type { PermissionMode } from '../permissions/PermissionManager';
 import { type Skill, skillsPrompt } from '../skills/Skills';
-import { runGit } from '../tools/GitTools';
+import { gitConfigRisk, riskForHardenedGit, runGit } from '../tools/GitTools';
 import { scanProject, type ProjectInfo } from './ProjectScanner';
 
 /** What the editor knows right now; supplied by the adapter with each user message. */
@@ -102,7 +102,11 @@ export class ContextBuilder {
       const more = editor.problems.length > shown.length ? `\n... and ${editor.problems.length - shown.length} more` : '';
       lines.push(`Problems reported by the editor:\n${shown.join('\n')}${more}`);
     }
-    if (this.project?.isGitRepo) {
+    const gitRisk = this.project?.isGitRepo ? riskForHardenedGit(await gitConfigRisk(this.host.workspaceRoot)) : [];
+    if (gitRisk.length) {
+      // Even git status would start programs this repository's own config names.
+      lines.push(`git status: not run automatically; this repository's git config makes git run programs (${gitRisk.join(', ')}). Git commands ask for approval here.`);
+    } else if (this.project?.isGitRepo) {
       try {
         const status = (await runGit(this.host.workspaceRoot, ['status', '--short', '--branch'])).trim().split(/\r?\n/);
         const shown = status.slice(0, 30);

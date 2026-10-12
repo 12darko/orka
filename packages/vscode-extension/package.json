@@ -329,6 +329,7 @@
         },
         "orka.openai.baseUrl": {
           "type": "string",
+          "scope": "machine",
           "default": "https://api.openai.com/v1",
           "description": "%config.openai.baseUrl%"
         },
@@ -384,6 +385,7 @@
         },
         "orka.claudeCode.path": {
           "type": "string",
+          "scope": "machine",
           "default": "",
           "description": "%config.claudeCode.path%"
         },
@@ -394,6 +396,7 @@
         },
         "orka.customProviders": {
           "type": "array",
+          "scope": "machine",
           "default": [],
           "description": "%config.customProviders%",
           "items": {
@@ -544,6 +547,7 @@
         },
         "orka.mcpServers": {
           "type": "object",
+          "scope": "machine",
           "default": {},
           "description": "%config.mcpServers%",
           "additionalProperties": {
@@ -657,6 +661,7 @@
         },
         "orka.permissions.fileEdit": {
           "type": "string",
+          "scope": "machine",
           "enum": [
             "mode",
             "auto",
@@ -667,6 +672,7 @@
         },
         "orka.permissions.terminal": {
           "type": "string",
+          "scope": "machine",
           "enum": [
             "mode",
             "auto",
@@ -678,6 +684,7 @@
         },
         "orka.permissions.git": {
           "type": "string",
+          "scope": "machine",
           "enum": [
             "mode",
             "auto",
@@ -688,6 +695,7 @@
         },
         "orka.permissions.delete": {
           "type": "string",
+          "scope": "machine",
           "enum": [
             "mode",
             "auto",
@@ -698,6 +706,7 @@
         },
         "orka.permissions.network": {
           "type": "string",
+          "scope": "machine",
           "enum": [
             "mode",
             "auto",
@@ -723,6 +732,7 @@
         },
         "orka.browser.path": {
           "type": "string",
+          "scope": "machine",
           "default": "",
           "description": "%config.browser.path%"
         },
@@ -739,6 +749,7 @@
         },
         "orka.shell": {
           "type": "string",
+          "scope": "machine",
           "default": "",
           "description": "%config.shell%"
         },
@@ -859,8 +870,8 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "~1.90.0",
-    "@vscode/vsce": "^3.0.0",
-    "esbuild": "^0.24.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
     "marked": "^14.0.0",
     "typescript": "^5.6.0"
   },

@@ -35,7 +35,9 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 - [Providers](#providers)
 - [Permissions and safety](#permissions-and-safety)
 - [Reviewing changes](#reviewing-changes)
+- [Hooks](#hooks)
 - [Tools: browser, processes, web](#tools-browser-processes-web)
+- [Project memory](#project-memory)
 - [Skills](#skills)
 - [MCP servers](#mcp-servers)
 - [Tasks, history and tokens](#tasks-history-and-tokens)
@@ -52,6 +54,8 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 - **Sees what it builds:** a headless Chrome/Edge tool that takes screenshots, clicks, types and reads console errors.
 - **You stay in control:** *Ask*, *Balanced* and *Autonomous* permission modes; risky commands and writes outside the workspace always ask.
 - **Every change is reversible:** per-file and per-hunk revert, inline Keep / Revert in the editor, and snapshots of files changed by terminal commands.
+- **Your checks, every time:** hooks run your formatter after each edit and your lint/tests before the agent may say "done"; failures go straight back to the agent.
+- **Learns your project:** after a task, lasting lessons (the command that works, a pitfall, a convention) are kept in `.project-ai/lessons.md` for the next task.
 - **Skills and MCP:** built-in playbooks (Unity, debugging, testing, security, ...), your own skills, and tools from MCP servers (Unity Editor, Blender, databases, ...).
 - **Long tasks that stay cheap:** append-only conversations for prompt caching, a token-friendly Supervisor, compaction with an exact handoff note, a token budget, a light model for simple questions and a fallback model when a provider hits its limit.
 - **English and Turkish** UI.
@@ -64,7 +68,9 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 code --install-extension orka-vscode-0.1.0.vsix
 ```
 
-**From source** (needed for the desktop app and the CLI): you need **Node.js 20+** and **git**. The browser tool and the desktop app use an installed **Chrome or Edge**.
+**Desktop app for Windows:** download `orka-desktop.exe` from the same release and run it; it needs no Node.js, only Edge or Chrome for its window. The file is not code-signed yet, so Windows SmartScreen may ask you to confirm the first start.
+
+**From source** (the CLI, and the desktop app on other systems): you need **Node.js 20+** and **git**. The browser tool and the desktop app use an installed **Chrome or Edge**.
 
 ```bash
 git clone https://github.com/12darko/orka.git
@@ -83,10 +89,14 @@ npm run package
 code --install-extension packages/vscode-extension/dist/orka-vscode-0.1.0.vsix
 ```
 
-**Desktop app:**
+**Desktop app** — run it, or build the single executable yourself (`packages/desktop/dist/orka-desktop.exe`, or `orka-desktop` on Linux):
 
 ```bash
 npm run desktop
+```
+
+```bash
+npm run desktop:exe
 ```
 
 **CLI** — run it directly, or run `npm link` in `packages/cli` to get an `orka` command everywhere:
@@ -168,13 +178,17 @@ How it works: each conversation opens one `claude -p --input-format stream-json`
 | **Balanced** (default) | auto | auto | auto | asks | auto | asks | asks |
 | **Autonomous** | auto | auto | auto | auto (reversible) | auto | asks | auto (push/reset ask) |
 
-\* Patterns such as `rm -rf`, `Remove-Item -Recurse`, `git push`, `git reset --hard`, `curl … | sh`, `DROP TABLE`, `npm publish`; encoded PowerShell, `Start-Process -Verb RunAs`, downloads through `certutil`/`bitsadmin`, `mshta`/`regsvr32`/`rundll32`, scheduled tasks and services, `setx`, global package installs, `git config --global`, and **commands that write outside the workspace** (absolute paths, `~`, `$env:USERPROFILE`, `..\..\`; temp folders and `/dev/null` excepted). See `packages/core/src/permissions/commandRisk.ts`. Sub-agents follow the same rules.
+\* Patterns such as `rm -rf`, `Remove-Item -Recurse`, `git push`, `git reset --hard`, `curl … | sh`, `DROP TABLE`, `npm publish`; encoded PowerShell, `Start-Process -Verb RunAs`, downloads to a file (`-OutFile`, `curl -o`, `wget`, `certutil`, `bitsadmin`), inline scripts that touch files, processes, the network or your home folder (`node -e`, `python -c`, ...), `mshta`/`regsvr32`/`rundll32`, scheduled tasks and services, `setx`, global package installs, `git config --global`, and **commands that write outside the workspace** (absolute paths, `~`, `$env:USERPROFILE`, `..\..\`; temp folders and `/dev/null` excepted). See `packages/core/src/permissions/commandRisk.ts`. Sub-agents follow the same rules.
 
-- Each category (file edits, terminal, git, deletes, web) can be overridden in **Settings → Control**.
+**What the modes mean:** in *Balanced* and *Autonomous*, the agent runs your project's commands (builds, tests, scripts it writes) without asking; the risky patterns above still ask. That is what makes it fast, and it also means a model following instructions hidden in a web page or file could run project code. **For code or content you do not trust, use *Ask* mode.**
+
+- Each category (file edits, terminal, git, deletes, web) can be overridden in **Settings → Control**. These overrides, the shell, executables, MCP servers, custom providers and API base URLs only come from your own (user) settings: a repository's `.vscode/settings.json` cannot change them. Hooks a folder's settings define run only after you allow them. In VS Code, Orka only runs in trusted workspaces.
 - Tool inputs are validated before they run; calls cut off by `max_tokens` and tool results the model made up are never executed.
-- Web pages and fetched content are treated as data, not instructions.
-- Once a task has read a file that may hold secrets (`.env`, keys, certificates, `credentials`), web access asks for approval for the rest of that task, whatever the mode, so secrets cannot be sent out silently.
-- MCP tools marked read-only run without asking, destructive ones always ask, and the rest follow the terminal rules.
+- Web pages and fetched content are treated as data, not instructions. `web_fetch` and the browser never reach cloud metadata services or link-local addresses (also not through a redirect or a DNS name pointing there).
+- Once any agent in a task has read a file that may hold secrets (`.env`, keys and certificates, `credentials`, `appsettings*.json`, Terraform state, service-account files, ...), web access and MCP tools ask for approval for the rest of that task, whatever the mode, so secrets cannot be sent out silently.
+- A server's own "read-only" hint does not make its MCP tools approval-free: they follow the terminal rules, and tools marked destructive always ask.
+- A repository whose own git config makes git run programs (an `fsmonitor` hook, filters other than Git LFS, diff drivers, includes) is detected: Orka then does not run `git status` on its own, and git commands ask. Orka's own git calls never use fsmonitor, external diff or textconv programs.
+- `open_browser` only hands web pages, images, PDFs and text files to the system, never scripts or executables.
 
 ## Reviewing changes
 
@@ -183,6 +197,22 @@ How it works: each conversation opens one `claude -p --input-format stream-json`
 - **Terminal commands:** before and after a command that can change files, Orka takes a snapshot of the workspace in a **private git directory** (your own repository is never touched; `node_modules`, `Library`, `obj` and `.gitignore`d files are skipped). Files the command changed, added or deleted (`package-lock.json` from `npm install`, generators, formatters) show up in the Changes panel and can be reverted (`orka.trackCommandChanges`).
 - **Editor quick actions:** **Fix with Orka** in the lightbulb menu (Ctrl+.) of an error or warning; **Orka: Explain Selection** and **Orka: Ask About Selection…** in the editor's context menu.
 
+## Hooks
+
+Hooks are your own commands that Orka runs around the agent's work, so your formatter, linter and tests are part of every task:
+
+```json
+"orka.hooks": {
+  "afterEdit": [{ "command": "npx prettier --write {file}", "match": "*.{ts,tsx,css}" }],
+  "beforeFinish": [{ "command": "npm run lint" }, { "command": "npm test", "timeoutSeconds": 600 }]
+}
+```
+
+- **`afterEdit`** runs after each file an agent edits, for the files its `match` glob(s) select (all files without one). `{file}` becomes the edited file's path. The result goes back to the agent with the tool result, so it sees lint errors right away (and knows a formatter may have changed the file).
+- **`beforeFinish`** runs when the main agent is about to finish a request that changed code. If a command fails, its output goes back to the agent with the request to fix it; this repeats at most 3 times. Passing checks count as verification, and files they change (e.g. `eslint --fix`) are revertible like the agent's own changes.
+- Hook runs show up in the chat like commands. Desktop: `"hooks"` in its settings file; CLI: `"hooks"` in `~/.orka/config.json`.
+- Hooks in a folder's own settings (`.vscode/settings.json`) run commands on your machine, so Orka asks once before using them (and again whenever they change).
+
 ## Tools: browser, processes, web
 
 - **`browser`:** opens Chrome or Edge headless. The agent opens a page, **sees the screenshot**, clicks by coordinate or CSS selector, types, presses keys, scrolls, and reads the page text and console errors. Typical loop: `start_process` a dev server → look at it with `browser` → fix → look again. `localhost` and HTML files in the workspace need no approval; external sites need web permission (`orka.browser.path` to pick a browser).
@@ -190,6 +220,12 @@ How it works: each conversation opens one `claude -p --input-format stream-json`
 - **`web_fetch`** reads web pages and documentation; **`open_browser`** opens a URL in your browser or inside VS Code; **`open_file`** shows a file in the editor.
 - **`code_outline`** lists classes and methods with line numbers before reading a large file (C#, TypeScript/JavaScript, Python, Go, Java/Kotlin, Rust, C/C++), so the agent only reads the lines it needs.
 - At the start of a task the project is scanned (type, build/test commands, file tree, `.project-ai/` notes), and each message carries the editor context: active file, selection, build errors and `git status`.
+
+## Project memory
+
+**Orka: Initialize Project Memory** (or **Settings → Control → Project memory**) creates a `.project-ai/` folder with `project-context.md`, `architecture.md`, `decisions.md` and `conventions.md`. Every task starts by reading it, so the agent does not rediscover your architecture and decisions each time.
+
+**Learning from tasks:** in projects with a `.project-ai/` folder, after a request that changed code the agent is asked for at most 3 lasting, project-specific lessons: the build or test command that works, a pitfall and how to avoid it, a convention you confirmed. New ones are added to `.project-ai/lessons.md` (duplicates are skipped, your own notes stay, the newest 60 are kept) and show up in the Changes panel like any other change. The question and answer are appended to the conversation, so the prompt cache stays valid. Turn it off with `orka.memory.learn` (CLI: `"memory": { "learn": false }`).
 
 ## Skills
 
@@ -208,7 +244,7 @@ Agents can use tools from MCP (Model Context Protocol) servers: Unity Editor, Bl
 - **Import from Claude Code:** brings the MCP servers from `~/.claude.json` (global and this project's) into Orka in one click.
 - **Edit the list:** `orka.mcpServers`, each entry either `{"command": "uvx", "args": ["blender-mcp"]}` (stdio) or `{"url": "http://localhost:8080/mcp"}` (Streamable HTTP).
 - A project's **`.mcp.json`** (Claude Code format) is used too; because it starts programs on your machine, Orka asks the first time.
-- Servers start when a task needs them and stay up between tasks. Their state (ready · N tools / error / off) is shown, and each one can be turned on or off. Tools are named `mcp__<server>__<tool>`; read-only sub-agents only see read-only MCP tools.
+- Servers start when a task needs them and stay up between tasks. Their state (ready · N tools / error / off) is shown, and each one can be turned on or off. Tools are named `mcp__<server>__<tool>` and follow the terminal rules; read-only sub-agents only see tools their server marks read-only.
 
 ## Tasks, history and tokens
 
@@ -246,9 +282,10 @@ The same core in the terminal: chat, Supervisor, sub-agents, Skills, MCP, permis
 
 Orka in its own window, without VS Code: the same chat, Agents panel, settings, Skills, MCP, history, diffs and approvals.
 
-- Open a project with **Open folder…** (recent folders are listed), or start with a folder: `node packages/desktop/dist/orka-desktop.js D:\Projects\Game`.
+- Open a project with **Open folder…** (recent folders are listed), or start with a folder: `orka-desktop.exe D:\Projects\Game` (from source: `node packages/desktop/dist/orka-desktop.js D:\Projects\Game`).
+- `orka-desktop.exe` is a single file with Node.js built in; on first start it unpacks its UI files to `~/.orka/desktop/runtime/`.
 - The window is Edge or Chrome in **app mode** (no tabs or address bar, a separate profile), so there is no extra Electron download. Closing the window quits Orka.
-- The UI is served by a local server bound to `127.0.0.1` on a random port, with a per-window secret cookie; requests with another host name (DNS rebinding) or not coming from the page itself are rejected, and a strict CSP blocks external scripts and images.
+- The UI is served by a local server bound to `127.0.0.1` on a random port, with a per-window secret cookie (the window gets it through a one-time start link, so the browser's command line holds nothing reusable); requests with another host name (DNS rebinding) or not coming from the page itself are rejected, and a strict CSP blocks external scripts and images.
 - **API keys are kept in the operating system's protected storage:** DPAPI on Windows (only your user account can decrypt them), Keychain on macOS, Secret Service on Linux.
 - Task history and snapshots are shared with the CLI (`~/.orka/tasks`), so `orka -c` can continue a task started in Desktop.
 
@@ -271,6 +308,8 @@ Example CLI config:
   "light": { "provider": "claude", "model": "claude-haiku-4-5" },
   "fallback": { "provider": "gemini", "model": "gemini-3.8-flash" },
   "custom": [{ "id": "ollama", "label": "Ollama", "baseURL": "http://localhost:11434/v1", "model": "qwen3-coder" }],
+  "hooks": { "beforeFinish": [{ "command": "npm test" }] },
+  "memory": { "learn": true },
   "claudeCode": { "enabled": false }
 }
 ```

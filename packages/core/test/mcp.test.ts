@@ -92,7 +92,8 @@ describe('MCP', () => {
     const [getScene, deleteObject] = tools;
     assert.equal(getScene.readOnly, true);
     const read = await getScene.describe({}, ctx());
-    assert.deepEqual([read.category, read.risk], ['read', 'safe']);
+    // A server's read-only hint cannot lower the risk: the tool still follows the terminal rules.
+    assert.deepEqual([read.category, read.risk], ['command', 'normal']);
     const del = await deleteObject.describe({ name: 'Enemy' }, ctx());
     assert.deepEqual([del.category, del.risk], ['command', 'dangerous'], 'destructive tools always ask');
     assert.deepEqual(await deleteObject.execute({ name: 'Enemy' }, ctx()), { content: 'Deleted Enemy', isError: false });

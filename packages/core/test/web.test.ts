@@ -8,7 +8,7 @@ import { ChangeTracker } from '../src/changes/ChangeTracker';
 import { NodeHost } from '../src/host/NodeHost';
 import { PermissionManager } from '../src/permissions/PermissionManager';
 import type { ToolContext } from '../src/tools/Tool';
-import { htmlToText, openBrowserTool, openFileTool, webFetchTool } from '../src/tools/WebTools';
+import { htmlToText, isBlockedAddress, openBrowserTool, openFileTool, webFetchTool } from '../src/tools/WebTools';
 import { Orchestrator } from '../src/orchestrator/Orchestrator';
 import { call, ScriptedProvider, tempWorkspace, text } from './helpers';
 
@@ -43,6 +43,12 @@ describe('web tools', () => {
       if (req.url === '/page') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         res.end(PAGE);
+      } else if (req.url === '/to-metadata') {
+        res.writeHead(302, { location: 'http://169.254.169.254/latest/meta-data/iam/' });
+        res.end();
+      } else if (req.url === '/hop') {
+        res.writeHead(301, { location: '/data.json' });
+        res.end();
       } else if (req.url === '/data.json') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end('{"version": "6.0.1"}');
@@ -85,6 +91,20 @@ describe('web tools', () => {
     assert.match(text, /```\nif \(ready\)\n {4}Start\(\);\n```/, 'code keeps its indentation');
     assert.match(text, /\| Name \| Type/);
     assert.doesNotMatch(text, /alert|color:red|Home|© 2026/, 'scripts, styles, nav and footer are dropped');
+  });
+
+  it('never reaches cloud metadata or link-local addresses, also not through a redirect', async () => {
+    for (const blocked of ['169.254.169.254', '::ffff:169.254.169.254', '[fe80::1]', 'fd00:ec2::254', '100.100.100.200', '0.0.0.0']) {
+      assert.ok(isBlockedAddress(blocked), blocked);
+    }
+    for (const fine of ['127.0.0.1', '192.168.1.20', '10.0.0.5', '::1', '93.184.216.34']) assert.ok(!isBlockedAddress(fine), fine);
+    await assert.rejects(webFetchTool.execute({ url: 'http://169.254.169.254/latest/meta-data/' }, ctx()), /Blocked: 169\.254\.169\.254 is a link-local address/);
+    await assert.rejects(webFetchTool.execute({ url: 'http://metadata.google.internal/computeMetadata/v1/' }, ctx()), /cloud metadata service/);
+    await assert.rejects(webFetchTool.execute({ url: `${base}/to-metadata` }, ctx()), /Blocked: 169\.254\.169\.254/);
+    // Ordinary redirects are still followed, and the final URL is reported.
+    const hop = await webFetchTool.execute({ url: `${base}/hop` }, ctx());
+    assert.match(hop.content, /URL: http:\/\/127\.0\.0\.1:\d+\/data\.json/);
+    assert.match(hop.content, /"version": "6\.0\.1"/);
   });
 
   it('web_fetch reads pages, JSON and reports errors; binary content is not dumped', async () => {

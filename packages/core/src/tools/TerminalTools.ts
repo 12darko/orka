@@ -1,5 +1,6 @@
 import { t } from '../i18n';
 import { classifyCommand } from '../permissions/commandRisk';
+import { gitConfigRisk } from './GitTools';
 import type { Tool } from './Tool';
 import { ToolError, truncateMiddle } from './Tool';
 import { resolveInWorkspace, toRelative } from './workspace';
@@ -28,9 +29,11 @@ export const runCommandTool: Tool<RunCommandInput> = {
     },
     required: ['command'],
   },
-  describe(input, ctx) {
+  async describe(input, ctx) {
     const absCwd = resolveInWorkspace(ctx.host.workspaceRoot, input.cwd);
-    const risk = classifyCommand(input.command, { workspaceRoot: ctx.host.workspaceRoot, cwd: absCwd });
+    // Git started by a command is not hardened like Orka's own git calls: any risky repository setting counts.
+    const gitRisk = /\bgit\b/i.test(input.command) ? (await gitConfigRisk(ctx.host.workspaceRoot)).join(', ') || undefined : undefined;
+    const risk = classifyCommand(input.command, { workspaceRoot: ctx.host.workspaceRoot, cwd: absCwd, gitRisk });
     const cwd = input.cwd ? toRelative(ctx.host.workspaceRoot, absCwd) : '.';
     return {
       category: risk.category,

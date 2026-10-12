@@ -46,7 +46,34 @@ const DANGEROUS: Array<[RegExp, string]> = [
   [/\b(npm|pnpm)\s+(i|install|add|uninstall|remove)\b.*\s(-g|--global)\b|\byarn\s+global\s+(add|remove)\b/i, 'global package change'],
   [/\bgit\s+config\s+.*--(global|system)\b/i, 'global git configuration'],
   [/\bicacls\b.*\/(grant|deny|reset|setowner)|\btakeown\b/i, 'permission change'],
+  [
+    /\b(iwr|invoke-webrequest|irm|invoke-restmethod|start-bitstransfer)\b.*\s-(outfile|destination)\b|\bcurl(\.exe)?\b.*\s(-[a-z]*[oO][a-z]*|--output|--remote-name(-all)?)(\s|$)|\bwget\b(?!.*\s-q?O\s*-(\s|$))|\(new-object\s+(system\.)?net\.webclient\)\.download(file|data)/i,
+    'download to a file',
+  ],
 ];
+
+/**
+ * Inline code for an interpreter (node -e, python -c, ...). Its file, process and network access
+ * cannot be read off the command line the way a plain command's can, so code that uses any of
+ * them asks for approval; harmless one-liners (printing a version, a quick calculation) do not.
+ */
+const INLINE_CODE =
+  /\b(node|nodejs|bun|deno|python[0-9.]*|py|perl|ruby|php|lua|osascript)(\.exe)?\s+(.*\s)?(-e|--eval|-p|--print|-c|-r|eval|-command)\s/i;
+const INLINE_SENSITIVE = new RegExp(
+  [
+    // files
+    'write(file|filesync)?|appendfile|createwritestream|copyfile|rename(sync)?\\(|unlink|\\brm(sync|dir)?\\(|mkdir|chmod|symlink',
+    "open\\([^)]*['\"](w|a|x|r\\+)",
+    'shutil|pathlib|os\\.(remove|unlink|rename|replace|makedirs|system|popen|chmod)',
+    // processes
+    'child_process|\\bexec(sync|file)?\\(|\\bspawn|subprocess|process\\.(kill|dlopen)|\\beval\\(|\\bfunction\\(',
+    // network
+    'https?:|fetch\\(|\\bnet\\b|\\bdgram\\b|\\btls\\b|socket|urllib|requests\\.|http\\.client|webclient|invoke-',
+    // places outside the project
+    'homedir|expanduser|userprofile|appdata|\\bhome\\b|process\\.env|os\\.environ|getenv|\\$env:|%\\w+%|~[\\\\/]|[a-z]:[\\\\/]|\\/etc\\/|\\/usr\\/|\\.\\.[\\\\/]\\.\\.',
+  ].join('|'),
+  'i',
+);
 
 /** Verbs that write, move or delete files; combined with a path outside the workspace they need approval. */
 const WRITE_VERBS = new RegExp(
@@ -69,6 +96,8 @@ export interface CommandContext {
   workspaceRoot?: string;
   /** Absolute directory the command runs in (default: the root). */
   cwd?: string;
+  /** The repository's own git config makes git run programs (see gitConfigRisk): any git command asks. */
+  gitRisk?: string;
 }
 
 const GIT_WRITE = /\bgit\s+(commit|merge|rebase|tag|push|reset|stash|cherry-pick|revert|am|apply|pull|checkout\s+-b|switch\s+-c|branch\s+-[dDmM]|remote\s+(add|remove|set-url)|rm)\b/i;
@@ -95,8 +124,14 @@ export function classifyCommand(command: string, context: CommandContext = {}): 
       return { category: /\bgit\b/i.test(trimmed) ? 'git' : 'command', risk: 'dangerous', reason };
     }
   }
+  if (INLINE_CODE.test(trimmed) && INLINE_SENSITIVE.test(trimmed)) {
+    return { category: 'command', risk: 'dangerous', reason: 'inline script with file, process or network access' };
+  }
   if (context.workspaceRoot && writesOutside(trimmed, context.workspaceRoot, context.cwd ?? context.workspaceRoot)) {
     return { category: 'command', risk: 'dangerous', reason: 'writes outside the workspace' };
+  }
+  if (context.gitRisk && /(^|[\s;&|(])git(\.exe)?\s/i.test(` ${trimmed}`)) {
+    return { category: 'command', risk: 'dangerous', reason: 'git runs programs from this repository' };
   }
   if (GIT_WRITE.test(trimmed)) return { category: 'git', risk: 'normal', reason: 'changes git state' };
 
