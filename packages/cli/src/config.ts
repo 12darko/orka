@@ -61,6 +61,8 @@ export interface OrkaConfig {
   browserPath?: string;
   /** Commands run after edits ("afterEdit") and before the agent finishes ("beforeFinish"); see the README. */
   hooks?: { afterEdit?: unknown[]; beforeFinish?: unknown[] };
+  /** learn: after a task that changed code, add lasting lessons to .project-ai/lessons.md (default true; needs that folder). */
+  memory?: { learn?: boolean };
 }
 
 export function loadConfig(file = CONFIG_FILE): { config: OrkaConfig; error?: string } {

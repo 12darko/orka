@@ -1573,6 +1573,9 @@ function controlTab(s: SettingsView): string {
             ? escapeHtml(t('.project-ai/ is not set up in this folder.'))
             : escapeHtml(t('Open a folder first.'))
       }</span></span>${s.projectMemory === 'missing' ? `<button class="btn" data-action="init-memory">${escapeHtml(t('Initialize'))}</button>` : ''}</div>
+      <label class="check"><input type="checkbox" data-setting="memory.learn"${s.learnLessons ? ' checked' : ''}><span>${escapeHtml(
+        t('Learn from tasks'),
+      )}<br><span class="muted">${escapeHtml(t('After a task that changed code, up to 3 lasting lessons (working commands, pitfalls, conventions) are added to .project-ai/lessons.md.'))}</span></span></label>
     </div>
     <div class="card">
       <div class="row"><span class="grow"><strong>${escapeHtml(t('Language'))}</strong><br><span class="muted small">${escapeHtml(

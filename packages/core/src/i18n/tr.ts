@@ -203,6 +203,10 @@ export const TR: Record<string, string> = {
     "Resmi değildir: Orka'nın Anthropic ile bir bağı yoktur. Kendi Claude Code girişinizi kullanır; kullanımınızın Anthropic'in koşullarına uygun olduğundan emin olun. Ekipler ve ürünler için Claude API anahtarı kullanın.",
   'Claude Code is turned off. Turn it on in Settings > Providers.': 'Claude Code kapalı. Settings > Providers ekranından açın.',
   'Hook: {command}': 'Hook: {command}',
+  'Saved what this task taught about the project to {file}: {lessons}': 'Bu görevin proje hakkında öğrettikleri {file} dosyasına kaydedildi: {lessons}',
+  'Learn from tasks': 'Görevlerden öğren',
+  'After a task that changed code, up to 3 lasting lessons (working commands, pitfalls, conventions) are added to .project-ai/lessons.md.':
+    'Kod değiştiren bir görevden sonra en fazla 3 kalıcı ders (çalışan komutlar, tuzaklar, kurallar) .project-ai/lessons.md dosyasına eklenir.',
   "This folder's settings define hooks that run commands on your machine while the agent works: {commands}. Allow them?":
     'Bu klasörün ayarları, agent çalışırken bilgisayarınızda komut çalıştıran hooks tanımlıyor: {commands}. İzin verilsin mi?',
   'The project checks (hooks) still fail after {n} rounds; the agent stops trying.':

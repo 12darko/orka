@@ -99,5 +99,6 @@
   "config.routing.provider": "A lighter, cheaper model for short questions about the project (\"what does X do?\"); requests that need changes stay on the main model, and if the light model tries to change something the main model takes over. A provider id, or 'inherit' for off.",
   "config.routing.model": "Model for simple questions; empty = that provider's default model.",
   "config.browser.path": "Chrome, Edge or Chromium executable the agent's browser tool uses to look at pages (headless). Empty = auto-detect the installed browser.",
-  "command.handoffFreebuff": "Continue in Freebuff (free terminal agent)"
+  "command.handoffFreebuff": "Continue in Freebuff (free terminal agent)",
+  "config.memory.learn": "After a task that changed code, ask the agent for up to 3 lasting lessons about the project (working commands, pitfalls, conventions) and add the new ones to .project-ai/lessons.md. Only in folders that have a .project-ai/ folder (Orka: Initialize Project Memory)."
 }

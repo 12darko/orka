@@ -33,6 +33,7 @@ import {
 } from '../types';
 import type { AgentEvent, AgentPhase, AgentUsage, RunEndReason, ToolCallView } from './events';
 import { recordChangesSince } from '../handoff/Handoff';
+import { appendLessons, LESSONS_FILE, MEMORY_DIR, parseLessons } from '../memory/ProjectMemory';
 import { describeHookResult, type HookCommand, type HookResult, hooksForFile, type HooksConfig, runHook } from '../hooks/Hooks';
 import { toRelative } from '../tools/workspace';
 import { isSimpleRequest } from './routing';
@@ -55,6 +56,11 @@ export interface OrchestratorSettings {
   tokenBudget?: number;
   /** The user's commands to run after edits and before the agent finishes (formatters, linters, tests). */
   hooks?: HooksConfig;
+  /**
+   * After a request that changed code, keep a few durable lessons in `.project-ai/lessons.md`
+   * (only in projects that have a `.project-ai/` folder). Default: on.
+   */
+  learnLessons?: boolean;
 }
 
 /** An image the user attached to a request (e.g. a pasted screenshot). */
@@ -471,7 +477,7 @@ export class Orchestrator {
     });
     this.userRequests.push(userText);
 
-    const task = { codeChangedSinceCheck: false, verifyNudged: false, changedSinceHooks: false, hookRounds: 0 };
+    const task = { codeChangedSinceCheck: false, verifyNudged: false, changedSinceHooks: false, hookRounds: 0, changedCode: false };
     const oversight = this.supervisor ? this.options.supervisor!.getSettings() : undefined;
     const watch: Watch = {
       active: !!oversight?.enabled,
@@ -651,6 +657,7 @@ export class Orchestrator {
             continue;
           }
         }
+        if (!this.options.role && task.changedCode && settings.learnLessons !== false) await this.learnLessons(provider, signal);
         return 'completed';
       }
 
@@ -686,6 +693,7 @@ export class Orchestrator {
           if (outcome.changedCode) {
             task.codeChangedSinceCheck = true;
             task.changedSinceHooks = true;
+            task.changedCode = true;
             progressed = true;
           }
           if (outcome.ranCommand) task.codeChangedSinceCheck = false;
@@ -1121,6 +1129,38 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * After a request that changed code, in projects with a memory folder: ask for a few durable
+   * lessons and append the new ones to `.project-ai/lessons.md`, so later tasks start knowing them.
+   * The exchange joins the conversation (append-only, so every provider's cache stays valid).
+   */
+  private async learnLessons(provider: AIProvider, signal: AbortSignal): Promise<void> {
+    const host = this.options.host;
+    if (!(await host.isDirectory(path.join(host.workspaceRoot, MEMORY_DIR)))) return;
+    this.setPhase('thinking');
+    try {
+      this.messages.push({ role: 'user', content: [{ type: 'text', text: LESSONS_REQUEST }] });
+      const response = await provider.chat({ system: this.systemPrompt!, messages: this.messages, tools: this.taskTools.map(toSpec), signal }, () => {});
+      this.messages.push(response.message);
+      this.recordUsage(this.options.role?.name ?? 'main', provider.id, response.model, response.usage);
+      this.emitUsage();
+      const calls = response.message.content.filter((b): b is ToolCallBlock => b.type === 'tool_call');
+      // Every tool call needs a result; these are never run.
+      if (calls.length) this.messages.push({ role: 'user', content: calls.map((c) => ({ type: 'tool_result', toolCallId: c.id, content: 'Not executed: no tools now.', isError: true })) });
+      const saved = await appendLessons(host, parseLessons(messageText(response.message)), (file) => this.changes.recordBefore(file));
+      if (!saved) return;
+      this.changes.notify();
+      this.emit({
+        type: 'notice',
+        level: 'info',
+        message: t('Saved what this task taught about the project to {file}: {lessons}', { file: `${MEMORY_DIR}/${LESSONS_FILE}`, lessons: saved.added.join(' · ') }),
+      });
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) throw error;
+      // Learning is a bonus: the request itself is done.
+    }
+  }
+
   /** The user's afterEdit hooks for a file an agent just changed; returns what the agent should know. */
   private async afterEditHooks(absPath: string, signal: AbortSignal): Promise<string> {
     const relPath = toRelative(this.options.host.workspaceRoot, absPath);
@@ -1334,6 +1374,8 @@ Include, specifically:
 - anything the user or the supervisor asked that still applies.
 
 Be complete but compact (at most about 800 words).`;
+
+const LESSONS_REQUEST = `[Orchestrator] The request is done. Is there anything from it a future session in this project should know? List at most 3 durable, project-specific lessons: for example the build or test command that works, a pitfall and how to avoid it, or a convention or decision the user confirmed. Only facts that stay true - not what you did in this task, not general programming advice, nothing already in the project memory. One short line each, starting with "- ". If there is nothing worth keeping, reply with exactly NONE. Do not call tools; do not repeat your answer to the user.`;
 
 /** What the agent is told when the user's beforeFinish checks fail. */
 function hookFailureText(failed: readonly HookResult[]): string {

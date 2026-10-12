@@ -13,7 +13,7 @@ export * from './planning/Plan';
 export * from './tools';
 export { ContextBuilder, type EditorContext } from './context/ContextBuilder';
 export { scanProject, type ProjectInfo } from './context/ProjectScanner';
-export { initProjectMemory, loadProjectMemory, MEMORY_DIR } from './memory/ProjectMemory';
+export { appendLessons, initProjectMemory, LESSONS_FILE, loadProjectMemory, MEMORY_DIR, parseLessons } from './memory/ProjectMemory';
 export { describeHookResult, hasHooks, type HookCommand, type HookResult, hooksForFile, type HooksConfig, NO_HOOKS, readHooks, runHook } from './hooks/Hooks';
 export * from './orchestrator/events';
 export { isSimpleRequest } from './orchestrator/routing';

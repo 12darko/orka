@@ -82,6 +82,7 @@ export interface SettingsView {
   modelsRefreshedAt?: number;
   supervisor: { enabled: boolean; frequency: 'checkpoints' | 'every_turn' | 'on_changes' | 'final_only'; maxInterventions: number; mode: 'parallel' | 'blocking' };
   projectMemory: 'present' | 'missing' | 'no_workspace';
+  learnLessons: boolean;
   presets: PresetView[];
   /** The language setting ("auto" follows the machine). */
   language: 'auto' | 'en' | 'tr';

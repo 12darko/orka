@@ -112,6 +112,7 @@ class Session {
       compaction: { auto: true, thresholdTokens: 150_000 },
       tokenBudget: c.tokenBudget && c.tokenBudget > 0 ? c.tokenBudget : undefined,
       hooks: readHooks(c.hooks),
+      learnLessons: c.memory?.learn !== false,
     };
   }
 

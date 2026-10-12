@@ -835,6 +835,11 @@
           },
           "default": [],
           "description": "%config.skills.disabled%"
+        },
+        "orka.memory.learn": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.memory.learn%"
         }
       }
     }

@@ -1808,6 +1808,7 @@ export class AppController implements Disposable {
           mode: s.supervisor.mode ?? 'parallel',
         },
         projectMemory: !root ? 'no_workspace' : existsSync(path.join(root, '.project-ai')) ? 'present' : 'missing',
+        learnLessons: s.orchestrator.learnLessons !== false,
         presets: PROVIDER_PRESETS.map((p) => ({ id: p.id, label: p.label, baseUrl: p.baseURL, requiresKey: p.requiresKey })),
       },
     };

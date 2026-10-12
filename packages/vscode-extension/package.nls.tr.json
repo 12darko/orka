@@ -99,5 +99,6 @@
   "config.routing.provider": "Proje hakkındaki kısa sorular için daha hafif, daha ucuz bir model (\"X ne işe yarıyor?\"); değişiklik gerektiren istekler ana modelde kalır, hafif model bir şey değiştirmeye kalkarsa ana model devralır. Bir provider ID'si, kapalı için 'inherit'.",
   "config.routing.model": "Basit sorular için model; boş = o provider'ın varsayılan modeli.",
   "config.browser.path": "Agent'ın browser aracının sayfalara bakmak için kullandığı Chrome, Edge ya da Chromium (headless). Boş = kurulu tarayıcıyı otomatik bul.",
-  "command.handoffFreebuff": "Freebuff'ta Devam Et (ücretsiz terminal agent'ı)"
+  "command.handoffFreebuff": "Freebuff'ta Devam Et (ücretsiz terminal agent'ı)",
+  "config.memory.learn": "Kod değiştiren bir görevden sonra agent'tan proje hakkında en fazla 3 kalıcı ders (çalışan komutlar, tuzaklar, kurallar) iste ve yenilerini .project-ai/lessons.md dosyasına ekle. Yalnızca .project-ai/ klasörü olan projelerde (Orka: Proje Hafızasını Başlat)."
 }
