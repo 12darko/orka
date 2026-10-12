@@ -1,7 +1,7 @@
 import { t } from '../i18n';
 import type { Tool } from './Tool';
 import { ToolError, truncateMiddle } from './Tool';
-import { resolveInWorkspace, toRelative } from './workspace';
+import { isViewableFile, resolveInWorkspace, toRelative } from './workspace';
 
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_BODY_BYTES = 3_000_000;
@@ -155,7 +155,11 @@ function parseHttpUrl(raw: string): URL {
 function resolveTarget(raw: string, root: string): { url: URL; file?: undefined } | { url?: undefined; file: string } {
   if (/^https?:\/\//i.test(raw.trim())) return { url: parseHttpUrl(raw) };
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw.trim())) throw new ToolError(`Only http(s) URLs or workspace files can be opened: ${raw}`);
-  return { file: resolveInWorkspace(root, raw) };
+  const file = resolveInWorkspace(root, raw);
+  if (!isViewableFile(file)) {
+    throw new ToolError(`Only web pages, images, PDFs and text files can be opened in the browser: ${raw}. Use open_file to show other files in the editor.`);
+  }
+  return { file };
 }
 
 function isLocalHost(url: URL): boolean {

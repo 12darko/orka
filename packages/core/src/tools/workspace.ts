@@ -140,6 +140,16 @@ export function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${re}$`, 'i');
 }
 
+/**
+ * Files that may be handed to the system's default app: pages, images, PDFs and text. Anything
+ * else (scripts, executables, shortcuts, installers) could run when "opened", so it never is.
+ */
+const VIEWABLE_FILE = /\.(html?|xhtml|svg|pdf|png|jpe?g|gif|webp|bmp|ico|md|markdown|txt)$/i;
+
+export function isViewableFile(file: string): boolean {
+  return VIEWABLE_FILE.test(file);
+}
+
 export function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import type { ApprovalRequest, ApprovalResponse, CommandOptions, CommandResult, DirEntry, Host } from './Host';
 import { closeBrowser } from '../browser/HeadlessBrowser';
 import { BackgroundProcess } from './processes';
+import { isViewableFile } from '../tools/workspace';
 
 export interface NodeHostOptions {
   workspaceRoot: string;
@@ -33,7 +34,7 @@ export class NodeHost implements Host {
     const child = spawn(this.shellCommand.file, this.shellCommand.args(options.command), {
       cwd: options.cwd,
       // No CI flag here (dev servers behave differently in CI); don't let tools open browsers on their own.
-      env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1', BROWSER: 'none' },
+      env: shellEnv(this.shellCommand.file, { FORCE_COLOR: '0', NO_COLOR: '1', BROWSER: 'none' }),
       windowsHide: true,
       detached: process.platform !== 'win32',
     });
@@ -58,8 +59,10 @@ export class NodeHost implements Host {
     this.shellName = path.basename(this.shellCommand.file).replace(/\.exe$/i, '');
   }
 
-  /** Open a URL or file with the operating system's default handler (the browser for web pages). */
+  /** Open a URL or a viewable file (page, image, PDF, text) with the operating system's default handler. */
   async openUrl(target: string): Promise<void> {
+    // The default handler of a script or executable runs it: only ever hand over viewable files.
+    if (!/^https?:\/\//i.test(target) && !isViewableFile(target)) throw new Error(`Refusing to open ${target}: only web pages, images, PDFs and text files.`);
     const [file, args] =
       process.platform === 'win32' ? ['explorer.exe', [target]] : process.platform === 'darwin' ? ['open', [target]] : ['xdg-open', [target]];
     await new Promise<void>((resolve, reject) => {
@@ -119,7 +122,7 @@ export class NodeHost implements Host {
       let settled = false;
       const child = spawn(this.shellCommand.file, this.shellCommand.args(options.command), {
         cwd: options.cwd,
-        env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1', CI: process.env.CI ?? '1' },
+        env: shellEnv(this.shellCommand.file, { FORCE_COLOR: '0', NO_COLOR: '1', CI: process.env.CI ?? '1' }),
         windowsHide: true,
         // Own process group on POSIX so a timeout/stop can kill the whole tree.
         detached: process.platform !== 'win32',
@@ -164,6 +167,17 @@ export class NodeHost implements Host {
     if (this.options.approve) return this.options.approve(request);
     return Promise.resolve({ approved: false, feedback: 'No approval handler is configured.' });
   }
+}
+
+/**
+ * The environment for a command run by `shell`. Windows PowerShell 5.1 started from PowerShell 7
+ * inherits a PSModulePath that points at PowerShell 7's modules, which it cannot load (built-in
+ * commands such as ConvertTo-SecureString then fail): let it rebuild its own default instead.
+ */
+export function shellEnv(shell: string, extra: Record<string, string> = {}, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env, ...extra };
+  if (/^powershell(\.exe)?$/i.test(path.basename(shell))) for (const key of Object.keys(out)) if (key.toLowerCase() === 'psmodulepath') delete out[key];
+  return out;
 }
 
 function resolveShell(explicit?: string): { file: string; args: (command: string) => string[] } {

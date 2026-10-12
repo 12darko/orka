@@ -155,6 +155,11 @@ describe('web tools', () => {
     await assert.rejects(openBrowserTool.execute({ target: 'missing.html' }, ctx()), /File not found/);
     assert.throws(() => openBrowserTool.describe({ target: 'ftp://example.com' }, ctx()), /Only http\(s\) URLs or workspace files/);
     assert.throws(() => openBrowserTool.describe({ target: '../outside.html' }, ctx()), /outside/i);
+    // Opening a script or executable with the system's default app would run it: never, in any mode.
+    for (const target of ['run.bat', 'tool.exe', 'setup.ps1', 'link.lnk', 'page.html.cmd', 'a.html::$DATA']) {
+      assert.throws(() => openBrowserTool.describe({ target }, ctx()), /Only web pages, images, PDFs and text files/, target);
+    }
+    await assert.rejects(new NodeHost({ workspaceRoot: ws.root }).openUrl(path.join(ws.root, 'run.bat')), /Refusing to open/);
   });
 
   it('open_file shows a workspace file (Markdown as preview)', async () => {

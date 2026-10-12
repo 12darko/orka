@@ -11,6 +11,7 @@ import { openBrowserTool, openFileTool, webFetchTool } from './WebTools';
 
 export * from './Tool';
 export { htmlToText } from './WebTools';
+export { isViewableFile } from './workspace';
 export { outlineText } from './OutlineTools';
 export { applyEdit } from './FileTools';
 export { runGit } from './GitTools';

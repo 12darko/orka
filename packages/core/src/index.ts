@@ -1,7 +1,7 @@
 export * from './types';
 export * from './providers';
 export * from './host/Host';
-export { NodeHost, type NodeHostOptions } from './host/NodeHost';
+export { NodeHost, type NodeHostOptions, shellEnv } from './host/NodeHost';
 export { BackgroundProcess } from './host/processes';
 export { browserFor, closeBrowser, findBrowser, HeadlessBrowser } from './browser/HeadlessBrowser';
 export * from './permissions/PermissionManager';
@@ -14,6 +14,7 @@ export * from './tools';
 export { ContextBuilder, type EditorContext } from './context/ContextBuilder';
 export { scanProject, type ProjectInfo } from './context/ProjectScanner';
 export { initProjectMemory, loadProjectMemory, MEMORY_DIR } from './memory/ProjectMemory';
+export { describeHookResult, hasHooks, type HookCommand, type HookResult, hooksForFile, type HooksConfig, NO_HOOKS, readHooks, runHook } from './hooks/Hooks';
 export * from './orchestrator/events';
 export { isSimpleRequest } from './orchestrator/routing';
 export { type AttachedImage, Orchestrator, type OrchestratorOptions, type OrchestratorSettings, type SubagentSupport } from './orchestrator/Orchestrator';

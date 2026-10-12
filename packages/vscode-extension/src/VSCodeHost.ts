@@ -1,4 +1,4 @@
-import { type ApprovalRequest, type ApprovalResponse, type BackgroundProcess, type CommandOptions, type CommandResult, NodeHost } from '@orka/core';
+import { type ApprovalRequest, type ApprovalResponse, type BackgroundProcess, type CommandOptions, type CommandResult, isViewableFile, NodeHost } from '@orka/core';
 import { existsSync } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
@@ -49,6 +49,8 @@ export class VSCodeHost extends NodeHost {
   /** Web pages open in the system browser (or VS Code's Simple Browser); files with their default app. */
   override async openUrl(target: string, options: { inEditor?: boolean } = {}): Promise<void> {
     const web = /^https?:\/\//i.test(target);
+    // The default app of a script or executable runs it: only ever hand over viewable files.
+    if (!web && !isViewableFile(target)) throw new Error(`Refusing to open ${target}: only web pages, images, PDFs and text files.`);
     if (web && options.inEditor) {
       try {
         await vscode.commands.executeCommand('simpleBrowser.show', target);
