@@ -106,7 +106,7 @@ describe('Orka desktop app', { skip: (!existsSync(APP) && 'build first (npm run 
   /** Start the app without a window; resolves with its start URL. */
   function launch(folder = work) {
     app = spawn(process.execPath, [APP, folder, '--no-window'], {
-      env: { ...process.env, ORKA_HOME: home, ANTHROPIC_BASE_URL: baseURL, ANTHROPIC_API_KEY: 'test-key-for-fake-server' },
+      env: { ...process.env, ORKA_HOME: home, ORKA_DEBUG: '1', ANTHROPIC_BASE_URL: baseURL, ANTHROPIC_API_KEY: 'test-key-for-fake-server' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = '';

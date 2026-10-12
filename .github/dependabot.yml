@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      provider-sdks:
+        patterns: ['@anthropic-ai/*', 'openai', '@google/genai']
+      build-tools:
+        patterns: ['esbuild', 'typescript', '@types/*', '@vscode/*', 'marked']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

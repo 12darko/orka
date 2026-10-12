@@ -6,13 +6,17 @@ import * as path from 'node:path';
 const SERVICE = 'Orka';
 
 function run(file: string, args: string[], options: { env?: NodeJS.ProcessEnv; input?: string } = {}): Promise<string> {
+  const started = Date.now();
+  const debug = (line: string) => process.env.ORKA_DEBUG && console.error(`[orka] ${path.basename(file)}: ${line} after ${Date.now() - started} ms`);
   return new Promise((resolve, reject) => {
     // Generous: the first PowerShell start on a cold or busy machine can take well over 20 seconds.
     const child = execFile(file, args, { env: options.env ?? process.env, windowsHide: true, timeout: 90_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+      debug(error ? `failed (${error.message.split('\n')[0]}; ${stderr.trim().slice(0, 300)})` : 'done');
       if (error) reject(new Error(stderr.trim() || error.message));
       else resolve(stdout);
     });
-    if (options.input !== undefined) child.stdin?.end(options.input);
+    // Always close stdin: PowerShell can wait for the end of a redirected input before it exits.
+    child.stdin?.end(options.input ?? '');
   });
 }
 

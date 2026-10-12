@@ -156,6 +156,8 @@ export class DesktopShell implements AppShell, Disposable {
   }
 
   async message(level: 'info' | 'warning' | 'error', text: string, options: { modal?: boolean; detail?: string } = {}, ...actions: string[]): Promise<string | undefined> {
+    // Errors also go to the terminal the app was started from, where they outlive the in-window notice.
+    if (level === 'error') console.error(`[orka] ${text}${options.detail ? `\n${options.detail}` : ''}`);
     const answer = this.ask({ kind: 'message', level, text, detail: options.detail, modal: !!options.modal, actions });
     // A notice without choices does not hold anyone up.
     if (!options.modal && !actions.length) return undefined;
