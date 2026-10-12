@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "webview-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "preview", "-w", "@orka/app"],
+      "port": 5178,
+      "autoPort": true
+    }
+  ]
+}

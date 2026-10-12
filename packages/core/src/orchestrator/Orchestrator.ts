@@ -1,0 +1,1345 @@
+import * as path from 'node:path';
+import { DEFAULT_SUBAGENTS, READONLY_TOOLS, type SubagentProfile } from '../agents/subagents';
+import type { TaskSnapshot } from '../persistence/TaskStore';
+import { ChangeTracker } from '../changes/ChangeTracker';
+import type { CommandChange, ShadowGit } from '../changes/ShadowGit';
+import { ContextBuilder, type EditorContext } from '../context/ContextBuilder';
+import { t } from '../i18n';
+import { createSkillTool, invokedSkillBlock, type Skill } from '../skills/Skills';
+import {
+  type CheckpointKind,
+  describeTurn,
+  interventionText,
+  Supervisor,
+  type SupervisorReview,
+  type SupervisorSettings,
+} from '../supervisor/Supervisor';
+import type { Host } from '../host/Host';
+import type { PermissionManager } from '../permissions/PermissionManager';
+import { formatPlan, type Plan } from '../planning/Plan';
+import { type AIProvider, type ChatResponse, isAbortError, ProviderError, type ProviderStreamEvent } from '../providers/AIProvider';
+import { INVALID_JSON_KEY } from '../providers/OpenAIProvider';
+import { defaultTools } from '../tools';
+import { type Tool, type ToolAction, type ToolContext, ToolError, toSpec, truncateMiddle, validateInput } from '../tools/Tool';
+import {
+  addUsage,
+  type ChatMessage,
+  emptyUsage,
+  type ImageBlock,
+  messageText,
+  type ToolCallBlock,
+  type ToolResultBlock,
+  type Usage,
+} from '../types';
+import type { AgentEvent, AgentPhase, AgentUsage, RunEndReason, ToolCallView } from './events';
+import { recordChangesSince } from '../handoff/Handoff';
+import { isSimpleRequest } from './routing';
+
+export interface OrchestratorSettings {
+  /** Model turns per user request before pausing for the user. */
+  maxIterations: number;
+  /** Ask the model to verify (build/test) when it changed code but never ran anything after. */
+  autoVerify: boolean;
+  commandTimeoutMs: number;
+  customInstructions?: string;
+  /** How many read-only sub-agents may run at the same time (1 = one after another). Default 3. */
+  maxParallelSubagents?: number;
+  /** Replace a long conversation with a handoff note once a request's prompt exceeds the threshold. */
+  compaction?: { auto: boolean; thresholdTokens: number };
+  /**
+   * Pause a request once it has used this many new tokens (input + output + cache writes of every
+   * agent; cache reads are not counted). 0 or undefined: no limit.
+   */
+  tokenBudget?: number;
+}
+
+/** An image the user attached to a request (e.g. a pasted screenshot). */
+export interface AttachedImage {
+  name: string;
+  mediaType: ImageBlock['mediaType'];
+  /** Base64 data, sent to the model. */
+  data: string;
+  /** Small data URL for the chat view (not sent to the model). */
+  thumb?: string;
+}
+
+export interface SubagentSupport {
+  /** Profiles available to the main agent; read once per task (the tool list is frozen per task). */
+  getProfiles(): SubagentProfile[];
+  /** Provider for a sub-agent; may differ from the main agent's (e.g. Gemini for explore). */
+  getProvider(name: string): AIProvider;
+}
+
+export interface OrchestratorOptions {
+  host: Host;
+  /** Called at the start of every model turn, so provider/model changes apply immediately. */
+  getProvider: () => AIProvider;
+  permissions: PermissionManager;
+  getSettings: () => OrchestratorSettings;
+  tools?: Tool[];
+  /** Enables the run_subagent tool. */
+  subagents?: SubagentSupport;
+  /** Share a change tracker (sub-agents write into their parent's change list). */
+  changes?: ChangeTracker;
+  /** Run as this sub-agent (different system prompt) instead of as the main agent. */
+  role?: SubagentProfile;
+  /** An overseer model that reviews the main agent's steps and corrects it. */
+  supervisor?: {
+    getProvider(): AIProvider;
+    getSettings(): SupervisorSettings;
+  };
+  /** Skills the agent may load; read once per task (frozen with the system prompt). */
+  skills?: () => readonly Skill[];
+  /**
+   * A provider to continue on when the agent's own hits a usage/rate limit or is unavailable
+   * (e.g. the Claude Code session limit). Used for the rest of that request.
+   */
+  getFallbackProvider?: () => AIProvider | undefined;
+  /** A lighter model for short questions (answered without changes); the main model does everything else. */
+  getLightProvider?: () => AIProvider | undefined;
+  /** Snapshots around terminal commands, so the files they change can be reverted. */
+  commandSnapshots?: ShadowGit;
+  /** More tools for new tasks, e.g. from MCP servers; loaded when a task starts and frozen with it. */
+  getExtraTools?: () => Promise<Tool[]>;
+}
+
+const MAX_TOOL_RESULT_CHARS = 40_000;
+/** How much of the task's diff the supervisor sees in its final review. */
+const FINAL_REVIEW_DIFF_CHARS = 16_000;
+const NON_CODE_EXTENSIONS = new Set(['.md', '.markdown', '.txt', '.rst']);
+const SUBAGENT_TOOL = 'run_subagent';
+const SUPERVISOR_TOOL = 'ask_supervisor';
+/** Tools that change nothing the supervisor needs to review (showing things, asking for advice). */
+const SHOW_TOOLS = new Set(['open_file', 'open_browser', SUPERVISOR_TOOL]);
+/** Checkpoint mode: steps without visible progress (no code change, no plan step done) before a progress check. */
+const PROGRESS_STEPS = 12;
+/** Tool activity lines kept for the supervisor's briefs. */
+const ACTIVITY_LINES = 12;
+
+/** Per-request supervisor state. */
+interface Watch {
+  active: boolean;
+  /** Checkpoint mode: reviews only at plan / stuck / no-progress / final, from compact briefs. */
+  checkpoints: boolean;
+  interventions: number;
+  consultations: number;
+  pending?: Promise<SupervisorReview | undefined>;
+  planChecks: number;
+  stepsSinceProgress: number;
+  /** Recent tool outcomes, for stuck detection. */
+  recent: Array<{ key: string; error: boolean }>;
+}
+
+/**
+ * Runs the agent loop: UNDERSTAND -> ANALYZE -> PLAN -> EXECUTE -> CHECK -> TEST/BUILD ->
+ * (error? REPLAN : COMPLETE). The model makes the decisions; the orchestrator owns the
+ * conversation, executes tools, enforces permissions, tracks changes and plan, and pushes the
+ * model to verify its work before it declares the task complete.
+ *
+ * The conversation is append-only: earlier turns are never edited, the system prompt and tool
+ * list are frozen for the whole task. This keeps prompt caching effective and keeps replayed
+ * reasoning blocks valid.
+ */
+export class Orchestrator {
+  readonly changes: ChangeTracker;
+  private readonly context: ContextBuilder;
+  private readonly baseTools: Tool[];
+  /** Tools of the current task, frozen when its system prompt is built. */
+  private taskTools: Tool[] = [];
+  private taskToolsByName = new Map<string, Tool>();
+  private taskProfiles: SubagentProfile[] = [];
+  private taskSkills: readonly Skill[] = [];
+  private taskSupervised = false;
+  /** Tools from getExtraTools (MCP), loaded once per task. */
+  private extraTools: Tool[] = [];
+  private extraLoaded = false;
+  /** Supervisor state of the running request (read by the ask_supervisor tool). */
+  private watch?: Watch;
+  /** One line per recent tool call, for the supervisor's briefs. */
+  private activity: string[] = [];
+  /** A file that may hold secrets, read in this task: from then on web access always asks. */
+  private secretFile?: string;
+  /** Provider and model of the last main-agent turn, to notice a switch mid-task. */
+  private lastProviderKey?: string;
+  private readonly listeners = new Set<(event: AgentEvent) => void>();
+  private readonly unsubscribeChanges?: () => void;
+  private readonly supervisor?: Supervisor;
+  private lastModel = '';
+  /** Prompt size of the last main-agent request (input incl. cache), to decide on compaction. */
+  private lastPromptTokens = 0;
+  /** Verbatim user requests and supervisor corrections of this task, for compaction handoffs. */
+  private userRequests: string[] = [];
+  private corrections: string[] = [];
+  /** Token use per agent role in this task: main, supervisor, each sub-agent. */
+  private agentUsage = new Map<string, AgentUsage>();
+
+  private messages: ChatMessage[] = [];
+  private systemPrompt?: string;
+  private plan?: Plan;
+  private notes: string[] = [];
+  private abort?: AbortController;
+  private idCounter = 0;
+  /** Message of the last error that ended a run (read by a parent agent). */
+  lastError?: string;
+
+  constructor(private readonly options: OrchestratorOptions) {
+    this.baseTools = options.tools ?? defaultTools();
+    this.changes = options.changes ?? new ChangeTracker(options.host);
+    this.context = new ContextBuilder(options.host);
+    // A shared tracker is published by its owner.
+    if (!options.changes) this.unsubscribeChanges = this.changes.onDidChange(() => void this.publishChanges());
+    if (options.supervisor && !options.role) {
+      this.supervisor = new Supervisor(
+        () => options.supervisor!.getProvider(),
+        () => this.context.projectSummary,
+      );
+    }
+  }
+
+  dispose(): void {
+    this.stop();
+    this.unsubscribeChanges?.();
+    this.listeners.clear();
+  }
+
+  on(listener: (event: AgentEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  get isRunning(): boolean {
+    return !!this.abort;
+  }
+
+  get currentPlan(): Plan | undefined {
+    return this.plan;
+  }
+
+  get history(): readonly ChatMessage[] {
+    return this.messages;
+  }
+
+  /** Tokens used by this task: main agent, sub-agents and supervisor. */
+  get totalUsage(): Usage {
+    return this.combinedUsage();
+  }
+
+  private combinedUsage(): Usage {
+    let total = emptyUsage();
+    for (const entry of this.agentUsage.values()) total = addUsage(total, entry.usage);
+    return total;
+  }
+
+  /** Per-agent usage of this task, main agent first. */
+  get usageByAgent(): AgentUsage[] {
+    return [...this.agentUsage.values()].sort((a, b) => rank(a.agent) - rank(b.agent));
+  }
+
+  private recordUsage(agent: string, provider: string, model: string, usage: Usage, calls = 1): void {
+    const entry = this.agentUsage.get(agent) ?? { agent, provider, model, calls: 0, usage: emptyUsage() };
+    entry.provider = provider;
+    entry.model = model || entry.model;
+    entry.calls += calls;
+    entry.usage = addUsage(entry.usage, usage);
+    this.agentUsage.set(agent, entry);
+  }
+
+  private emitUsage(): void {
+    this.emit({ type: 'usage', total: this.combinedUsage(), model: this.lastModel, byAgent: this.usageByAgent });
+  }
+
+  /** Tell the model about something that happened outside the loop (e.g. the user reverted a file). */
+  addNote(note: string): void {
+    this.notes.push(note);
+  }
+
+  stop(): void {
+    this.abort?.abort();
+  }
+
+  /** Durable state of the current task, for the history. */
+  snapshot(): Pick<TaskSnapshot, 'messages' | 'systemPrompt' | 'subagentProfiles' | 'plan' | 'usageByAgent' | 'skills' | 'checkpoint'> {
+    return {
+      messages: this.messages,
+      systemPrompt: this.systemPrompt,
+      subagentProfiles: this.taskProfiles.map((p) => p.name),
+      plan: this.plan,
+      usageByAgent: this.usageByAgent,
+      skills: this.taskSkills.map((s) => s.name),
+      checkpoint: this.options.changes ? undefined : this.changes.exportCheckpoint(),
+    };
+  }
+
+  /**
+   * Continue a saved task: its conversation, frozen system prompt and tool list come back exactly
+   * as they were, so the next turn extends the same prefix. Its unaccepted file changes come back
+   * too (they can still be reverted). The supervisor starts a fresh review.
+   */
+  restore(state: Pick<TaskSnapshot, 'messages' | 'systemPrompt' | 'subagentProfiles' | 'plan' | 'usageByAgent' | 'skills' | 'checkpoint'>): void {
+    if (this.abort) throw new Error('Stop the agent before opening another task.');
+    this.messages = [...state.messages];
+    this.systemPrompt = state.systemPrompt;
+    this.plan = state.plan;
+    this.notes = [];
+    this.agentUsage = new Map(state.usageByAgent.map((u) => [u.agent, { ...u, usage: { ...u.usage } }]));
+    this.lastProviderKey = undefined;
+    this.userRequests = [];
+    this.corrections = [];
+    this.supervisor?.reset();
+    this.options.permissions.resetSession();
+    if (!this.options.changes) this.changes.importCheckpoint(state.checkpoint ?? []);
+    // Rebuild from the full catalog: the task's tools must not depend on today's settings.
+    const catalog = [...(this.options.subagents?.getProfiles() ?? []), ...DEFAULT_SUBAGENTS];
+    const profiles = state.subagentProfiles
+      .map((name) => catalog.find((p) => p.name === name))
+      .filter((p): p is SubagentProfile => !!p);
+    const skillNames = new Set(state.skills ?? []);
+    const skills = (this.options.skills?.() ?? []).filter((s) => skillNames.has(s.name));
+    const askedBefore = state.messages.some((m) => m.role === 'assistant' && m.content.some((b) => b.type === 'tool_call' && b.name === SUPERVISOR_TOOL));
+    this.activity = [];
+    this.secretFile = undefined;
+    this.extraTools = [];
+    this.extraLoaded = false;
+    this.freezeTools(state.systemPrompt ? profiles : [], state.systemPrompt ? skills : [], !!state.systemPrompt && (askedBefore || this.supervisorEnabled()));
+    this.emit({ type: 'reset' });
+    this.emit({ type: 'plan', plan: this.plan });
+    this.emitUsage();
+  }
+
+  private freezeTools(profiles: SubagentProfile[], skills: readonly Skill[], supervised: boolean): void {
+    this.taskProfiles = profiles;
+    this.taskSkills = skills;
+    this.taskSupervised = supervised;
+    const own = new Set(this.baseTools.map((tool) => tool.name));
+    this.taskTools = [
+      ...this.baseTools,
+      ...(profiles.length ? [this.createSubagentTool(profiles)] : []),
+      ...(skills.length ? [createSkillTool(skills)] : []),
+      ...(supervised ? [this.createSupervisorTool()] : []),
+      ...this.extraTools.filter((tool) => !own.has(tool.name)),
+    ];
+    this.taskToolsByName = new Map(this.taskTools.map((tool) => [tool.name, tool]));
+  }
+
+  /** Load the extra (MCP) tools; a failure only costs those tools, never the task. */
+  private async loadExtraTools(): Promise<void> {
+    this.extraLoaded = true;
+    if (!this.options.getExtraTools) return;
+    try {
+      this.extraTools = await this.options.getExtraTools();
+    } catch (error) {
+      this.extraTools = [];
+      this.emit({ type: 'notice', level: 'warning', message: t('MCP tools are not available: {error}', { error: errorMessage(error) }) });
+    }
+  }
+
+  /** The fallback provider for an error that a different provider can get past (limits, outages). */
+  private fallbackFor(failed: AIProvider, error: unknown): AIProvider | undefined {
+    if (!(error instanceof ProviderError) || !['rate_limit', 'server', 'network'].includes(error.kind)) return undefined;
+    try {
+      const next = this.options.getFallbackProvider?.();
+      return next && !(next.id === failed.id && next.model === failed.model) ? next : undefined;
+    } catch {
+      return undefined; // e.g. the fallback has no API key
+    }
+  }
+
+  private supervisorEnabled(): boolean {
+    return !!this.supervisor && !!this.options.supervisor?.getSettings().enabled;
+  }
+
+  /** Start a fresh task: new conversation, new system prompt snapshot, no plan. */
+  reset(): void {
+    this.stop();
+    this.messages = [];
+    this.systemPrompt = undefined;
+    this.plan = undefined;
+    this.notes = [];
+    this.agentUsage.clear();
+    this.lastPromptTokens = 0;
+    this.lastProviderKey = undefined;
+    this.userRequests = [];
+    this.corrections = [];
+    this.activity = [];
+    this.secretFile = undefined;
+    this.extraTools = [];
+    this.extraLoaded = false;
+    this.supervisor?.reset();
+    this.options.permissions.resetSession();
+    // The previous task's pending changes stay with that task (see snapshot/restore).
+    if (!this.options.changes) this.changes.clear();
+    this.emit({ type: 'reset' });
+    this.emit({ type: 'plan', plan: undefined });
+  }
+
+  /**
+   * Run one user request to completion. `attachments` are files the user attached (e.g. with @),
+   * sent to the model with the request but shown to the user by name only. `skills` are skills the
+   * user invoked for this request (e.g. "/unity ..."); their instructions ride along with it.
+   */
+  async run(
+    userText: string,
+    editor?: EditorContext,
+    attachments: Array<{ path: string; content: string }> = [],
+    options: { skills?: readonly Skill[]; images?: readonly AttachedImage[] } = {},
+  ): Promise<RunEndReason> {
+    if (this.abort) throw new Error('The agent is already running.');
+    const abort = new AbortController();
+    this.abort = abort;
+    this.lastError = undefined;
+    this.emit({ type: 'run_started' });
+    let reason: RunEndReason = 'completed';
+    try {
+      reason = await this.loop(userText, editor, abort.signal, attachments, options.skills ?? [], options.images ?? []);
+    } catch (error) {
+      if (isAbortError(error) || abort.signal.aborted) {
+        reason = 'stopped';
+      } else {
+        reason = 'error';
+        this.lastError = errorMessage(error);
+        const action = error instanceof ProviderError ? error.action : undefined;
+        this.emit({ type: 'notice', level: 'error', message: this.lastError, action });
+      }
+    } finally {
+      this.abort = undefined;
+      this.setPhase('idle');
+      this.emit({ type: 'run_finished', reason });
+    }
+    return reason;
+  }
+
+  private async loop(
+    userText: string,
+    editor: EditorContext | undefined,
+    signal: AbortSignal,
+    attachments: Array<{ path: string; content: string }>,
+    invokedSkills: readonly Skill[],
+    images: readonly AttachedImage[],
+  ): Promise<RunEndReason> {
+    const settings = this.options.getSettings();
+    // Resolve the provider first so a missing API key fails before anything is recorded.
+    let provider = this.options.getProvider();
+
+    this.setPhase('thinking');
+    if (!this.systemPrompt) {
+      // Freeze the task's tools, skills and prompt together; they must stay identical for the whole task.
+      await this.loadExtraTools();
+      const supervised = !this.options.role && this.supervisorEnabled();
+      this.freezeTools(this.options.role ? [] : (this.options.subagents?.getProfiles() ?? []), this.options.skills?.() ?? [], supervised);
+      this.systemPrompt = await this.context.buildSystemPrompt(settings.customInstructions, {
+        role: this.options.role,
+        subagents: this.taskProfiles,
+        skills: this.taskSkills,
+        supervisor: supervised,
+        mcpServers: [...new Set(this.extraTools.map((tool) => /^mcp__(.+?)__/.exec(tool.name)?.[1]).filter((s): s is string => !!s))],
+      });
+    } else if (!this.extraLoaded) {
+      // A restored task: its MCP tools come back once, when it continues.
+      await this.loadExtraTools();
+      this.freezeTools(this.taskProfiles, this.taskSkills, this.taskSupervised);
+    }
+    if (this.systemPrompt && !this.context.projectSummary) {
+      // A restored task keeps its frozen prompt; rescan only for the supervisor's project context.
+      await this.context.buildSystemPrompt(settings.customInstructions, { subagents: this.taskProfiles });
+    }
+    const turnContext = await this.context.buildTurnContext(editor, this.options.permissions.getMode(), this.notes);
+    this.notes = [];
+    const attached = [
+      ...invokedSkills.map(invokedSkillBlock),
+      ...attachments.map((a) => `<attached_file path="${a.path}">\n${truncateMiddle(a.content, 60_000)}\n</attached_file>`),
+    ].join('\n\n');
+    this.messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: `${turnContext}\n\n${userText}${attached ? `\n\n${attached}` : ''}` },
+        ...images.map((i): ImageBlock => ({ type: 'image', mediaType: i.mediaType, data: i.data })),
+      ],
+    });
+    this.emit({
+      type: 'user_message',
+      id: this.nextId('u'),
+      text: userText,
+      attachments: attachments.length ? attachments.map((a) => a.path) : undefined,
+      skills: invokedSkills.length ? invokedSkills.map((s) => s.name) : undefined,
+      images: images.length ? images.map((i) => ({ name: i.name, thumb: i.thumb })) : undefined,
+    });
+    this.userRequests.push(userText);
+
+    const task = { codeChangedSinceCheck: false, verifyNudged: false };
+    const oversight = this.supervisor ? this.options.supervisor!.getSettings() : undefined;
+    const watch: Watch = {
+      active: !!oversight?.enabled,
+      checkpoints: oversight?.frequency === 'checkpoints',
+      interventions: 0,
+      consultations: 0,
+      planChecks: 0,
+      stepsSinceProgress: 0,
+      recent: [],
+    };
+    this.watch = watch;
+    if (watch.active && !watch.checkpoints) this.supervisor!.note(`# The user's request\n${userText}`);
+    const spentAtStart = spent(this.combinedUsage());
+    /** Set once the agent's provider hit a limit in this request: the fallback finishes it. */
+    let fallback: AIProvider | undefined;
+    // A short question can go to the lighter model; the main model takes over if work is needed.
+    let light: AIProvider | undefined;
+    if (!this.options.role && !images.length && !invokedSkills.length && isSimpleRequest(userText)) {
+      try {
+        light = this.options.getLightProvider?.();
+      } catch {
+        light = undefined; // e.g. no API key for the light model: just use the main one
+      }
+      if (light) {
+        this.emit({
+          type: 'notice',
+          level: 'info',
+          message: t('A simple question: {model} answers it to save tokens. Changes would go back to the main model.', { model: `${light.label} · ${light.model}` }),
+        });
+      }
+    }
+
+    for (let iteration = 0; ; iteration++) {
+      if (signal.aborted) return 'stopped';
+      if (iteration >= settings.maxIterations) {
+        this.emit({
+          type: 'notice',
+          level: 'warning',
+          message: t('Paused after {n} steps. Send "continue" to let the agent keep going.', { n: settings.maxIterations }),
+        });
+        return 'max_iterations';
+      }
+      const used = spent(this.combinedUsage()) - spentAtStart;
+      if (settings.tokenBudget && settings.tokenBudget > 0 && used >= settings.tokenBudget) {
+        this.emit({
+          type: 'notice',
+          level: 'warning',
+          message: t('Paused: this request used {used} tokens (budget {budget}). Send "continue" to allow another round, or raise the budget in the settings.', {
+            used: used.toLocaleString('en-US'),
+            budget: settings.tokenBudget.toLocaleString('en-US'),
+          }),
+        });
+        return 'budget';
+      }
+
+      provider = fallback ?? light ?? this.options.getProvider();
+      const providerKey = `${provider.id}|${provider.model}`;
+      if (!this.options.role && this.lastProviderKey && this.lastProviderKey !== providerKey) {
+        this.emit({
+          type: 'notice',
+          level: 'info',
+          message: t('The main agent now runs on {model}. It continues this task with the same conversation.', { model: `${provider.label} · ${provider.model}` }),
+        });
+      }
+      this.lastProviderKey = providerKey;
+      const compaction = settings.compaction;
+      if (compaction?.auto && this.lastPromptTokens >= compaction.thresholdTokens && this.messages.length > 2) {
+        await this.compactConversation('auto', signal);
+      }
+      this.setPhase('thinking');
+      const assistantId = this.nextId('a');
+      this.emit({ type: 'assistant_start', id: assistantId });
+      let response: ChatResponse;
+      try {
+        response = await provider.chat(
+          { system: this.systemPrompt!, messages: this.messages, tools: this.taskTools.map(toSpec), signal },
+          (event) => this.forwardStreamEvent(assistantId, event),
+        );
+      } catch (error) {
+        const next = !fallback && !signal.aborted ? this.fallbackFor(provider, error) : undefined;
+        if (!next) throw error;
+        fallback = next;
+        this.emit({ type: 'assistant_end', id: assistantId, text: '', model: '' });
+        this.emit({
+          type: 'notice',
+          level: 'warning',
+          message: t('{provider} is not available right now ({reason}); this request continues on {fallback}.', {
+            provider: `${provider.label} · ${provider.model}`,
+            reason: (error as ProviderError).kind === 'rate_limit' ? t('usage limit') : t('connection or server error'),
+            fallback: `${next.label} · ${next.model}`,
+          }),
+        });
+        // The switch is announced here; don't announce it again as a provider change.
+        this.lastProviderKey = `${next.id}|${next.model}`;
+        continue;
+      }
+      this.messages.push(response.message);
+      this.lastModel = response.model;
+      this.lastPromptTokens = response.usage.inputTokens + response.usage.cacheReadTokens + response.usage.cacheWriteTokens;
+      this.recordUsage(this.options.role?.name ?? 'main', provider.id, response.model, response.usage);
+      this.emitUsage();
+      this.emit({ type: 'assistant_end', id: assistantId, text: messageText(response.message), model: response.model });
+
+      const calls = response.message.content.filter((b): b is ToolCallBlock => b.type === 'tool_call');
+
+      if (response.stopReason === 'refusal') {
+        this.answerUnexecuted(calls, 'Not executed: the response was declined by the model provider.');
+        this.emit({
+          type: 'notice',
+          level: 'error',
+          message: response.stopDetail
+            ? t('The model declined this request ({detail}). Try rephrasing it.', { detail: response.stopDetail })
+            : t('The model declined this request. Try rephrasing it.'),
+        });
+        return 'refusal';
+      }
+
+      if (response.stopReason === 'pause') continue;
+
+      if (light && calls.some((c) => !READONLY_TOOLS.has(c.name) && !SHOW_TOOLS.has(c.name) && !this.isParallelSafe(c))) {
+        // The light model wants to change something: that is the main model's job.
+        this.answerUnexecuted(calls, 'Not executed: this request needs changes, so the main model continues it.');
+        light = undefined;
+        this.lastProviderKey = undefined;
+        this.emit({ type: 'notice', level: 'info', message: t('This needs changes: the main model takes over.') });
+        continue;
+      }
+
+      if (calls.length === 0) {
+        if (response.stopReason === 'max_tokens') {
+          this.emit({ type: 'notice', level: 'warning', message: t('The response hit the output limit. Send "continue" to resume.') });
+          return 'completed';
+        }
+        // A correction from the review of the previous step takes precedence over finishing.
+        const late = await this.takeIntervention(watch);
+        if (late) {
+          this.messages.push({ role: 'user', content: [{ type: 'text', text: interventionText(late) }] });
+          continue;
+        }
+        if (settings.autoVerify && task.codeChangedSinceCheck && !task.verifyNudged) {
+          task.verifyNudged = true;
+          this.messages.push({ role: 'user', content: [{ type: 'text', text: this.verifyNudge() }] });
+          this.emit({ type: 'notice', level: 'info', message: t('Changes were not verified yet - asking the agent to build/test before finishing.') });
+          continue;
+        }
+        if (this.canIntervene(watch, oversight!)) {
+          let final: SupervisorReview | undefined;
+          if (watch.checkpoints || oversight!.frequency === 'final_only') {
+            // One stateless review of a compact brief: the requests, plan, diff, and the agent's answer.
+            final = await this.checkpoint('final', `# The agent's final answer\n${describeTurn(response.message)}`, watch, signal);
+          } else {
+            const diff = await this.changes.unifiedDiffs(FINAL_REVIEW_DIFF_CHARS).catch(() => '');
+            const changed = diff ? `Net changes of this task (unified diff):\n${diff}` : 'Files changed in this task: none';
+            watch.pending = this.startReview('final', `${describeTurn(response.message)}\n\n${changed}`, signal);
+            final = await this.takeIntervention(watch);
+          }
+          if (final) {
+            this.messages.push({ role: 'user', content: [{ type: 'text', text: interventionText(final) }] });
+            continue;
+          }
+        }
+        return 'completed';
+      }
+
+      if (response.stopReason === 'max_tokens') {
+        // A tool input cut off by the output limit can still parse; never run it.
+        this.answerUnexecuted(
+          calls,
+          'Not executed: your response hit the output token limit before this tool call was complete. ' +
+            'Retry with smaller inputs (for example several edit_file calls instead of one huge write_file).',
+        );
+        continue;
+      }
+
+      const results: ToolResultBlock[] = [];
+      const planBefore = planShape(this.plan);
+      const doneBefore = this.plan?.steps.filter((s) => s.status === 'completed').length ?? 0;
+      let progressed = false;
+      const limit = Math.max(1, settings.maxParallelSubagents ?? 3);
+      for (let i = 0; i < calls.length; ) {
+        if (signal.aborted) {
+          results.push({ type: 'tool_result', toolCallId: calls[i].id, content: 'Cancelled: the user stopped the agent.', isError: true });
+          this.emit({ type: 'tool_call', call: { ...this.placeholderView(calls[i]), status: 'cancelled' } });
+          i++;
+          continue;
+        }
+        // Consecutive read-only sub-agents cannot conflict with each other: run them side by side.
+        // Everything that can write (workers, edits, commands) stays strictly sequential.
+        let end = i + 1;
+        if (limit > 1 && this.isParallelSafe(calls[i])) while (end < calls.length && this.isParallelSafe(calls[end])) end++;
+        const outcomes = await mapLimit(calls.slice(i, end), limit, (call) => this.executeToolCall(call, signal));
+        for (const outcome of outcomes) {
+          results.push(outcome.result);
+          if (outcome.changedCode) {
+            task.codeChangedSinceCheck = true;
+            progressed = true;
+          }
+          if (outcome.ranCommand) task.codeChangedSinceCheck = false;
+        }
+        i = end;
+      }
+      this.noteActivity(calls, results, watch);
+      if (signal.aborted) {
+        this.messages.push({ role: 'user', content: results });
+        return 'stopped';
+      }
+      // In parallel mode the supervisor reviews in the background while the agent keeps working, and
+      // its correction for the previous step (if any) rides along with this step's results. In
+      // blocking mode the agent waits for this step's review before continuing.
+      let intervention = await this.takeIntervention(watch);
+      const acted = calls.some((c) => !READONLY_TOOLS.has(c.name) && !SHOW_TOOLS.has(c.name));
+      if (watch.checkpoints) {
+        // Checkpoints: look only at decisive moments, and wait for the answer (it is about what comes next).
+        const doneAfter = this.plan?.steps.filter((s) => s.status === 'completed').length ?? 0;
+        watch.stepsSinceProgress = progressed || doneAfter > doneBefore ? 0 : watch.stepsSinceProgress + 1;
+        const newPlan = planShape(this.plan) !== planBefore && !!this.plan?.steps.length;
+        const stuck = stuckReason(watch.recent);
+        let kind: CheckpointKind | undefined;
+        let why = '';
+        if (newPlan && watch.planChecks < 2) {
+          kind = 'plan';
+          watch.planChecks++;
+        } else if (stuck) {
+          kind = 'stuck';
+          why = stuck;
+          watch.recent = [];
+        } else if (watch.stepsSinceProgress >= PROGRESS_STEPS) {
+          kind = 'progress';
+          why = t('{n} steps without visible progress', { n: watch.stepsSinceProgress });
+          watch.stepsSinceProgress = 0;
+        }
+        if (kind && this.canIntervene(watch, oversight!)) {
+          intervention = (await this.checkpoint(kind, why ? `# Why you are being asked\n${why}` : '', watch, signal, why)) ?? intervention;
+        }
+      } else if (this.canIntervene(watch, oversight!) && (oversight!.frequency === 'every_turn' || (oversight!.frequency === 'on_changes' && acted))) {
+        watch.pending = this.startReview('step', describeTurn(response.message, results), signal);
+        if (oversight!.mode === 'blocking') intervention = (await this.takeIntervention(watch)) ?? intervention;
+      }
+      this.messages.push({
+        role: 'user',
+        content: intervention ? [...results, { type: 'text', text: interventionText(intervention) }] : results,
+      });
+    }
+  }
+
+  /** Compact the conversation now (e.g. the user's /compact). */
+  async compact(): Promise<boolean> {
+    if (this.abort) throw new Error('The agent is running; stop it or wait before compacting.');
+    if (this.messages.length < 3) {
+      this.emit({ type: 'notice', level: 'info', message: t('Nothing to compact yet.') });
+      return false;
+    }
+    const abort = new AbortController();
+    this.abort = abort;
+    this.emit({ type: 'run_started' });
+    let ok = false;
+    try {
+      ok = await this.compactConversation('manual', abort.signal);
+    } finally {
+      this.abort = undefined;
+      this.setPhase('idle');
+      this.emit({ type: 'run_finished', reason: abort.signal.aborted ? 'stopped' : 'completed' });
+    }
+    return ok;
+  }
+
+  /**
+   * Replace the conversation with one handoff message: a note the model writes for itself, plus
+   * the state the orchestrator knows for certain (plan, changed files, the user's requests,
+   * supervisor corrections, the latest tool results). The new history replays no earlier turns,
+   * so it is valid for every provider, and the system prompt and tools stay the same.
+   */
+  private async compactConversation(reason: 'auto' | 'manual', signal: AbortSignal): Promise<boolean> {
+    const id = this.nextId('c');
+    const beforeTokens = this.lastPromptTokens || estimateTokens(this.messages);
+    this.emit({ type: 'compaction', id, status: 'running', reason, beforeTokens });
+    this.setPhase('thinking');
+    try {
+      const provider = this.options.getProvider();
+      // Ask for the note at the end of the current history (same prefix: cheap with caching).
+      const request = [...this.messages];
+      const last = request[request.length - 1];
+      if (last.role === 'user') request[request.length - 1] = { role: 'user', content: [...last.content, { type: 'text', text: COMPACT_REQUEST }] };
+      else request.push({ role: 'user', content: [{ type: 'text', text: COMPACT_REQUEST }] });
+      const response = await provider.chat({ system: this.systemPrompt!, messages: request, tools: this.taskTools.map(toSpec), signal }, () => {});
+      this.recordUsage(this.options.role?.name ?? 'main', provider.id, response.model, response.usage);
+      const note = messageText(response.message).trim();
+      if (!note) throw new Error('The model returned an empty handoff note.');
+
+      const handoff = await this.buildHandoff(note, last);
+      this.messages = [{ role: 'user', content: [{ type: 'text', text: handoff }] }];
+      this.lastPromptTokens = 0;
+      // The supervisor's own history is replaced by the same handoff.
+      this.supervisor?.reset();
+      this.supervisor?.note(`# Handoff after compaction\n${handoff}`);
+      const afterTokens = estimateTokens(this.messages);
+      this.emit({ type: 'compaction', id, status: 'done', reason, beforeTokens, afterTokens, summary: note });
+      this.emitUsage();
+      return true;
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) {
+        this.emit({ type: 'compaction', id, status: 'error', reason, message: 'Compaction was cancelled.' });
+        throw error;
+      }
+      // Keep going on the full history; compaction is an optimization, not a requirement.
+      this.emit({ type: 'compaction', id, status: 'error', reason, message: errorMessage(error) });
+      return false;
+    }
+  }
+
+  private async buildHandoff(note: string, last: ChatMessage): Promise<string> {
+    const changes = await this.changes.list().catch(() => []);
+    const files = changes.length
+      ? changes.map((c) => `- ${c.status} ${c.relPath} (+${c.added} -${c.removed})`).join('\n')
+      : '- none';
+    const requests = this.userRequests.slice(-6).map((r, i) => `${i + 1}. ${truncateMiddle(r, 2000)}`).join('\n');
+    const corrections = this.corrections.slice(-5).map((c) => `- ${truncateMiddle(c, 800)}`).join('\n');
+    const pendingResults =
+      last.role === 'user'
+        ? last.content
+            .filter((b): b is ToolResultBlock => b.type === 'tool_result')
+            .map((b) => `<result${b.isError ? ' error="true"' : ''}>\n${truncateMiddle(b.content, 3000)}\n</result>`)
+            .join('\n')
+        : '';
+    return [
+      '[Task handoff] The earlier conversation of this task was compacted to save context. Everything you need to continue is below.',
+      `<handoff_note>\n${note}\n</handoff_note>`,
+      '<orchestrator_state>',
+      `User requests in this task (verbatim, oldest first):\n${requests || '(none)'}`,
+      `Plan:\n${this.plan ? formatPlan(this.plan) : '(no plan)'}`,
+      `Files changed in this task:\n${files}`,
+      corrections ? `Supervisor corrections still in force:\n${corrections}` : '',
+      pendingResults ? `Results of your most recent tool calls:\n${pendingResults}` : '',
+      '</orchestrator_state>',
+      'Continue the task from here. Re-read files before editing them; do not assume their contents from memory.',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  }
+
+  /** A read-only sub-agent delegation: safe to run in parallel with others like it. */
+  private isParallelSafe(call: ToolCallBlock): boolean {
+    if (call.name !== SUBAGENT_TOOL) return false;
+    return this.taskProfiles.find((p) => p.name === call.input.agent)?.access === 'readonly';
+  }
+
+  private canIntervene(watch: { active: boolean; interventions: number }, oversight: SupervisorSettings): boolean {
+    return watch.active && watch.interventions < oversight.maxInterventions;
+  }
+
+  /** Start a supervisor review; resolves to the review only if it asks for a correction. */
+  private startReview(scope: 'step' | 'final', activity: string, signal: AbortSignal): Promise<SupervisorReview | undefined> {
+    const id = this.nextId('s');
+    this.emit({ type: 'supervisor', id, scope, status: 'reviewing' });
+    return this.supervisor!.review(scope, activity, signal).then(
+      (review) => {
+        this.recordUsage('supervisor', review.provider, review.model, review.usage);
+        if (review.verdict === 'intervene') this.corrections.push(review.message);
+        this.emit({
+          type: 'supervisor',
+          id,
+          scope,
+          status: review.verdict === 'intervene' ? 'intervened' : 'ok',
+          message: review.message || undefined,
+          model: review.model,
+        });
+        return review.verdict === 'intervene' ? review : undefined;
+      },
+      (error) => {
+        this.emit({ type: 'supervisor', id, scope, status: signal.aborted ? 'cancelled' : 'error', message: signal.aborted ? undefined : errorMessage(error) });
+        return undefined;
+      },
+    );
+  }
+
+  /**
+   * A checkpoint review: one stateless supervisor call on a compact brief (cost does not grow with
+   * the task). Resolves to the review only if it asks for a correction, which is counted.
+   */
+  private async checkpoint(kind: CheckpointKind, extra: string, watch: Watch, signal: AbortSignal, reason?: string): Promise<SupervisorReview | undefined> {
+    const id = this.nextId('s');
+    this.emit({ type: 'supervisor', id, scope: kind, status: 'reviewing', reason: reason || undefined });
+    try {
+      const brief = await this.supervisorBrief(extra);
+      const review = await this.supervisor!.check(kind, brief, signal);
+      this.recordUsage('supervisor', review.provider, review.model, review.usage);
+      this.emitUsage();
+      const intervened = review.verdict === 'intervene';
+      this.emit({ type: 'supervisor', id, scope: kind, status: intervened ? 'intervened' : 'ok', message: review.message || undefined, model: review.model, reason: reason || undefined });
+      if (!intervened) return undefined;
+      this.corrections.push(review.message);
+      watch.interventions++;
+      return review;
+    } catch (error) {
+      this.emit({ type: 'supervisor', id, scope: kind, status: signal.aborted ? 'cancelled' : 'error', message: signal.aborted ? undefined : errorMessage(error) });
+      if (signal.aborted) throw error;
+      return undefined;
+    }
+  }
+
+  /** What the supervisor needs to judge the work, kept short: requests, plan, diff, recent activity, earlier corrections. */
+  private async supervisorBrief(extra = ''): Promise<string> {
+    const requests = this.userRequests.slice(-5).map((r, i) => `${i + 1}. ${truncateMiddle(r, 2000)}`).join('\n');
+    const diff = await this.changes.unifiedDiffs(FINAL_REVIEW_DIFF_CHARS / 2).catch(() => '');
+    const corrections = this.corrections.slice(-4).map((c) => `- ${truncateMiddle(c, 600)}`).join('\n');
+    return [
+      `# What the user asked (verbatim, oldest first)\n${requests || '(nothing yet)'}`,
+      `# Plan\n${this.plan ? formatPlan(this.plan) : '(no plan)'}`,
+      `# Changes so far\n${diff ? `Unified diff of the task's net changes:\n${diff}` : 'No file changes yet.'}`,
+      `# Recent agent activity (oldest first)\n${this.activity.length ? this.activity.join('\n') : '(none)'}`,
+      corrections ? `# Your earlier corrections in this task\n${corrections}` : '',
+      extra,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  }
+
+  /** Remember one line per tool call for briefs, and outcomes for stuck detection. */
+  private noteActivity(calls: ToolCallBlock[], results: ToolResultBlock[], watch: Watch): void {
+    const byId = new Map(results.map((r) => [r.toolCallId, r]));
+    for (const call of calls) {
+      const result = byId.get(call.id);
+      if (!result || call.name === SUPERVISOR_TOOL) continue;
+      const declined = result.content.startsWith('The user declined');
+      const status = !result.isError ? 'ok' : `ERROR: ${oneLine(result.content, 160)}`;
+      this.activity.push(`- ${call.name}(${argSummary(call.input)}) -> ${status}`);
+      if (!declined) watch.recent.push({ key: `${call.name}:${JSON.stringify(call.input).slice(0, 400)}`, error: !!result.isError });
+    }
+    this.activity = this.activity.slice(-ACTIVITY_LINES);
+    watch.recent = watch.recent.slice(-8);
+  }
+
+  private createSupervisorTool(): Tool<{ question: string }> {
+    return {
+      name: SUPERVISOR_TOOL,
+      description:
+        'Ask the supervisor - a separate reviewer model - for guidance when you are stuck (the same error keeps coming back, ' +
+        'several attempts failed), unsure which approach is right, or about to make a hard-to-reverse decision. Explain the ' +
+        'problem, what you tried and what you are considering. It sees the user\'s request, the plan, the diff and your recent ' +
+        'steps, and answers with advice; it does not do the work. Each question costs tokens: never ask about routine steps.',
+      inputSchema: {
+        type: 'object',
+        properties: { question: { type: 'string', description: 'The problem, what you tried, and what you want to know.' } },
+        required: ['question'],
+      },
+      describe: (input) => ({ category: 'read', risk: 'safe', title: t('Ask the supervisor: {question}', { question: oneLine(input.question, 80) }), detail: input.question }),
+      execute: (input, ctx) => this.askSupervisor(input.question, ctx.signal),
+    };
+  }
+
+  private async askSupervisor(question: string, signal: AbortSignal) {
+    const watch = this.watch;
+    const settings = this.options.supervisor?.getSettings();
+    if (!this.supervisor || !settings?.enabled || !watch) return { content: 'The supervisor is turned off. Decide on your own.' };
+    if (watch.consultations >= settings.maxInterventions) {
+      return { content: `You already asked the supervisor ${watch.consultations} times in this request. Decide on your own now.` };
+    }
+    watch.consultations++;
+    const brief = await this.supervisorBrief();
+    try {
+      const answer = await this.supervisor.consult(question, brief, signal);
+      this.recordUsage('supervisor', answer.provider, answer.model, answer.usage);
+      this.emitUsage();
+      return { content: `[Supervisor advice - ${answer.model}]\n${answer.advice}` };
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) throw error;
+      throw new ToolError(`The supervisor could not answer: ${errorMessage(error)}. Continue on your own.`);
+    }
+  }
+
+  /** Wait for the pending review (if any) and return its correction, counting it. */
+  private async takeIntervention(watch: { active: boolean; interventions: number; pending?: Promise<SupervisorReview | undefined> }): Promise<SupervisorReview | undefined> {
+    if (!watch.pending) return undefined;
+    const review = await watch.pending;
+    watch.pending = undefined;
+    this.emitUsage();
+    if (!review) return undefined;
+    watch.interventions++;
+    return review;
+  }
+
+  private async executeToolCall(
+    call: ToolCallBlock,
+    signal: AbortSignal,
+  ): Promise<{ result: ToolResultBlock; changedCode: boolean; ranCommand: boolean }> {
+    const fail = (content: string, view?: Partial<ToolCallView>) => {
+      this.emit({ type: 'tool_call', call: { ...this.placeholderView(call), status: 'error', output: content, ...view } });
+      return { result: { type: 'tool_result' as const, toolCallId: call.id, content, isError: true }, changedCode: false, ranCommand: false };
+    };
+
+    const tool = this.taskToolsByName.get(call.name);
+    if (!tool) return fail(`Unknown tool "${call.name}". Available tools: ${[...this.taskToolsByName.keys()].join(', ')}.`);
+    if (INVALID_JSON_KEY in call.input) {
+      return fail(JSON.stringify({ INVALID_JSON: String(call.input[INVALID_JSON_KEY]) }));
+    }
+    const invalid = validateInput(tool.inputSchema, call.input);
+    if (invalid) return fail(`Invalid input: ${invalid}. Input received: ${truncateMiddle(JSON.stringify(call.input), 2000)}`);
+
+    let output = '';
+    const ctx: ToolContext = {
+      callId: call.id,
+      host: this.options.host,
+      changes: this.changes,
+      signal,
+      commandTimeoutMs: this.options.getSettings().commandTimeoutMs,
+      plan: this.plan,
+      setPlan: (plan) => {
+        this.plan = plan;
+        this.emit({ type: 'plan', plan });
+      },
+      onOutput: (chunk) => {
+        output += chunk;
+        this.emit({ type: 'tool_output', id: call.id, chunk });
+      },
+    };
+
+    let action: ToolAction;
+    try {
+      action = await tool.describe(call.input, ctx);
+    } catch (error) {
+      return fail(errorMessage(error));
+    }
+    // Once this task has read something that may hold secrets, nothing goes to the internet
+    // without the user seeing it: a prompt injection could otherwise send the secrets out.
+    const secretsGuard = action.category === 'network' && this.secretFile !== undefined;
+    if (secretsGuard) {
+      action = {
+        ...action,
+        detail: `${action.detail ? `${action.detail}\n` : ''}${t('Asking because this task has read a file that may contain secrets ({file}).', { file: this.secretFile! })}`,
+      };
+    }
+
+    const view: ToolCallView = {
+      id: call.id,
+      name: call.name,
+      title: action.title,
+      category: action.category,
+      risk: action.risk,
+      status: 'running',
+      detail: action.detail,
+      path: action.preview?.path ?? targetPath(this.options.host.workspaceRoot, call.input),
+    };
+    this.setPhase(phaseFor(call.name, action.category));
+
+    let decision = this.options.permissions.decide(action);
+    if (secretsGuard && decision === 'allow') decision = 'ask';
+    if (decision === 'deny') {
+      return fail('Denied by permission settings.', { ...view, status: 'denied' });
+    }
+    if (decision === 'ask') {
+      this.emit({ type: 'tool_call', call: { ...view, status: 'awaiting_approval', hasPreview: !!action.preview } });
+      const answer = await Promise.race([
+        this.options.host.requestApproval({
+          id: call.id,
+          toolName: call.name,
+          category: action.category,
+          risk: action.risk,
+          title: action.title,
+          detail: action.detail,
+          preview: action.preview,
+        }),
+        abortPromise(signal),
+      ]);
+      if (!answer || signal.aborted) {
+        this.emit({ type: 'tool_call', call: { ...view, status: 'cancelled' } });
+        return {
+          result: { type: 'tool_result', toolCallId: call.id, content: 'Cancelled: the user stopped the agent.', isError: true },
+          changedCode: false,
+          ranCommand: false,
+        };
+      }
+      if (!answer.approved) {
+        const feedback = answer.feedback?.trim();
+        const content = `The user declined this action.${feedback ? ` User feedback: ${feedback}` : ' Do not retry it unchanged; adjust your approach or ask the user.'}`;
+        this.emit({ type: 'tool_call', call: { ...view, status: 'denied', output: feedback ? `Declined: ${feedback}` : 'Declined' } });
+        return { result: { type: 'tool_result', toolCallId: call.id, content, isError: true }, changedCode: false, ranCommand: false };
+      }
+      if (answer.alwaysAllow) this.options.permissions.grantForSession(action);
+    }
+
+    this.emit({ type: 'tool_call', call: view });
+    // A command that can change files runs between two snapshots, so its changes can be reviewed and reverted.
+    const snapshots = call.name === 'run_command' && action.risk !== 'safe' ? this.options.commandSnapshots : undefined;
+    const before = snapshots ? await snapshots.snapshot() : undefined;
+    try {
+      const result = await tool.execute(call.input, ctx);
+      const byCommand = before ? await this.recordCommandChanges(snapshots!, before) : [];
+      const note = byCommand.length
+        ? `\n\nFiles changed by this command (revertible in the Changes panel): ${byCommand.slice(0, 30).map((c) => `${c.path} (${c.status})`).join(', ')}${byCommand.length > 30 ? `, and ${byCommand.length - 30} more` : ''}`
+        : '';
+      const content = truncateMiddle(result.content, MAX_TOOL_RESULT_CHARS) + note;
+      this.emit({ type: 'tool_call', call: { ...view, status: result.isError ? 'error' : 'done', output: content, image: result.thumb } });
+      const changedCode =
+        ((action.category === 'edit' || action.category === 'delete') &&
+          !result.isError &&
+          !NON_CODE_EXTENSIONS.has(path.extname(view.path ?? '').toLowerCase())) ||
+        byCommand.some((c) => !NON_CODE_EXTENSIONS.has(path.extname(c.path).toLowerCase()));
+      const ranCommand = call.name === 'run_command' && !signal.aborted;
+      if (!result.isError && this.secretFile === undefined) this.secretFile = secretTouched(call);
+      const images = result.images?.length ? { images: result.images } : {};
+      return { result: { type: 'tool_result', toolCallId: call.id, content, isError: result.isError, ...images }, changedCode, ranCommand };
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) {
+        this.emit({ type: 'tool_call', call: { ...view, status: 'cancelled', output } });
+        return {
+          result: { type: 'tool_result', toolCallId: call.id, content: 'Cancelled: the user stopped the agent.', isError: true },
+          changedCode: false,
+          ranCommand: false,
+        };
+      }
+      const message = error instanceof ToolError ? error.message : `Tool failed: ${errorMessage(error)}`;
+      this.emit({ type: 'tool_call', call: { ...view, status: 'error', output: message } });
+      return { result: { type: 'tool_result', toolCallId: call.id, content: message, isError: true }, changedCode: false, ranCommand: false };
+    }
+  }
+
+  /** Files a command changed since the snapshot join the change list with their original content. */
+  private async recordCommandChanges(snapshots: ShadowGit, before: string): Promise<CommandChange[]> {
+    try {
+      return await recordChangesSince(snapshots, before, this.changes, this.options.host.workspaceRoot);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Every tool call must get a result, or the next request is rejected. */
+  private answerUnexecuted(calls: ToolCallBlock[], reason: string): void {
+    if (!calls.length) return;
+    for (const call of calls) this.emit({ type: 'tool_call', call: { ...this.placeholderView(call), status: 'cancelled', output: reason } });
+    this.messages.push({
+      role: 'user',
+      content: calls.map((call) => ({ type: 'tool_result', toolCallId: call.id, content: reason, isError: true })),
+    });
+  }
+
+  private verifyNudge(): string {
+    const commands = this.context.verifyCommands;
+    const hint = commands.length ? ` Likely commands for this project: ${commands.map((c) => `\`${c}\``).join(', ')}.` : '';
+    return (
+      '[Orchestrator check] You changed code in this task but have not run a build, type-check or test since the last change.' +
+      `${hint} If the change can be verified, run the appropriate command now and fix any failures. ` +
+      'If verification is not possible or not applicable here, say so in one sentence and finish.'
+    );
+  }
+
+  private createSubagentTool(profiles: SubagentProfile[]): Tool<{ agent: string; task: string }> {
+    const list = profiles.map((p) => `- ${p.name}${p.access === 'readonly' ? ' (read-only)' : ''}: ${p.description}`).join('\n');
+    return {
+      name: SUBAGENT_TOOL,
+      description:
+        'Delegate a self-contained task to a sub-agent and receive its final report. The sub-agent does not see this ' +
+        'conversation, so the task must include everything it needs: goal, relevant files, constraints and what to report. ' +
+        `Its file changes join the same change list and its actions follow the same permission rules.\nAvailable sub-agents:\n${list}`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent: { type: 'string', enum: profiles.map((p) => p.name), description: 'Which sub-agent to use.' },
+          task: { type: 'string', description: 'Complete, self-contained instructions for the sub-agent.' },
+        },
+        required: ['agent', 'task'],
+      },
+      // Delegating is harmless by itself; each action the sub-agent takes is permission-checked.
+      describe: (input) => ({ category: 'read', risk: 'safe', title: `${input.agent}: ${oneLine(input.task, 90)}`, detail: input.task }),
+      execute: (input, ctx) => this.runSubagent(input, ctx),
+    };
+  }
+
+  private async runSubagent(input: { agent: string; task: string }, ctx: ToolContext) {
+    const profile = this.taskProfiles.find((p) => p.name === input.agent);
+    if (!profile) throw new ToolError(`Unknown sub-agent "${input.agent}".`);
+    let provider: AIProvider;
+    try {
+      provider = this.options.subagents!.getProvider(profile.name);
+    } catch (error) {
+      throw new ToolError(`Sub-agent "${profile.name}" is not available: ${errorMessage(error)}`);
+    }
+    const settings = this.options.getSettings();
+    const child = new Orchestrator({
+      host: this.options.host,
+      getProvider: () => provider,
+      permissions: this.options.permissions,
+      getSettings: () => ({ ...this.options.getSettings(), autoVerify: false, maxIterations: profile.maxIterations ?? Math.min(settings.maxIterations, 40) }),
+      tools: this.baseTools.filter((tool) => tool.name !== 'update_plan' && (profile.access === 'full' || READONLY_TOOLS.has(tool.name))),
+      changes: this.changes,
+      role: profile,
+      skills: () => this.taskSkills,
+      getFallbackProvider: this.options.getFallbackProvider,
+      commandSnapshots: this.options.commandSnapshots,
+      // MCP tools: all of them for workers, only the read-only ones for read-only sub-agents.
+      getExtraTools: async () => (profile.access === 'full' ? this.extraTools : this.extraTools.filter((tool) => tool.readOnly)),
+    });
+    child.on((event) => this.emit({ type: 'subagent', parentId: ctx.callId, agent: profile.name, event }));
+    const stopChild = () => child.stop();
+    ctx.signal.addEventListener('abort', stopChild, { once: true });
+    try {
+      const reason = await child.run(input.task);
+      const own = child.usageByAgent.find((u) => u.agent === profile.name);
+      if (own) this.recordUsage(profile.name, own.provider, own.model, own.usage, own.calls);
+      this.emitUsage();
+      const last = [...child.history].reverse().find((m) => m.role === 'assistant');
+      const report = last ? messageText(last).trim() : '';
+      const header = `[${profile.name} sub-agent report - ${provider.label} ${provider.model}]`;
+      switch (reason) {
+        case 'stopped':
+          return { content: `${header}\nThe sub-agent was stopped by the user.`, isError: true };
+        case 'error':
+          return { content: `${header}\nThe sub-agent failed: ${child.lastError ?? 'unknown error'}`, isError: true };
+        case 'refusal':
+          return { content: `${header}\nThe sub-agent's model declined the task.`, isError: true };
+        case 'max_iterations':
+          return { content: `${header}\n${report || '(no report)'}\n\n(The sub-agent hit its step limit; this report may be incomplete.)` };
+        case 'budget':
+          return { content: `${header}\n${report || '(no report)'}\n\n(The sub-agent hit the token budget; this report may be incomplete.)` };
+        default:
+          return { content: `${header}\n${report || '(the sub-agent finished without a report)'}` };
+      }
+    } finally {
+      ctx.signal.removeEventListener('abort', stopChild);
+      child.dispose();
+    }
+  }
+
+  private forwardStreamEvent(assistantId: string, event: ProviderStreamEvent): void {
+    switch (event.type) {
+      case 'text_delta':
+        this.emit({ type: 'assistant_delta', id: assistantId, text: event.text });
+        break;
+      case 'reasoning_delta':
+        this.emit({ type: 'reasoning_delta', id: assistantId, text: event.text });
+        break;
+      case 'notice':
+        this.emit({ type: 'notice', level: 'info', message: event.message });
+        break;
+      case 'tool_call_start':
+        break;
+    }
+  }
+
+  private placeholderView(call: ToolCallBlock): ToolCallView {
+    return { id: call.id, name: call.name, title: call.name, category: 'read', risk: 'safe', status: 'running' };
+  }
+
+  private async publishChanges(): Promise<void> {
+    try {
+      this.emit({ type: 'changes', changes: await this.changes.list() });
+    } catch {
+      /* listing is best-effort */
+    }
+  }
+
+  private currentPhase: AgentPhase = 'idle';
+  private setPhase(phase: AgentPhase): void {
+    if (phase === this.currentPhase) return;
+    this.currentPhase = phase;
+    this.emit({ type: 'phase', phase });
+  }
+
+  private emit(event: AgentEvent): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch {
+        /* a broken UI listener must not break the agent */
+      }
+    }
+  }
+
+  private nextId(prefix: string): string {
+    return `${prefix}${Date.now().toString(36)}${(this.idCounter++).toString(36)}`;
+  }
+}
+
+function phaseFor(toolName: string, category: ToolAction['category']): AgentPhase {
+  if (toolName === SUBAGENT_TOOL) return 'delegating';
+  if (toolName === 'update_plan') return 'planning';
+  if (toolName === 'run_command' || toolName === 'start_process') return 'verifying';
+  if (category === 'edit' || category === 'delete') return 'implementing';
+  return 'analyzing';
+}
+
+function targetPath(root: string, input: Record<string, unknown>): string | undefined {
+  return typeof input.path === 'string' && input.path ? path.resolve(root, input.path) : undefined;
+}
+
+function abortPromise(signal: AbortSignal): Promise<undefined> {
+  return new Promise((resolve) => {
+    if (signal.aborted) resolve(undefined);
+    else signal.addEventListener('abort', () => resolve(undefined), { once: true });
+  });
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+const COMPACT_REQUEST = `[Orchestrator] This conversation is getting long and will now be compacted. Write a handoff note for yourself that will replace everything above. Do not call any tools - reply with the note only.
+
+Include, specifically:
+- the user's goal and constraints (quote exact requirements);
+- decisions made so far and why;
+- what has been done: files, functions, commands, with their current state;
+- verification status: what was built or tested, what passed, what failed and the key error lines;
+- open problems and the concrete next steps;
+- anything the user or the supervisor asked that still applies.
+
+Be complete but compact (at most about 800 words).`;
+
+/** Rough token estimate (4 characters per token) for messages we have not sent yet. */
+function estimateTokens(messages: readonly ChatMessage[]): number {
+  return Math.ceil(JSON.stringify(messages).length / 4);
+}
+
+/** Map with at most limit promises in flight; results keep the input order. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+/** Files that commonly hold credentials or keys. */
+const SECRET_FILE = /(^|[\\/])(\.env(\.[\w.-]+)?|[\w.-]*\.(pem|key|p12|pfx|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|credentials(\.json)?|secrets?\.(json|ya?ml|toml|env)|\.npmrc|\.pypirc|\.netrc|\.git-credentials|service-account[\w.-]*\.json)$/i;
+
+/** The secret-looking file a read / search / command touched, if any (workspace-relative). */
+function secretTouched(call: ToolCallBlock): string | undefined {
+  const input = call.input;
+  if (call.name === 'read_file' && typeof input.path === 'string' && SECRET_FILE.test(input.path)) return input.path;
+  if (call.name === 'run_command' && typeof input.command === 'string') {
+    const match = input.command.split(/[\s"'|;&<>]+/).find((token) => SECRET_FILE.test(token));
+    if (match) return match;
+  }
+  if (call.name === 'search_code' && typeof input.glob === 'string' && /\.env|secret|credential|\.pem|\.key/i.test(input.glob)) return input.glob;
+  return undefined;
+}
+
+/** A plan's structure (step titles), to tell a new or revised plan from progress updates. */
+function planShape(plan: Plan | undefined): string {
+  return plan ? plan.steps.map((s) => s.title).join('\n') : '';
+}
+
+/** Why the agent looks stuck, from its recent tool outcomes (undefined when it does not). */
+function stuckReason(recent: Array<{ key: string; error: boolean }>): string | undefined {
+  const last = recent.slice(-3);
+  if (last.length === 3 && last.every((r) => r.error)) return t('the last 3 tool calls failed');
+  const lastTwo = recent.slice(-2);
+  if (lastTwo.length === 2 && lastTwo[0].key === lastTwo[1].key && lastTwo.every((r) => r.error)) return t('the same action failed twice');
+  const counts = new Map<string, number>();
+  for (const r of recent.slice(-6)) counts.set(r.key, (counts.get(r.key) ?? 0) + 1);
+  if ([...counts.values()].some((n) => n >= 3)) return t('the same action keeps being repeated');
+  return undefined;
+}
+
+function argSummary(input: Record<string, unknown>): string {
+  return Object.entries(input)
+    .map(([k, v]) => `${k}=${oneLine(typeof v === 'string' ? v : JSON.stringify(v) ?? '', k === 'command' || k === 'path' || k === 'query' ? 120 : 40)}`)
+    .join(', ');
+}
+
+/** Tokens that count against a budget: everything except cache reads. */
+function spent(usage: Usage): number {
+  return usage.inputTokens + usage.outputTokens + usage.cacheWriteTokens;
+}
+
+function rank(agent: string): number {
+  return agent === 'main' ? 0 : agent === 'supervisor' ? 1 : 2;
+}
+
+function oneLine(text: string, max: number): string {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}

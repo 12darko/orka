@@ -1,0 +1,41 @@
+{
+  "name": "orka-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Orka as a desktop app: the same chat UI and agents as the VS Code extension, in its own window.",
+  "license": "MIT",
+  "author": "Enophia Software",
+  "homepage": "https://github.com/12darko/orka#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/12darko/orka.git",
+    "directory": "packages/desktop"
+  },
+  "bugs": {
+    "url": "https://github.com/12darko/orka/issues"
+  },
+  "bin": {
+    "orka-desktop": "dist/orka-desktop.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "start": "node esbuild.mjs && node dist/orka-desktop.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node esbuild.mjs && node --test \"test/*.test.mjs\""
+  },
+  "dependencies": {
+    "@orka/core": "*",
+    "@orka/app": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

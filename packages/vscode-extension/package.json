@@ -1,0 +1,805 @@
+{
+  "name": "orka-vscode",
+  "displayName": "Orka - AI Coding Orchestrator",
+  "description": "Orka runs a pod of AI agents in your project: a main agent that plans, edits, runs and verifies, sub-agents, and a supervisor that keeps it on track. Works with Claude, GPT, Gemini and any OpenAI-compatible model.",
+  "license": "MIT",
+  "author": "Enophia Software",
+  "homepage": "https://github.com/12darko/orka#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/12darko/orka.git",
+    "directory": "packages/vscode-extension"
+  },
+  "bugs": {
+    "url": "https://github.com/12darko/orka/issues"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "claude",
+    "gpt",
+    "gemini",
+    "copilot",
+    "orchestrator",
+    "supervisor",
+    "mcp",
+    "unity"
+  ],
+  "version": "0.1.0",
+  "publisher": "12darko",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Programming Languages"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "orka",
+          "title": "Orka",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "orka": [
+        {
+          "type": "webview",
+          "id": "orka.chat",
+          "name": "%view.chat%"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "orka.ask",
+        "title": "%command.ask%",
+        "category": "Orka",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "orka.newTask",
+        "title": "%command.newTask%",
+        "category": "Orka",
+        "icon": "$(add)"
+      },
+      {
+        "command": "orka.openSettingsView",
+        "title": "%command.openSettingsView%",
+        "category": "Orka",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "orka.stop",
+        "title": "%command.stop%",
+        "category": "Orka",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "orka.setApiKey",
+        "title": "%command.setApiKey%",
+        "category": "Orka",
+        "icon": "$(key)"
+      },
+      {
+        "command": "orka.clearApiKey",
+        "title": "%command.clearApiKey%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.selectProvider",
+        "title": "%command.selectProvider%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.configureAgents",
+        "title": "%command.configureAgents%",
+        "category": "Orka",
+        "icon": "$(organization)"
+      },
+      {
+        "command": "orka.selectMode",
+        "title": "%command.selectMode%",
+        "category": "Orka",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "orka.acceptAllChanges",
+        "title": "%command.acceptAllChanges%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.revertAllChanges",
+        "title": "%command.revertAllChanges%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.initProjectMemory",
+        "title": "%command.initProjectMemory%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.showHistory",
+        "title": "%command.showHistory%",
+        "category": "Orka",
+        "icon": "$(history)"
+      },
+      {
+        "command": "orka.compact",
+        "title": "%command.compact%",
+        "category": "Orka",
+        "icon": "$(fold)"
+      },
+      {
+        "command": "orka.addProvider",
+        "title": "%command.addProvider%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.showSkills",
+        "title": "%command.showSkills%",
+        "category": "Orka",
+        "icon": "$(book)"
+      },
+      {
+        "command": "orka.newSkill",
+        "title": "%command.newSkill%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.openSkillsFolder",
+        "title": "%command.openSkillsFolder%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.selectWorkspaceFolder",
+        "title": "%command.selectWorkspaceFolder%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.checkForUpdates",
+        "title": "%command.checkForUpdates%",
+        "category": "Orka",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "orka.handoffFreebuff",
+        "title": "%command.handoffFreebuff%",
+        "category": "Orka",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "orka.showMcp",
+        "title": "%command.showMcp%",
+        "category": "Orka",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "orka.importMcpFromClaude",
+        "title": "%command.importMcpFromClaude%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.explainSelection",
+        "title": "%command.explainSelection%",
+        "category": "Orka",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "orka.askAboutSelection",
+        "title": "%command.askAboutSelection%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.fixProblem",
+        "title": "%command.fixProblem%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.keepHunk",
+        "title": "%command.keepHunk%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.revertHunkInline",
+        "title": "%command.revertHunkInline%",
+        "category": "Orka"
+      },
+      {
+        "command": "orka.openChangeDiff",
+        "title": "%command.openChangeDiff%",
+        "category": "Orka"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "orka.newTask",
+          "when": "view == orka.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "orka.showHistory",
+          "when": "view == orka.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "orka.configureAgents",
+          "when": "view == orka.chat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "orka.setApiKey",
+          "when": "view == orka.chat",
+          "group": "navigation@3"
+        },
+        {
+          "command": "orka.openSettingsView",
+          "when": "view == orka.chat",
+          "group": "navigation@4"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "orka.explainSelection",
+          "when": "editorHasSelection",
+          "group": "orka@1"
+        },
+        {
+          "command": "orka.askAboutSelection",
+          "when": "editorHasSelection",
+          "group": "orka@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "orka.fixProblem",
+          "when": "false"
+        },
+        {
+          "command": "orka.explainSelection",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "orka.askAboutSelection",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "orka.keepHunk",
+          "when": "false"
+        },
+        {
+          "command": "orka.revertHunkInline",
+          "when": "false"
+        },
+        {
+          "command": "orka.openChangeDiff",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%config.title%",
+      "properties": {
+        "orka.provider": {
+          "type": "string",
+          "default": "claude",
+          "description": "%config.provider%",
+          "pattern": "^(claude|openai|gemini|claude-code|custom:[a-z0-9][a-z0-9-]*)$"
+        },
+        "orka.claude.model": {
+          "type": "string",
+          "default": "claude-opus-5-5",
+          "description": "%config.claude.model%"
+        },
+        "orka.claude.effort": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "medium",
+          "description": "%config.claude.effort%"
+        },
+        "orka.claude.refusalFallback": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.claude.refusalFallback%"
+        },
+        "orka.openai.model": {
+          "type": "string",
+          "default": "gpt-6-astra",
+          "description": "%config.openai.model%"
+        },
+        "orka.openai.baseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com/v1",
+          "description": "%config.openai.baseUrl%"
+        },
+        "orka.openai.reasoningEffort": {
+          "type": "string",
+          "enum": [
+            "",
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "",
+          "description": "%config.openai.reasoningEffort%"
+        },
+        "orka.gemini.model": {
+          "type": "string",
+          "default": "gemini-3.8-flash",
+          "description": "%config.gemini.model%"
+        },
+        "orka.gemini.thinkingLevel": {
+          "type": "string",
+          "enum": [
+            "",
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "",
+          "description": "%config.gemini.thinkingLevel%"
+        },
+        "orka.claudeCode.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "%config.claudeCode.enabled%"
+        },
+        "orka.claudeCode.model": {
+          "type": "string",
+          "default": "default",
+          "description": "%config.claudeCode.model%"
+        },
+        "orka.claudeCode.effort": {
+          "type": "string",
+          "enum": [
+            "",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "",
+          "description": "%config.claudeCode.effort%"
+        },
+        "orka.claudeCode.path": {
+          "type": "string",
+          "default": "",
+          "description": "%config.claudeCode.path%"
+        },
+        "orka.claudeCode.autoUpdate": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.claudeCode.autoUpdate%"
+        },
+        "orka.customProviders": {
+          "type": "array",
+          "default": [],
+          "description": "%config.customProviders%",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "baseUrl"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]*$"
+              },
+              "label": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "type": "string",
+                "description": "Base URL of the OpenAI-compatible API, e.g. https://openrouter.ai/api/v1"
+              },
+              "requiresKey": {
+                "type": "boolean",
+                "default": true
+              },
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "defaultModel": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "orka.routing.provider": {
+          "type": "string",
+          "default": "inherit",
+          "pattern": "^(inherit|claude|openai|gemini|claude-code|custom:[a-z0-9][a-z0-9-]*)$",
+          "description": "%config.routing.provider%"
+        },
+        "orka.routing.model": {
+          "type": "string",
+          "default": "",
+          "description": "%config.routing.model%"
+        },
+        "orka.fallback.provider": {
+          "type": "string",
+          "default": "inherit",
+          "pattern": "^(inherit|claude|openai|gemini|claude-code|custom:[a-z0-9][a-z0-9-]*)$",
+          "description": "%config.fallback.provider%"
+        },
+        "orka.fallback.model": {
+          "type": "string",
+          "default": "",
+          "description": "%config.fallback.model%"
+        },
+        "orka.subagents.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.subagents.enabled%"
+        },
+        "orka.subagents.maxParallel": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "%config.subagents.maxParallel%"
+        },
+        "orka.subagents.agents": {
+          "type": "object",
+          "default": {
+            "explore": {
+              "provider": "inherit",
+              "model": ""
+            },
+            "review": {
+              "provider": "inherit",
+              "model": ""
+            },
+            "worker": {
+              "provider": "inherit",
+              "model": ""
+            }
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "pattern": "^(inherit|claude|openai|gemini|claude-code|custom:[a-z0-9][a-z0-9-]*)$",
+                "description": "%config.subagents.agents.provider%"
+              },
+              "model": {
+                "type": "string",
+                "description": "%config.subagents.agents.model%"
+              }
+            }
+          },
+          "description": "%config.subagents.agents%"
+        },
+        "orka.supervisor.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.supervisor.enabled%"
+        },
+        "orka.supervisor.provider": {
+          "type": "string",
+          "default": "inherit",
+          "description": "%config.supervisor.provider%",
+          "pattern": "^(inherit|claude|openai|gemini|claude-code|custom:[a-z0-9][a-z0-9-]*)$"
+        },
+        "orka.supervisor.model": {
+          "type": "string",
+          "default": "",
+          "description": "%config.supervisor.model%"
+        },
+        "orka.supervisor.frequency": {
+          "type": "string",
+          "enum": [
+            "checkpoints",
+            "on_changes",
+            "every_turn",
+            "final_only"
+          ],
+          "enumDescriptions": [
+            "%config.supervisor.frequency.enum.0%",
+            "%config.supervisor.frequency.enum.1%",
+            "%config.supervisor.frequency.enum.2%",
+            "%config.supervisor.frequency.enum.3%"
+          ],
+          "default": "checkpoints",
+          "description": "%config.supervisor.frequency%"
+        },
+        "orka.supervisor.maxInterventions": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "%config.supervisor.maxInterventions%"
+        },
+        "orka.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.mcp.enabled%"
+        },
+        "orka.mcpServers": {
+          "type": "object",
+          "default": {},
+          "description": "%config.mcpServers%",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string",
+                "description": "%config.mcpServers.command%"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string",
+                "description": "%config.mcpServers.url%"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "disabled": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "orka.permissionMode": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "balanced",
+            "autonomous"
+          ],
+          "enumDescriptions": [
+            "%config.permissionMode.enum.0%",
+            "%config.permissionMode.enum.1%",
+            "%config.permissionMode.enum.2%"
+          ],
+          "default": "balanced",
+          "description": "%config.permissionMode%"
+        },
+        "orka.permissions.fileEdit": {
+          "type": "string",
+          "enum": [
+            "mode",
+            "auto",
+            "ask"
+          ],
+          "default": "mode",
+          "description": "%config.permissions.fileEdit%"
+        },
+        "orka.permissions.terminal": {
+          "type": "string",
+          "enum": [
+            "mode",
+            "auto",
+            "askDangerous",
+            "ask"
+          ],
+          "default": "mode",
+          "description": "%config.permissions.terminal%"
+        },
+        "orka.permissions.git": {
+          "type": "string",
+          "enum": [
+            "mode",
+            "auto",
+            "ask"
+          ],
+          "default": "mode",
+          "description": "%config.permissions.git%"
+        },
+        "orka.permissions.delete": {
+          "type": "string",
+          "enum": [
+            "mode",
+            "auto",
+            "ask"
+          ],
+          "default": "mode",
+          "description": "%config.permissions.delete%"
+        },
+        "orka.permissions.network": {
+          "type": "string",
+          "enum": [
+            "mode",
+            "auto",
+            "ask"
+          ],
+          "default": "mode",
+          "description": "%config.permissions.network%"
+        },
+        "orka.autoVerify": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.autoVerify%"
+        },
+        "orka.trackCommandChanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.trackCommandChanges%"
+        },
+        "orka.inlineReview": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.inlineReview%"
+        },
+        "orka.browser.path": {
+          "type": "string",
+          "default": "",
+          "description": "%config.browser.path%"
+        },
+        "orka.maxIterations": {
+          "type": "number",
+          "default": 60,
+          "minimum": 1,
+          "description": "%config.maxIterations%"
+        },
+        "orka.commandTimeoutSeconds": {
+          "type": "number",
+          "default": 180,
+          "description": "%config.commandTimeoutSeconds%"
+        },
+        "orka.shell": {
+          "type": "string",
+          "default": "",
+          "description": "%config.shell%"
+        },
+        "orka.customInstructions": {
+          "type": "string",
+          "default": "",
+          "editPresentation": "multilineText",
+          "description": "%config.customInstructions%"
+        },
+        "orka.compaction.auto": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.compaction.auto%"
+        },
+        "orka.compaction.thresholdTokens": {
+          "type": "number",
+          "default": 150000,
+          "minimum": 10000,
+          "description": "%config.compaction.thresholdTokens%"
+        },
+        "orka.language": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "en",
+            "tr"
+          ],
+          "enumDescriptions": [
+            "%config.language.enum.0%",
+            "%config.language.enum.1%",
+            "%config.language.enum.2%"
+          ],
+          "default": "auto",
+          "description": "%config.language%"
+        },
+        "orka.tokenBudget": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "%config.tokenBudget%"
+        },
+        "orka.supervisor.mode": {
+          "type": "string",
+          "enum": [
+            "parallel",
+            "blocking"
+          ],
+          "enumDescriptions": [
+            "%config.supervisor.mode.enum.0%",
+            "%config.supervisor.mode.enum.1%"
+          ],
+          "default": "parallel",
+          "description": "%config.supervisor.mode%"
+        },
+        "orka.pricing": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "input",
+              "output"
+            ],
+            "properties": {
+              "input": {
+                "type": "number",
+                "minimum": 0
+              },
+              "output": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheRead": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheWrite": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          "description": "%config.pricing%"
+        },
+        "orka.skills.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.skills.enabled%"
+        },
+        "orka.skills.disabled": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.skills.disabled%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:e2e": "node esbuild.mjs && node test/e2e/run.mjs",
+    "preview": "npm run preview -w @orka/app",
+    "package": "node esbuild.mjs --production && vsce package --no-dependencies --out dist/"
+  },
+  "dependencies": {
+    "@orka/core": "*",
+    "@orka/app": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "~1.90.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "marked": "^14.0.0",
+    "typescript": "^5.6.0"
+  },
+  "icon": "media/orka-128.png",
+  "galleryBanner": {
+    "color": "#1E3A8A",
+    "theme": "dark"
+  }
+}

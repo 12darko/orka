@@ -1,0 +1,14 @@
+node_modules/
+dist/
+out/
+*.vsix
+*.tsbuildinfo
+.vscode-test/
+
+# Local secrets and machine-specific files
+.env
+.env.*
+*.log
+.claude/settings.local.json
+.DS_Store
+Thumbs.db

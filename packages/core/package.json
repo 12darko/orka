@@ -1,0 +1,33 @@
+{
+  "name": "@orka/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Editor-agnostic AI orchestration core: providers, agent loop, tools, permissions, context.",
+  "license": "MIT",
+  "author": "Enophia Software",
+  "homepage": "https://github.com/12darko/orka#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/12darko/orka.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/12darko/orka/issues"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test \"dist/test/**/*.test.js\""
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
+    "@google/genai": "^2.24.0",
+    "openai": "^7.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

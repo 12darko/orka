@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>Orka</title>
+  <defs>
+    <linearGradient id="sea" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD4BF"/>
+      <stop offset="0.55" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#4338CA"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.2" r="0.8">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1E293B"/>
+      <stop offset="1" stop-color="#0B1120"/>
+    </linearGradient>
+  </defs>
+
+  <!-- tile -->
+  <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#sea)"/>
+  <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#glow)"/>
+  <!-- waves -->
+  <path d="M8 196 C 48 184, 80 208, 120 196 S 200 184, 248 198 V 190 C 248 222, 222 248, 190 248 H 66 C 34 248, 8 222, 8 190 Z" fill="#FFFFFF" fill-opacity="0.14"/>
+
+  <!-- pod bubbles (the agents) -->
+  <circle cx="150" cy="70" r="7" fill="#FFFFFF" fill-opacity="0.9"/>
+  <circle cx="166" cy="50" r="5.5" fill="#FFFFFF" fill-opacity="0.75"/>
+  <circle cx="186" cy="36" r="4" fill="#FFFFFF" fill-opacity="0.6"/>
+
+  <!-- sparkle -->
+  <path d="M212 70 l5 12 l12 5 l-12 5 l-5 12 l-5 -12 l-12 -5 l12 -5 z" fill="#FDE68A"/>
+
+  <!-- orca -->
+  <g>
+    <!-- tail flukes -->
+    <path d="M58 134 C 46 128, 38 114, 26 108 C 30 122, 34 132, 44 140 C 34 146, 28 158, 26 170 C 40 162, 50 150, 62 144 Z" fill="url(#body)"/>
+    <!-- dorsal fin -->
+    <path d="M110 96 C 108 78, 102 64, 94 52 C 114 58, 132 74, 140 94 Z" fill="url(#body)"/>
+    <!-- body -->
+    <path d="M206 134 C 206 104, 178 88, 142 88 C 110 88, 84 102, 66 120 C 60 126, 56 132, 54 138 C 70 160, 104 176, 142 176 C 180 176, 206 160, 206 134 Z" fill="url(#body)"/>
+    <!-- belly -->
+    <path d="M204 142 C 196 162, 170 172, 142 172 C 116 172, 94 164, 80 154 C 108 160, 150 162, 178 152 C 190 148, 198 146, 204 142 Z" fill="#F8FAFC"/>
+    <!-- eye patch -->
+    <ellipse cx="158" cy="114" rx="15" ry="8.5" transform="rotate(-14 158 114)" fill="#F8FAFC"/>
+    <!-- saddle patch -->
+    <path d="M100 100 C 108 108, 120 110, 132 106 C 122 116, 108 116, 98 110 Z" fill="#94A3B8" fill-opacity="0.55"/>
+    <!-- flipper -->
+    <path d="M140 160 C 146 176, 138 190, 124 196 C 124 182, 128 170, 140 160 Z" fill="url(#body)"/>
+    <!-- eye -->
+    <circle cx="178" cy="124" r="5.5" fill="#0B1120"/>
+    <circle cx="179.8" cy="122.2" r="1.8" fill="#FFFFFF"/>
+    <!-- blush -->
+    <ellipse cx="186" cy="138" rx="7" ry="4" fill="#FB7185" fill-opacity="0.75"/>
+    <!-- smile -->
+    <path d="M190 146 C 195 149, 200 148, 204 144" stroke="#0B1120" stroke-width="3" fill="none" stroke-linecap="round"/>
+  </g>
+</svg>

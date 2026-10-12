@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<!--
+  Standalone preview of the chat webview for UI work: stubs the VS Code API, applies VS Code-like
+  theme variables and replays a scripted agent session. Build first (npm run build), then open
+  this file in a browser. Append ?light for the light theme, ?empty for the empty state, ?tr for Turkish,
+  ?settings=skills (or agents/providers/control) to open a settings tab.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Orka – webview preview</title>
+  <link rel="stylesheet" href="../dist/webview.css">
+  <style>
+    :root {
+      --vscode-font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+      --vscode-font-size: 13px;
+      --vscode-editor-font-family: Consolas, 'Cascadia Code', monospace;
+    }
+    html.dark {
+      --vscode-foreground: #cccccc;
+      --vscode-descriptionForeground: #9d9d9d;
+      --vscode-sideBar-background: #181818;
+      --vscode-editor-background: #1f1f1f;
+      --vscode-editorWidget-background: #202020;
+      --vscode-panel-border: #2b2b2b;
+      --vscode-input-background: #313131;
+      --vscode-input-foreground: #cccccc;
+      --vscode-input-border: #3c3c3c;
+      --vscode-button-background: #0078d4;
+      --vscode-button-foreground: #ffffff;
+      --vscode-button-hoverBackground: #026ec1;
+      --vscode-button-secondaryBackground: #313131;
+      --vscode-button-secondaryForeground: #cccccc;
+      --vscode-dropdown-background: #313131;
+      --vscode-dropdown-foreground: #cccccc;
+      --vscode-dropdown-border: #3c3c3c;
+      --vscode-focusBorder: #0078d4;
+      --vscode-textLink-foreground: #4daafc;
+      --vscode-textCodeBlock-background: #2b2b2b;
+      --vscode-errorForeground: #f85149;
+      --vscode-editorWarning-foreground: #cca700;
+      --vscode-testing-iconPassed: #73c991;
+      --vscode-inputValidation-errorBackground: #5a1d1d;
+      --vscode-toolbar-hoverBackground: #5a5d5e50;
+      --vscode-gitDecoration-addedResourceForeground: #81b88b;
+      --vscode-gitDecoration-modifiedResourceForeground: #e2c08d;
+      --vscode-gitDecoration-deletedResourceForeground: #c74e39;
+      --vscode-charts-yellow: #e2b340;
+      --vscode-terminal-ansiCyan: #4ec9b0;
+      --vscode-editor-foreground: #e7e7e7;
+    }
+    html.light {
+      --vscode-foreground: #3b3b3b;
+      --vscode-descriptionForeground: #6f6f6f;
+      --vscode-sideBar-background: #f8f8f8;
+      --vscode-editor-background: #ffffff;
+      --vscode-editorWidget-background: #ffffff;
+      --vscode-panel-border: #e5e5e5;
+      --vscode-input-background: #ffffff;
+      --vscode-input-foreground: #3b3b3b;
+      --vscode-input-border: #cecece;
+      --vscode-button-background: #005fb8;
+      --vscode-button-foreground: #ffffff;
+      --vscode-button-hoverBackground: #0258a8;
+      --vscode-button-secondaryBackground: #e5e5e5;
+      --vscode-button-secondaryForeground: #3b3b3b;
+      --vscode-dropdown-background: #ffffff;
+      --vscode-dropdown-foreground: #3b3b3b;
+      --vscode-dropdown-border: #cecece;
+      --vscode-focusBorder: #005fb8;
+      --vscode-textLink-foreground: #005fb8;
+      --vscode-textCodeBlock-background: #f0f0f0;
+      --vscode-errorForeground: #c72e0f;
+      --vscode-editorWarning-foreground: #bf8803;
+      --vscode-testing-iconPassed: #388a34;
+      --vscode-inputValidation-errorBackground: #f2dede;
+      --vscode-toolbar-hoverBackground: #b8b8b850;
+      --vscode-charts-yellow: #b58407;
+      --vscode-terminal-ansiCyan: #0f8a7a;
+      --vscode-editor-foreground: #1f1f1f;
+    }
+    body { max-width: 420px; margin: 0 auto; border-left: 1px solid #8884; border-right: 1px solid #8884; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    document.documentElement.className = params.has('light') ? 'light' : 'dark';
+    const sent = [];
+    window.acquireVsCodeApi = () => ({
+      postMessage(message) {
+        sent.push(message);
+        console.log('[webview -> extension]', message);
+        if (message.type === 'ready') setTimeout(replay, 0);
+        if (message.type === 'listTasks') setTimeout(() => deliver({ type: 'history', currentId: 't-now', tasks: [
+          { id: 't-now', title: L('Rework the lobby in my Unity project: add a ready state and a 4-player limit.', 'Unity projemde lobby sistemini yeniden düzenle: hazır (ready) durumu ekle ve 4 oyuncu sınırı koy.'), createdAt: new Date(Date.now() - 3600e3).toISOString(), updatedAt: new Date(Date.now() - 120e3).toISOString(), requests: 3, model: 'claude-opus-5-5', usage: { inputTokens: 5900, outputTokens: 2410, cacheReadTokens: 51200, cacheWriteTokens: 6100 } },
+          { id: 't-old', title: 'Explain the networking architecture', createdAt: new Date(Date.now() - 2 * 86400e3).toISOString(), updatedAt: new Date(Date.now() - 2 * 86400e3).toISOString(), requests: 1, model: 'gemini-3.8-flash', usage: { inputTokens: 900, outputTokens: 400, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+        ] }), 0);
+        if (message.type === 'getHunks') setTimeout(() => deliver({ type: 'hunks', path: message.path, hunks: [
+          { header: '@@ -10,6 +10,9 @@', hidden: 0, lines: [
+            { type: ' ', text: 'public class LobbyManager : NetworkBehaviour' }, { type: ' ', text: '{' },
+            { type: '-', text: '    private readonly Dictionary<PlayerRef, bool> ready = new();' },
+            { type: '+', text: '    public const int MaxPlayers = 4;' },
+            { type: '+', text: '    [Networked, Capacity(MaxPlayers)]' },
+            { type: '+', text: '    public NetworkDictionary<PlayerRef, NetworkBool> Ready => default;' },
+            { type: ' ', text: '' }, { type: ' ', text: '    public override void Spawned()' } ] },
+          { header: '@@ -48,4 +51,8 @@', hidden: 0, lines: [
+            { type: ' ', text: '    public void OnPlayerJoined(NetworkRunner runner, PlayerRef player)' }, { type: ' ', text: '    {' },
+            { type: '+', text: '        if (Ready.Count >= MaxPlayers) { runner.Disconnect(player); return; }' },
+            { type: '+', text: '        Ready.Set(player, false);' }, { type: ' ', text: '    }' } ] },
+        ] }), 60);
+        if (message.type === 'setSetting' && message.key === 'language') setTimeout(() => { lang = message.value === 'tr' ? 'tr' : 'en'; deliver({ type: 'config', config: makeConfig(false) }); }, 0);
+        if (message.type === 'searchFiles') setTimeout(() => deliver({ type: 'fileMatches', query: message.query, files: ['Assets/Scripts/Net/LobbyManager.cs', 'Assets/Scripts/UI/LobbyView.cs'].filter((f) => f.toLowerCase().includes(message.query.toLowerCase())) }), 0);
+      },
+      getState: () => undefined,
+      setState: () => {},
+    });
+
+    const deliver = (message) => window.dispatchEvent(new MessageEvent('message', { data: message }));
+    const ev = (event) => deliver({ type: 'event', event });
+    const root = 'D:/game/LobbyDemo';
+
+    let lang = params.has('tr') ? 'tr' : 'en';
+    const L = (en, tr) => (params.has('tr') ? tr : en);
+    const m = (id, label, family, note) => ({ id, label, family, note });
+    const CLAUDE = [
+      m('claude-fable-5-1', 'Fable 5.1', 'Claude Fable', 'most capable'), m('claude-fable-5', 'Fable 5', 'Claude Fable'),
+      m('claude-opus-5-5', 'Opus 5.5', 'Claude Opus', 'recommended'), m('claude-opus-5', 'Opus 5', 'Claude Opus'), m('claude-opus-4-8', 'Opus 4.8', 'Claude Opus'), m('claude-opus-4-7', 'Opus 4.7', 'Claude Opus'), m('claude-opus-4-6', 'Opus 4.6', 'Claude Opus'),
+      m('claude-sonnet-5-5', 'Sonnet 5.5', 'Claude Sonnet', 'fast'), m('claude-sonnet-5', 'Sonnet 5', 'Claude Sonnet'), m('claude-sonnet-4-6', 'Sonnet 4.6', 'Claude Sonnet'),
+      m('claude-haiku-4-5', 'Haiku 4.5', 'Claude Haiku', 'fastest'),
+    ];
+    function makeConfig(empty) {
+      const providers = [
+        { kind: 'claude', label: 'Claude API', local: false, ready: !empty, models: CLAUDE, model: 'claude-opus-5-5', key: empty ? undefined : { source: 'stored', hint: 'sk-ant••••4f2a' } },
+        { kind: 'openai', label: 'OpenAI API', local: false, ready: false, models: [m('gpt-6-astra', 'GPT-6 Astra', 'GPT-6', 'most capable'), m('gpt-6-sol', 'GPT-6 Sol', 'GPT-6', 'faster'), m('gpt-6-luna', 'GPT-6 Luna', 'GPT-6', 'cheapest'), m('gpt-5.6-sol', 'GPT-5.6 Sol', 'GPT-5.6'), m('gpt-5.6-terra', 'GPT-5.6 Terra', 'GPT-5.6'), m('gpt-5.6-luna', 'GPT-5.6 Luna', 'GPT-5.6')], model: 'gpt-6-astra' },
+        { kind: 'gemini', label: 'Gemini API', local: false, ready: true, models: [m('gemini-3.1-pro-preview', 'Gemini 3.1 Pro (preview)', 'Gemini Pro'), m('gemini-3.8-flash', 'Gemini 3.8 Flash', 'Gemini Flash', 'recommended for agents'), m('gemini-3.7-flash', 'Gemini 3.7 Flash', 'Gemini Flash'), m('gemini-3.5-flash', 'Gemini 3.5 Flash', 'Gemini Flash'), m('gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite', 'Gemini Flash-Lite')], model: 'gemini-3.8-flash', key: { source: 'env', hint: 'GEMINI_API_KEY' } },
+        { kind: 'claude-code', label: 'Claude Code (local)', local: true, ready: true, models: [m('default', 'CLI default', 'Latest (aliases)', 'whatever Claude Code uses'), m('opus', 'Opus (latest)', 'Latest (aliases)'), m('sonnet', 'Sonnet (latest)', 'Latest (aliases)'), m('haiku', 'Haiku (latest)', 'Latest (aliases)'), m('fable', 'Fable (latest)', 'Latest (aliases)'), ...CLAUDE], model: 'claude-opus-5-5' },
+        { kind: 'custom:openrouter', label: 'OpenRouter', local: false, ready: true, models: [m('deepseek/deepseek-coder', 'deepseek-coder', 'deepseek'), m('meta-llama/llama-5-70b', 'llama-5-70b', 'meta-llama'), m('qwen/qwen-4-coder', 'qwen-4-coder', 'qwen')], model: 'qwen/qwen-4-coder', key: { source: 'stored', hint: 'sk-or-••••91ab' }, custom: { id: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', requiresKey: true } },
+        { kind: 'custom:ollama', label: 'Ollama (local)', local: true, ready: true, models: [], model: '', custom: { id: 'ollama', baseUrl: 'http://localhost:11434/v1', requiresKey: false } },
+      ].filter((p) => p.kind !== 'claude-code' || !params.has('nocc'));
+      const main = empty
+        ? { name: 'main', provider: 'claude', model: 'claude-opus-5-5', effective: { provider: 'claude', model: 'claude-opus-5-5' } }
+        : { name: 'main', provider: 'claude', model: 'claude-opus-5-5', effective: { provider: 'claude', model: 'claude-opus-5-5' } };
+      const skill = (name, description, source, enabled = true, overridesBuiltin = false) => ({ name, description, source, enabled, overridesBuiltin });
+      return {
+        locale: lang,
+        mode: 'balanced',
+        workspaceOpen: true,
+        folders: [{ name: 'LobbyDemo', path: root }, { name: 'SharedLib', path: 'D:/game/SharedLib' }],
+        folder: root,
+        skillsEnabled: true,
+        skills: [
+          skill('code-review', 'Reviewing code or a diff for bugs, risks and quality.', 'builtin'),
+          skill('debugging', 'My own debugging rules: always add a log first.', 'user', true, true),
+          skill('deploy', 'Deploying the game server to our Hetzner machines.', 'user'),
+          skill('documentation', 'Writing or updating READMEs, API docs, code comments and changelogs.', 'builtin', false),
+          skill('security', 'Security-sensitive work: auth, input handling, secrets, dependencies.', 'builtin'),
+          skill('testing', 'Writing, fixing or extending automated tests.', 'builtin'),
+          skill('unity', 'Unity projects (C# scripts, scenes, prefabs, ScriptableObjects, packages).', 'builtin'),
+        ],
+        skillErrors: [],
+        skillsFolder: 'C:/Users/you/.orka/skills',
+        externalAgents: [{ id: 'freebuff', label: 'Freebuff', description: 'Free, ad-supported terminal coding agent (open models, daily allowance).', installed: true, active: false }],
+        mcp: { enabled: true, servers: [
+          { name: 'unity-editor-mcp', source: 'settings', transport: 'stdio', target: 'unity mcp', enabled: true, state: 'ready', tools: 24 },
+          { name: 'blender', source: 'settings', transport: 'stdio', target: 'uvx blender-mcp', enabled: true, state: 'error', tools: 0, error: 'the server exited (code 1): Blender is not running' },
+          { name: 'UnityMCP', source: 'workspace', transport: 'http', target: 'http://localhost:8080/mcp', enabled: false, state: 'idle', tools: 0 },
+        ] },
+        pricing: { 'gemini/gemini-3.8-*': { input: 0.3, output: 2.5 } },
+        providers,
+        main,
+        light: { name: 'light', provider: 'claude', model: 'claude-haiku-4-5', effective: { provider: 'claude', model: 'claude-haiku-4-5' } },
+        fallback: { name: 'fallback', provider: 'gemini', model: 'gemini-3.8-flash', effective: { provider: 'gemini', model: 'gemini-3.8-flash' } },
+        supervisor: { name: 'supervisor', provider: 'claude', model: 'claude-opus-5-5', effective: { provider: 'claude', model: 'claude-opus-5-5' } },
+        subagentsEnabled: true,
+        subagents: [
+          { name: 'explore', access: 'readonly', description: 'Read-only investigator. Searches and reads the codebase.', provider: 'gemini', model: 'gemini-3.8-flash', effective: { provider: 'gemini', model: 'gemini-3.8-flash' } },
+          { name: 'review', access: 'readonly', description: 'Read-only code reviewer. Examines changed code for bugs.', provider: 'openai', model: '', effective: { provider: 'openai', model: 'gpt-6-astra' } },
+          { name: 'worker', access: 'full', description: 'Implementer for a clearly specified, self-contained change.', provider: 'inherit', model: '', effective: main.effective },
+        ],
+        settings: {
+          permissionMode: 'balanced',
+          permissions: { fileEdit: 'mode', terminal: 'mode', git: 'ask', delete: 'mode' },
+          autoVerify: true, trackCommandChanges: { enabled: true }, inlineReview: true, maxIterations: 60, commandTimeoutSeconds: 180, shell: '', shellChoices: ['', 'powershell.exe', 'pwsh.exe', 'cmd.exe'],
+          customInstructions: '',
+          claude: { effort: 'medium', refusalFallback: true },
+          openai: { baseUrl: 'https://api.openai.com/v1', reasoningEffort: '' },
+          gemini: { thinkingLevel: '' },
+          claudeCode: { enabled: !params.has('nocc'), autoUpdate: false, effort: '', path: '', status: { state: 'ready', version: '2.1.181', account: 'you@example.com · claude.ai (pro)', executable: 'C:/Users/you/AppData/Roaming/npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe' } },
+          supervisor: { enabled: true, frequency: 'on_changes', maxInterventions: 5, mode: 'parallel' },
+          tokenBudget: 0,
+          language: lang === 'tr' ? 'tr' : 'auto',
+          projectMemory: 'missing',
+          compaction: { auto: true, thresholdTokens: 150000 },
+          subagentsMaxParallel: 3,
+          presets: [['openrouter','OpenRouter'],['deepseek','DeepSeek'],['xai','xAI (Grok)'],['mistral','Mistral'],['groq','Groq'],['together','Together AI'],['ollama','Ollama (local)'],['lmstudio','LM Studio (local)']].map(([id, label]) => ({ id, label, baseUrl: '', requiresKey: !/local/.test(label) })),
+        },
+      };
+    }
+
+    function replay() {
+      const empty = params.has('empty');
+      deliver({
+        type: 'init',
+        session: { items: [], running: false, phase: 'idle', changes: [] },
+        config: makeConfig(empty),
+      });
+      if (params.get('settings')) deliver({ type: 'showSettings', tab: params.get('settings') });
+      if (empty) return;
+
+      ev({ type: 'run_started' });
+      ev({ type: 'user_message', id: 'u1', text: L('Rework the lobby in my Unity project: add a ready state and a 4-player limit.', 'Unity projemde lobby sistemini yeniden düzenle: hazır (ready) durumu ekle ve 4 oyuncu sınırı koy.'), skills: ['unity'], attachments: ['Assets/Scripts/Net/LobbyManager.cs'] });
+      ev({ type: 'phase', phase: 'thinking' });
+      ev({ type: 'assistant_start', id: 'a1' });
+      ev({ type: 'reasoning_delta', id: 'a1', text: L('First I need to find the networking setup and the lobby scripts. This may be Photon Fusion.', 'Önce mevcut networking mimarisini ve lobby ile ilgili scriptleri bulmam gerekiyor. Photon Fusion kullanılıyor olabilir.') });
+      ev({ type: 'assistant_delta', id: 'a1', text: L('I will look at the current lobby and networking code first.', 'Önce mevcut lobby ve networking kodunu inceleyeceğim.') });
+      ev({ type: 'assistant_end', id: 'a1', text: L('I will look at the current lobby and networking code first.', 'Önce mevcut lobby ve networking kodunu inceleyeceğim.'), model: 'claude-opus-5-5' });
+      ev({ type: 'phase', phase: 'analyzing' });
+      ev({ type: 'tool_call', call: { id: 't0', name: 'load_skill', title: 'Skill: unity', category: 'read', risk: 'safe', status: 'done', output: '<skill name="unity">…</skill>' } });
+      ev({ type: 'tool_call', call: { id: 't1', name: 'search_code', title: 'Search "Lobby" in *.cs', category: 'read', risk: 'safe', status: 'done', output: 'Assets/Scripts/Net/LobbyManager.cs:12: public class LobbyManager : NetworkBehaviour\nAssets/Scripts/UI/LobbyView.cs:8: [SerializeField] LobbyManager lobby;' } });
+      ev({ type: 'tool_call', call: { id: 't2', name: 'read_file', title: 'Read Assets/Scripts/Net/LobbyManager.cs', category: 'read', risk: 'safe', status: 'done', output: 'Assets/Scripts/Net/LobbyManager.cs (lines 1-140 of 140)\n  1| using Fusion;' } });
+      ev({ type: 'phase', phase: 'delegating' });
+      ev({ type: 'tool_call', call: { id: 'sa1', name: 'run_subagent', title: 'explore: Find how players join the lobby and where ready state could live', category: 'read', risk: 'safe', status: 'running', detail: 'Find how players join the lobby (Photon Fusion callbacks) and where a per-player ready state could live. Report file paths and line numbers.' } });
+      const sub = (event) => ev({ type: 'subagent', parentId: 'sa1', agent: 'explore', event });
+      sub({ type: 'run_started' });
+      sub({ type: 'user_message', id: 'su1', text: 'Find how players join...' });
+      sub({ type: 'tool_call', call: { id: 'st1', name: 'search_code', title: 'Search "OnPlayerJoined"', category: 'read', risk: 'safe', status: 'done', output: 'Assets/Scripts/Net/LobbyManager.cs:48: public void OnPlayerJoined(NetworkRunner runner, PlayerRef player)' } });
+      sub({ type: 'tool_call', call: { id: 'st2', name: 'read_file', title: 'Read Assets/Scripts/Net/LobbyManager.cs', category: 'read', risk: 'safe', status: 'done', output: '...' } });
+      sub({ type: 'assistant_start', id: 'sa_a1' });
+      sub({ type: 'assistant_end', id: 'sa_a1', text: 'Players join through `OnPlayerJoined` in LobbyManager.cs:48.', model: 'gemini-3.8-flash' });
+      sub({ type: 'usage', total: { inputTokens: 900, outputTokens: 120, cacheReadTokens: 0, cacheWriteTokens: 0 }, model: 'gemini-3.8-flash', byAgent: [{ agent: 'explore', provider: 'gemini', model: 'gemini-3.8-flash', calls: 3, usage: { inputTokens: 900, outputTokens: 120, cacheReadTokens: 0, cacheWriteTokens: 0 } }] });
+      sub({ type: 'run_finished', reason: 'completed' });
+      ev({ type: 'tool_call', call: { id: 'sa1', name: 'run_subagent', title: 'explore: Find how players join the lobby and where ready state could live', category: 'read', risk: 'safe', status: 'done', detail: 'Find how players join the lobby (Photon Fusion callbacks) and where a per-player ready state could live. Report file paths and line numbers.', output: '[explore sub-agent report - Gemini gemini-3.8-flash]\n- Join: `LobbyManager.OnPlayerJoined` (Assets/Scripts/Net/LobbyManager.cs:48)\n- No max-player check exists yet\n- Best place for ready state: a `[Networked] NetworkDictionary<PlayerRef, bool>` on LobbyManager' } });
+      ev({ type: 'phase', phase: 'planning' });
+      ev({ type: 'plan', plan: { explanation: L('Ready state lives in a networked dictionary per PlayerRef; the UI subscribes to it.', 'Ready durumu PlayerRef başına networked bir sözlükte tutulacak; UI bu duruma abone olacak.'), steps: [
+        { title: L('Analyze the networking setup', 'Mevcut networking mimarisini analiz et'), status: 'completed' },
+        { title: L('LobbyManager: player limit and ready state', 'LobbyManager: oyuncu sınırı ve ready durumu'), status: 'completed' },
+        { title: L('LobbyView: ready button and player list', 'LobbyView: ready butonu ve oyuncu listesi'), status: 'in_progress' },
+        { title: L('Build the project and fix errors', 'Projeyi derle ve hataları düzelt'), status: 'pending' },
+      ] } });
+      ev({ type: 'tool_call', call: { id: 't3', name: 'update_plan', title: 'Propose plan', category: 'plan', risk: 'normal', status: 'done', output: 'Plan updated' } });
+      ev({ type: 'phase', phase: 'implementing' });
+      ev({ type: 'tool_call', call: { id: 't4', name: 'edit_file', title: 'Edit Assets/Scripts/Net/LobbyManager.cs', category: 'edit', risk: 'normal', status: 'done', output: 'Edited Assets/Scripts/Net/LobbyManager.cs: replaced 1 occurrence.', path: root + '/Assets/Scripts/Net/LobbyManager.cs' } });
+      ev({ type: 'tool_call', call: { id: 't5', name: 'write_file', title: 'Create Assets/Scripts/Net/ReadyState.cs', category: 'edit', risk: 'normal', status: 'done', output: 'Created Assets/Scripts/Net/ReadyState.cs (42 lines).', path: root + '/Assets/Scripts/Net/ReadyState.cs' } });
+      ev({ type: 'changes', changes: [
+        { absPath: root + '/Assets/Scripts/Net/LobbyManager.cs', relPath: 'Assets/Scripts/Net/LobbyManager.cs', status: 'modified', added: 38, removed: 6 },
+        { absPath: root + '/Assets/Scripts/Net/ReadyState.cs', relPath: 'Assets/Scripts/Net/ReadyState.cs', status: 'added', added: 42, removed: 0 },
+        { absPath: root + '/Assets/Scripts/Legacy/OldLobby.cs', relPath: 'Assets/Scripts/Legacy/OldLobby.cs', status: 'deleted', added: 0, removed: 57 },
+      ] });
+      ev({ type: 'supervisor', id: 'sv1', scope: 'step', status: 'reviewing' });
+      ev({ type: 'supervisor', id: 'sv1', scope: 'step', status: 'intervened', model: 'claude-opus-5-5', message: L('Ready state is kept in a local `Dictionary`, so other players never see it. In Photon Fusion use `[Networked] NetworkDictionary<PlayerRef, bool>` and send the change through an RPC.', "Ready durumu yerel bir `Dictionary` içinde tutuluyor, diğer oyuncular bunu göremez. Photon Fusion'da `[Networked] NetworkDictionary<PlayerRef, bool>` kullan ve değişikliği RPC ile gönder.") });
+      ev({ type: 'assistant_start', id: 'a_fix' });
+      ev({ type: 'assistant_end', id: 'a_fix', text: L('Right: moving ready state into the networked dictionary and adding `SetReadyRpc`.', 'Haklı: ready durumunu networked sözlüğe taşıyorum ve `SetReadyRpc` ekliyorum.'), model: 'claude-opus-5-5' });
+      ev({ type: 'supervisor', id: 'sv2', scope: 'step', status: 'ok', model: 'claude-opus-5-5' });
+      ev({ type: 'compaction', id: 'cp1', status: 'done', reason: 'auto', beforeTokens: 182000, afterTokens: 6100, summary: 'NOTE' });
+      ev({ type: 'phase', phase: 'verifying' });
+      ev({ type: 'tool_call', call: { id: 't6', name: 'run_command', title: 'Run: dotnet build LobbyDemo.sln', category: 'command', risk: 'normal', status: 'running' } });
+      ev({ type: 'tool_output', id: 't6', chunk: '  Determining projects to restore...\n  Assembly-CSharp -> Library/ScriptAssemblies/Assembly-CSharp.dll\n' });
+      ev({ type: 'tool_call', call: { id: 't6', name: 'run_command', title: 'Run: dotnet build LobbyDemo.sln', category: 'command', risk: 'normal', status: 'error', output: "Exit code: 1\nAssets/Scripts/UI/LobbyView.cs(31,17): error CS1061: 'LobbyManager' does not contain a definition for 'IsReady'" } });
+      ev({ type: 'notice', level: 'info', message: 'Changes were not verified yet - asking the agent to build/test before finishing.' });
+      ev({ type: 'tool_call', call: { id: 't7', name: 'run_command', title: 'Run: git push origin feature/lobby', category: 'git', risk: 'dangerous', status: 'awaiting_approval', detail: '$ git push origin feature/lobby\nRisk: git push', hasPreview: false } });
+      ev({ type: 'tool_call', call: { id: 't8', name: 'edit_file', title: 'Edit Assets/Scripts/UI/LobbyView.cs', category: 'edit', risk: 'normal', status: 'awaiting_approval', hasPreview: true } });
+      ev({ type: 'assistant_start', id: 'a2' });
+      ev({ type: 'assistant_delta', id: 'a2', text: L('**Build error:** `LobbyView` still uses the old API. I will make this change:\n\n```csharp\nbool ready = lobby.IsReady(player);\n```\n\n- Add `IsReady(PlayerRef)`\n- Player limit `MaxPlayers = 4`', '**Derleme hatası:** `LobbyView` hâlâ eski API\'yi kullanıyor. Şu değişikliği yapacağım:\n\n```csharp\nbool ready = lobby.IsReady(player);\n```\n\n- `IsReady(PlayerRef)` eklenecek\n- Oyuncu sınırı `MaxPlayers = 4`') });
+      ev({ type: 'assistant_end', id: 'a2', text: L('**Build error:** `LobbyView` still uses the old API. I will make this change:\n\n```csharp\nbool ready = lobby.IsReady(player);\n```\n\n- Add `IsReady(PlayerRef)`\n- Player limit `MaxPlayers = 4`', '**Derleme hatası:** `LobbyView` hâlâ eski API\'yi kullanıyor. Şu değişikliği yapacağım:\n\n```csharp\nbool ready = lobby.IsReady(player);\n```\n\n- `IsReady(PlayerRef)` eklenecek\n- Oyuncu sınırı `MaxPlayers = 4`'), model: 'claude-opus-5-5' });
+      ev({ type: 'usage', total: { inputTokens: 5900, outputTokens: 2410, cacheReadTokens: 51200, cacheWriteTokens: 6100 }, model: 'claude-opus-5-5', byAgent: [
+        { agent: 'main', provider: 'claude', model: 'claude-opus-5-5', calls: 14, usage: { inputTokens: 4200, outputTokens: 1830, cacheReadTokens: 38100, cacheWriteTokens: 5200 } },
+        { agent: 'supervisor', provider: 'claude', model: 'claude-opus-5-5', calls: 4, usage: { inputTokens: 800, outputTokens: 460, cacheReadTokens: 13100, cacheWriteTokens: 900 } },
+        { agent: 'explore', provider: 'gemini', model: 'gemini-3.8-flash', calls: 3, usage: { inputTokens: 900, outputTokens: 120, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+      ] });
+    }
+  </script>
+  <script src="../dist/webview.js"></script>
+</body>
+</html>

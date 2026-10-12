@@ -1,0 +1,11 @@
+**
+!dist/extension.js
+!dist/webview.js
+!dist/webview.css
+!dist/skills/**
+!media/**
+!package.json
+!package.nls.json
+!package.nls.*.json
+!README.md
+!LICENSE

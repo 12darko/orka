@@ -1,0 +1,39 @@
+{
+  "name": "orka-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Orka in the terminal: the AI coding orchestrator of the VS Code extension, as a command-line app.",
+  "license": "MIT",
+  "author": "Enophia Software",
+  "homepage": "https://github.com/12darko/orka#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/12darko/orka.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/12darko/orka/issues"
+  },
+  "bin": {
+    "orka": "dist/orka.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node esbuild.mjs && node --test \"test/*.test.mjs\""
+  },
+  "dependencies": {
+    "@orka/core": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

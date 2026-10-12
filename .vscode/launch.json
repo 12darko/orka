@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      // The Claude Code VS Code extension fails an API-proposal check in development windows, and
+      // that failure drops every extension's sidebar icon (ours included); keep it off here.
+      "args": ["--disable-extension=Anthropic.claude-code", "--extensionDevelopmentPath=${workspaceFolder}/packages/vscode-extension"],
+      "outFiles": ["${workspaceFolder}/packages/vscode-extension/dist/**/*.js"],
+      "preLaunchTask": "build extension"
+    }
+  ]
+}

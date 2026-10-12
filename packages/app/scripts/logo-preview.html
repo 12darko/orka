@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Orka logo</title>
+<style>
+  body { margin: 0; padding: 24px; font-family: system-ui; background: #1f1f1f; color: #ddd; display: flex; gap: 32px; align-items: flex-end; flex-wrap: wrap; }
+  .light { background: #f3f3f3; padding: 16px; border-radius: 8px; }
+  figure { margin: 0; text-align: center; font-size: 12px; }
+  .bar { background: #181818; padding: 10px 6px; display: flex; flex-direction: column; gap: 14px; border-radius: 6px; }
+  .bar img { width: 24px; height: 24px; }
+  .mask { width: 24px; height: 24px; background: #cccccc; -webkit-mask: url(/media/icon.svg) center / contain no-repeat; mask: url(/media/icon.svg) center / contain no-repeat; }
+  .mask.on { background: #ffffff; }
+</style></head>
+<body>
+  <figure><img src="/media/orka-logo.svg" width="256" height="256"><figcaption>256</figcaption></figure>
+  <figure><img src="/media/orka-logo.svg" width="128" height="128"><figcaption>128</figcaption></figure>
+  <figure><img src="/media/orka-logo.svg" width="48" height="48"><figcaption>48</figcaption></figure>
+  <figure><img src="/media/orka-logo.svg" width="24" height="24"><figcaption>24</figcaption></figure>
+  <figure class="light"><img src="/media/orka-logo.svg" width="96" height="96"><figcaption style="color:#333">light</figcaption></figure>
+  <figure><div class="bar"><div class="mask"></div><div class="mask on"></div><div class="mask"></div></div><figcaption>activity bar</figcaption></figure>
+</body></html>

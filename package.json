@@ -1,0 +1,33 @@
+{
+  "name": "orka",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Orka - AI core, chat UI, VS Code extension, CLI and desktop app",
+  "license": "MIT",
+  "author": "Enophia Software",
+  "homepage": "https://github.com/12darko/orka#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/12darko/orka.git"
+  },
+  "bugs": {
+    "url": "https://github.com/12darko/orka/issues"
+  },
+  "workspaces": [
+    "packages/core",
+    "packages/app",
+    "packages/vscode-extension",
+    "packages/cli",
+    "packages/desktop"
+  ],
+  "scripts": {
+    "build": "npm run build -w @orka/core && npm run build -w orka-vscode && npm run build -w orka-cli && npm run build -w orka-desktop",
+    "test": "npm test -w @orka/core && npm test -w orka-cli && npm test -w orka-desktop",
+    "typecheck": "npm run typecheck -w @orka/core && npm run typecheck -w @orka/app && npm run typecheck -w orka-vscode && npm run typecheck -w orka-cli && npm run typecheck -w orka-desktop",
+    "package": "npm run package -w orka-vscode",
+    "desktop": "npm run start -w orka-desktop"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
