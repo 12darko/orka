@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, promises as fs, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { killTree } from '../host/processes';
@@ -19,7 +19,8 @@ export interface Screenshot {
 
 const WIDTH = 1280;
 const HEIGHT = 800;
-const START_TIMEOUT_MS = 20_000;
+/** A cold start on a busy or slow machine (CI, antivirus scans) can take well over 20 seconds. */
+const START_TIMEOUT_MS = 45_000;
 const COMMAND_TIMEOUT_MS = 30_000;
 
 export function findBrowser(explicit?: string): string | undefined {
@@ -232,8 +233,9 @@ export class HeadlessBrowser {
     if (this.profileDir) {
       const dir = this.profileDir;
       this.profileDir = undefined;
-      // The browser may hold files for a moment after it is killed.
-      setTimeout(() => rmSync(dir, { recursive: true, force: true }), 1500).unref?.();
+      // The browser (and its crash reporter) may hold files for a while after it is killed; a
+      // leftover temp folder is harmless, an exception thrown from a timer would crash the app.
+      setTimeout(() => void fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 }).catch(() => undefined), 1500).unref?.();
     }
   }
 

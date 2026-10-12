@@ -176,7 +176,7 @@ export class NodeHost implements Host {
  */
 export function shellEnv(shell: string, extra: Record<string, string> = {}, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env, ...extra };
-  if (/^powershell(\.exe)?$/i.test(path.basename(shell))) for (const key of Object.keys(out)) if (key.toLowerCase() === 'psmodulepath') delete out[key];
+  if (/^powershell(\.exe)?$/i.test(shell.split(/[\\/]/).pop() ?? '')) for (const key of Object.keys(out)) if (key.toLowerCase() === 'psmodulepath') delete out[key];
   return out;
 }
 

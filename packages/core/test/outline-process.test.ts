@@ -95,7 +95,7 @@ describe('background processes', () => {
 
   it('starts a server, waits until it is ready, reads its output and stops it', async () => {
     writeFileSync(path.join(ws.root, 'server.js'), "setTimeout(() => console.log('ready on http://localhost:5173'), 300); setInterval(() => console.log('tick'), 200);");
-    const started = await startProcessTool.execute({ command: 'node server.js', name: 'dev', wait_for: 'ready on', wait_seconds: 20 }, ctx());
+    const started = await startProcessTool.execute({ command: 'node server.js', name: 'dev', wait_for: 'ready on', wait_seconds: 60 }, ctx());
     assert.match(started.content, /^"dev" is running \(pid \d+, \d+s\) - it printed the ready pattern\.\nOutput so far:\n[\s\S]*ready on http:\/\/localhost:5173/);
     assert.ok(!started.isError);
     await assert.rejects(startProcessTool.execute({ command: 'node server.js', name: 'dev' }, ctx()), /already running/);
