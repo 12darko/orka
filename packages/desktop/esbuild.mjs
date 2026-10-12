@@ -21,7 +21,13 @@ await Promise.all([
     format: 'cjs',
     target: 'node20',
     banner: { js: '#!/usr/bin/env node' },
-    define: { ORKA_VERSION: JSON.stringify(version) },
+    define: {
+      ORKA_VERSION: JSON.stringify(version),
+      // ws (in the Gemini SDK) tries its optional native add-ons, which are never installed; the
+      // single executable (scripts/build-exe.mjs) warns about every require() it cannot serve.
+      'process.env.WS_NO_BUFFER_UTIL': '"1"',
+      'process.env.WS_NO_UTF_8_VALIDATE': '"1"',
+    },
     sourcemap: !production,
     minify: production,
   }),
