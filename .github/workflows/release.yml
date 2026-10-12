@@ -57,7 +57,7 @@ jobs:
         run: |
           awk -v v="${GITHUB_REF_NAME#v}" '/^## /{p = index($0, "## " v) == 1; next} p' CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then echo "No \"## ${GITHUB_REF_NAME#v}\" section in CHANGELOG.md." >&2; exit 1; fi
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: orka-desktop-exe
           path: desktop-exe
