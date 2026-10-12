@@ -1468,7 +1468,7 @@ function mcpTab(): string {
       (s) => `<div class="skill-row${s.enabled && m.enabled ? '' : ' off'}">
       <div class="skill-head">
         <label class="switch"><input type="checkbox" data-mcp="${attr(s.name)}"${s.enabled ? ' checked' : ''}${m.enabled ? '' : ' disabled'}></label>
-        <strong class="mono">${escapeHtml(s.name)}</strong><span class="tag">${s.transport}</span>${s.source === 'workspace' ? '<span class="tag sub">.mcp.json</span>' : ''}
+        <strong class="mono">${escapeHtml(s.name)}</strong><span class="tag">${escapeHtml(s.transport)}</span>${s.source === 'workspace' ? '<span class="tag sub">.mcp.json</span>' : ''}
         <span class="spacer"></span>${state(s)}
       </div>
       <div class="mono muted small ellipsis" title="${attr(s.target)}">${escapeHtml(s.target)}</div>
@@ -1672,7 +1672,7 @@ function hunksHtml(change: FileChange): string {
       <div class="hunk-head"><span class="mono muted">${escapeHtml(h.header)}</span><span class="spacer"></span>
         <button class="link" data-action="keep-hunk" data-path="${attr(change.absPath)}" data-index="${i}" title="${attr(t('Keep this change'))}">${icon('check')}${escapeHtml(t('Keep'))}</button>
         <button class="link" data-action="revert-hunk" data-path="${attr(change.absPath)}" data-index="${i}" title="${attr(t('Undo only this part of the change'))}">${icon('undo')}${escapeHtml(t('Revert part'))}</button></div>
-      <pre class="hunk-body mono">${h.lines.map((l) => `<span class="hl ${l.type === '+' ? 'add' : l.type === '-' ? 'del' : ''}">${l.type}${escapeHtml(l.text)}</span>`).join('\n')}${
+      <pre class="hunk-body mono">${h.lines.map((l) => `<span class="hl ${l.type === '+' ? 'add' : l.type === '-' ? 'del' : ''}">${escapeHtml(l.type)}${escapeHtml(l.text)}</span>`).join('\n')}${
         h.hidden ? `\n<span class="muted">${escapeHtml(t('… {n} more lines', { n: h.hidden }))}</span>` : ''
       }</pre>
     </div>`,
@@ -1801,7 +1801,7 @@ function itemHtml(item: TranscriptItem, nested: boolean): string {
       if (nested && item.call.status !== 'awaiting_approval' && item.call.name !== 'run_subagent') return timelineRow(item);
       return `<div class="tool status-${attr(item.call.status)}${item.call.name === 'run_subagent' ? ' subagent' : ''}${item.call.name === 'ask_supervisor' ? ' ask-sup' : ''}${nested ? ' nested' : ''}" data-id="${attr(item.id)}" data-tool-id="${attr(item.id)}">${renderTool(item.call, item.liveOutput, item.sub)}</div>`;
     case 'notice':
-      return `<div class="notice ${item.level}" data-id="${attr(item.id)}">${icon(item.level === 'info' ? 'info' : 'warn')}<span>${escapeHtml(item.message)}</span>${noticeAction(item.action)}</div>`;
+      return `<div class="notice ${attr(item.level)}" data-id="${attr(item.id)}">${icon(item.level === 'info' ? 'info' : 'warn')}<span>${escapeHtml(item.message)}</span>${noticeAction(item.action)}</div>`;
     case 'supervisor':
       return supervisorHtml(item);
     case 'compaction':
@@ -1894,10 +1894,10 @@ const STATUS_ICON: Record<ToolCallView['status'], string> = {
 function timelineRow(item: Extract<TranscriptItem, { kind: 'tool' }>): string {
   const c = item.call;
   const summary = c.status === 'error' || c.status === 'denied' ? (c.output ?? '').split('\n')[0] : '';
-  return `<div class="step status-${c.status}" data-id="${attr(item.id)}" data-tool-id="${attr(item.id)}">
+  return `<div class="step status-${attr(c.status)}" data-id="${attr(item.id)}" data-tool-id="${attr(item.id)}">
     <span class="step-dot"></span><span class="step-title mono" title="${attr(c.title)}">${escapeHtml(c.title)}</span>
     ${summary ? `<span class="step-meta err ellipsis" title="${attr(summary)}">${escapeHtml(summary)}</span>` : ''}
-    <span class="tool-status">${STATUS_ICON[c.status]}</span></div>`;
+    <span class="tool-status">${STATUS_ICON[c.status] ?? ''}</span></div>`;
 }
 
 function renderTool(call: ToolCallView, liveOutput: string, sub?: SubagentView): string {

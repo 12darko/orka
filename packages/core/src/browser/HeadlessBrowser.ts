@@ -180,7 +180,8 @@ export class HeadlessBrowser {
   /** Click the center of the first element matching a CSS selector (scrolled into view). */
   async clickSelector(selector: string): Promise<void> {
     const box = await this.evaluate(
-      `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
+      // The selector travels URI-encoded: that text cannot contain a quote or backslash to break out with.
+      `(() => { const el = document.querySelector(decodeURIComponent("${encodeURIComponent(selector)}")); if (!el) return null; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
     );
     if (!box) throw new Error(`No element matches ${selector}`);
     await this.click(box.x, box.y);

@@ -60,11 +60,20 @@ const DANGEROUS: Array<[RegExp, string]> = [
 const INTERPRETER = /^(node|nodejs|bun|deno|python[0-9.]*|py|perl|ruby|php|lua|osascript)(\.exe)?$/i;
 const INLINE_FLAG = /^(-e|--eval|-p|--print|-c|-r|eval|-command)$/i;
 
+/** The token without surrounding quotes (a loop: a regex like /["']+$/ backtracks on long runs of quotes). */
+function unquote(token: string): string {
+  let start = 0;
+  let end = token.length;
+  while (start < end && (token[start] === '"' || token[start] === "'")) start++;
+  while (end > start && (token[end - 1] === '"' || token[end - 1] === "'")) end--;
+  return token.slice(start, end);
+}
+
 /** An interpreter started with inline code (node -e, python -c, ...), found token by token (linear). */
 function hasInlineCode(command: string): boolean {
   let interpreter = false;
   for (const token of command.split(/[\s;&|()]+/)) {
-    const name = token.replace(/^["']+|["']+$/g, '').split(/[\\/]/).pop() ?? '';
+    const name = unquote(token).split(/[\\/]/).pop() ?? '';
     if (INTERPRETER.test(name)) interpreter = true;
     else if (interpreter && INLINE_FLAG.test(token)) return true;
   }
