@@ -7,7 +7,8 @@ const SERVICE = 'Orka';
 
 function run(file: string, args: string[], options: { env?: NodeJS.ProcessEnv; input?: string } = {}): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = execFile(file, args, { env: options.env ?? process.env, windowsHide: true, timeout: 20_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+    // Generous: the first PowerShell start on a cold or busy machine can take well over 20 seconds.
+    const child = execFile(file, args, { env: options.env ?? process.env, windowsHide: true, timeout: 90_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) reject(new Error(stderr.trim() || error.message));
       else resolve(stdout);
     });

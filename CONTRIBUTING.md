@@ -39,6 +39,12 @@ npm test
 
 Small, focused pull requests are easier to review. For a larger change, open an issue first so we can agree on the approach.
 
+## Releasing (maintainers)
+
+1. Bump `version` in `packages/vscode-extension/package.json` and add a `## <version>` section to `CHANGELOG.md`.
+2. Commit, then tag and push: `git tag v<version>` and `git push origin v<version>`.
+3. The *Release* workflow builds, tests and packages the extension and publishes a GitHub release with the `.vsix` and the changelog section.
+
 ## Reporting bugs
 
 Use the bug report template and include your OS, the app (VS Code / desktop / CLI), the provider and model, and what you expected to happen. For security problems, see [SECURITY.md](SECURITY.md).

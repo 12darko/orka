@@ -100,6 +100,9 @@ describe('Orka desktop app', { skip: (!existsSync(APP) && 'build first (npm run 
     app = undefined;
   });
 
+  /** What the running app printed (for failure messages). */
+  let appOutput = '';
+
   /** Start the app without a window; resolves with its start URL. */
   function launch(folder = work) {
     app = spawn(process.execPath, [APP, folder, '--no-window'], {
@@ -107,10 +110,11 @@ describe('Orka desktop app', { skip: (!existsSync(APP) && 'build first (npm run 
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = '';
-    app.stderr.on('data', (c) => (out += c));
+    appOutput = '';
+    app.stderr.on('data', (c) => (appOutput = out += c));
     return new Promise((resolve, reject) => {
       app.stdout.on('data', (c) => {
-        out += c;
+        appOutput = out += c;
         const url = /ORKA_DESKTOP_URL=(\S+)/.exec(out)?.[1];
         if (url) resolve(url);
       });
@@ -183,7 +187,10 @@ describe('Orka desktop app', { skip: (!existsSync(APP) && 'build first (npm run 
     await browser.type('sk-test-desktop-1234567890');
     await browser.press('Enter');
     const keys = path.join(home, 'desktop', 'keys.json');
-    await until(() => existsSync(keys), 'the stored key', 20_000);
+    // Encrypting starts PowerShell, which can be slow on a fresh CI machine.
+    await until(() => existsSync(keys), 'the stored key', 120_000).catch(async (error) => {
+      throw new Error(`${error.message}\n--- UI ---\n${(await text()).slice(-2000)}\n--- app ---\n${appOutput.slice(-2000)}`);
+    });
     const blob = JSON.parse(readFileSync(keys, 'utf8'))['orka.apiKey.openai'];
     assert.match(blob, /^[0-9a-f]{100,}$/i, 'encrypted, not the key itself');
     assert.doesNotMatch(readFileSync(keys, 'utf8'), /sk-test-desktop/);
@@ -197,6 +204,6 @@ describe('Orka desktop app', { skip: (!existsSync(APP) && 'build first (npm run 
     await until(async () => (await text()).includes('What should we build?'), 'the chat UI');
     await browser.clickSelector('[data-action="open-settings"]');
     await browser.clickSelector('[data-action="tab"][data-tab="providers"]');
-    await until(async () => (await text()).includes('sk-tes••••7890'), 'the stored key hint');
+    await until(async () => (await text()).includes('sk-tes••••7890'), 'the stored key hint', 120_000);
   });
 });
