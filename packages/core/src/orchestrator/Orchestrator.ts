@@ -128,6 +128,19 @@ const ACTIVITY_LINES = 12;
 /** beforeFinish hooks that keep failing send the agent back at most this many times per request. */
 const MAX_HOOK_ROUNDS = 3;
 
+/** Where the task stood just before a user message, to go back there. */
+interface RewindPoint {
+  /** The user message's id (as in its user_message event). */
+  id: string;
+  text: string;
+  messageIndex: number;
+  /** The change tracker's epoch, for restoring files. */
+  epoch: number;
+  plan?: Plan;
+  requests: number;
+  corrections: number;
+}
+
 /** Per-request supervisor state. */
 interface Watch {
   active: boolean;
@@ -184,6 +197,8 @@ export class Orchestrator {
   private corrections: string[] = [];
   /** Token use per agent role in this task: main, supervisor, each sub-agent. */
   private agentUsage = new Map<string, AgentUsage>();
+  /** One per user request of this task (main agent only), oldest first. */
+  private rewindPoints: RewindPoint[] = [];
 
   private messages: ChatMessage[] = [];
   private systemPrompt?: string;
@@ -297,6 +312,7 @@ export class Orchestrator {
     this.lastProviderKey = undefined;
     this.userRequests = [];
     this.corrections = [];
+    this.rewindPoints = [];
     this.supervisor?.reset();
     this.options.permissions.resetSession();
     if (!this.options.changes) this.changes.importCheckpoint(state.checkpoint ?? []);
@@ -368,6 +384,7 @@ export class Orchestrator {
     this.plan = undefined;
     this.notes = [];
     this.agentUsage.clear();
+    this.rewindPoints = [];
     this.lastPromptTokens = 0;
     this.lastProviderKey = undefined;
     this.userRequests = [];
@@ -460,6 +477,18 @@ export class Orchestrator {
       ...invokedSkills.map(invokedSkillBlock),
       ...attachments.map((a) => `<attached_file path="${a.path}">\n${truncateMiddle(a.content, 60_000)}\n</attached_file>`),
     ].join('\n\n');
+    const userMessageId = this.nextId('u');
+    if (!this.options.role) {
+      this.rewindPoints.push({
+        id: userMessageId,
+        text: userText,
+        messageIndex: this.messages.length,
+        epoch: this.changes.startEpoch(),
+        plan: this.plan && structuredClone(this.plan),
+        requests: this.userRequests.length,
+        corrections: this.corrections.length,
+      });
+    }
     this.messages.push({
       role: 'user',
       content: [
@@ -469,7 +498,7 @@ export class Orchestrator {
     });
     this.emit({
       type: 'user_message',
-      id: this.nextId('u'),
+      id: userMessageId,
       text: userText,
       attachments: attachments.length ? attachments.map((a) => a.path) : undefined,
       skills: invokedSkills.length ? invokedSkills.map((s) => s.name) : undefined,
@@ -744,6 +773,37 @@ export class Orchestrator {
     }
   }
 
+  /** User messages this task can go back to, oldest first. */
+  get rewindTargets(): ReadonlyArray<{ id: string; text: string }> {
+    return this.rewindPoints.map(({ id, text }) => ({ id, text }));
+  }
+
+  /**
+   * Go back to just before a user message: the conversation from that message on is dropped, the
+   * plan is what it was then, and files the agents changed since are restored. Returns the
+   * message's text (to edit and send again) and the restored files; undefined when that point is
+   * gone (the task was compacted or reopened since).
+   */
+  async rewind(id: string): Promise<{ text: string; restored: string[] } | undefined> {
+    if (this.abort) throw new Error('Stop the agent before going back.');
+    const index = this.rewindPoints.findIndex((p) => p.id === id);
+    if (index === -1) return undefined;
+    const point = this.rewindPoints[index];
+    const restored = await this.changes.rewindTo(point.epoch);
+    this.rewindPoints = this.rewindPoints.slice(0, index);
+    this.messages = this.messages.slice(0, point.messageIndex);
+    this.plan = point.plan;
+    this.userRequests = this.userRequests.slice(0, point.requests);
+    this.corrections = this.corrections.slice(0, point.corrections);
+    this.notes = [];
+    this.activity = [];
+    this.lastPromptTokens = 0;
+    this.supervisor?.reset();
+    this.emit({ type: 'rewound', id });
+    this.emit({ type: 'plan', plan: this.plan });
+    return { text: point.text, restored };
+  }
+
   /** Compact the conversation now (e.g. the user's /compact). */
   async compact(): Promise<boolean> {
     if (this.abort) throw new Error('The agent is running; stop it or wait before compacting.');
@@ -791,6 +851,9 @@ export class Orchestrator {
       const handoff = await this.buildHandoff(note, last);
       this.messages = [{ role: 'user', content: [{ type: 'text', text: handoff }] }];
       this.lastPromptTokens = 0;
+      // The earlier messages are gone, so there is nothing to go back to.
+      this.rewindPoints = [];
+      if (!this.options.changes) this.changes.clearEpochs();
       // The supervisor's own history is replaced by the same handoff.
       this.supervisor?.reset();
       this.supervisor?.note(`# Handoff after compaction\n${handoff}`);

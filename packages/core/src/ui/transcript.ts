@@ -79,6 +79,11 @@ export function applyEvent(state: SessionView, event: AgentEvent): string | unde
     case 'user_message':
       state.items.push({ kind: 'user', id: event.id, text: event.text, attachments: event.attachments, skills: event.skills, images: event.images });
       return event.id;
+    case 'rewound': {
+      const index = state.items.findIndex((i) => i.kind === 'user' && i.id === event.id);
+      if (index !== -1) state.items = state.items.slice(0, index);
+      return undefined;
+    }
     case 'assistant_start':
       state.items.push({ kind: 'assistant', id: event.id, text: '', reasoning: '', streaming: true });
       return event.id;

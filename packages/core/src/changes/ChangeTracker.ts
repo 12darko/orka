@@ -32,6 +32,11 @@ const MAX_CHECKPOINT_TOTAL = 8_000_000;
 export class ChangeTracker {
   /** absPath -> content before the agent first touched it (null = file did not exist). */
   private originals = new Map<string, string | null>();
+  /**
+   * Rewind points: each epoch (one per user request) keeps the content of every file as it was
+   * when that epoch began, captured the first time the file changes during it.
+   */
+  private epochs: Array<Map<string, string | null>> = [];
   private listeners = new Set<() => void>();
 
   constructor(private readonly host: Host) {}
@@ -41,18 +46,60 @@ export class ChangeTracker {
     return () => this.listeners.delete(listener);
   }
 
-  /** Call before modifying/deleting a file. Only the first snapshot per file is kept. */
+  /** Call before modifying/deleting a file. Only the first snapshot per file (and per epoch) is kept. */
   async recordBefore(absPath: string): Promise<void> {
     const key = normalize(absPath);
-    if (this.originals.has(key)) return;
-    const exists = await this.host.exists(absPath);
-    this.originals.set(key, exists ? await this.host.readFile(absPath) : null);
+    const epoch = this.epochs.at(-1);
+    const forTask = !this.originals.has(key);
+    const forEpoch = !!epoch && !epoch.has(key);
+    if (!forTask && !forEpoch) return;
+    const content = (await this.host.exists(absPath)) ? await this.host.readFile(absPath) : null;
+    if (forTask) this.originals.set(key, content);
+    if (forEpoch) epoch!.set(key, content);
   }
 
   /** Record a known original (e.g. from a snapshot taken before a command); only the first one counts. */
   recordOriginal(absPath: string, original: string | null): void {
     const key = normalize(absPath);
     if (!this.originals.has(key)) this.originals.set(key, original);
+    const epoch = this.epochs.at(-1);
+    if (epoch && !epoch.has(key)) epoch.set(key, original);
+  }
+
+  /** Start a rewind point here; returns its number for rewindTo. */
+  startEpoch(): number {
+    this.epochs.push(new Map());
+    return this.epochs.length - 1;
+  }
+
+  /** Forget all rewind points (files stay as they are). */
+  clearEpochs(): void {
+    this.epochs = [];
+  }
+
+  /**
+   * Put every file changed since rewind point `epoch` back the way it was then, and drop that
+   * point and the later ones. A restored file the tracker no longer followed (its change was kept)
+   * is followed again from its current content, so the rewind itself shows up as a reviewable change.
+   */
+  async rewindTo(epoch: number): Promise<string[]> {
+    if (epoch < 0 || epoch >= this.epochs.length) return [];
+    const target = new Map<string, string | null>();
+    // The earliest capture wins: it is the content when the rewind point began.
+    for (const map of this.epochs.slice(epoch)) for (const [key, content] of map) if (!target.has(key)) target.set(key, content);
+    this.epochs = this.epochs.slice(0, epoch);
+    const restored: string[] = [];
+    for (const [key, content] of target) {
+      const current = await this.current(key);
+      if (current === content) continue;
+      if (!this.originals.has(key)) this.originals.set(key, current);
+      if (content === null) await this.host.deleteFile(key);
+      else await this.host.writeFile(key, content);
+      // Earlier rewind points still hold their own older captures of this file.
+      restored.push(this.relative(key));
+    }
+    this.notify();
+    return restored.sort();
   }
 
   /** Call after modifying a file to notify listeners. */
@@ -189,6 +236,7 @@ export class ChangeTracker {
   /** Replace the tracked originals with a stored checkpoint (paths outside the workspace are ignored). */
   importCheckpoint(entries: readonly ChangeCheckpoint[]): void {
     this.originals.clear();
+    this.epochs = [];
     const root = path.resolve(this.host.workspaceRoot);
     for (const entry of entries) {
       if (typeof entry?.path !== 'string' || (entry.original !== null && typeof entry.original !== 'string')) continue;
@@ -202,6 +250,7 @@ export class ChangeTracker {
 
   /** Forget every snapshot without touching files (a new task starts with a clean change list). */
   clear(): void {
+    this.epochs = [];
     if (!this.originals.size) return;
     this.originals.clear();
     this.notify();

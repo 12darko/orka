@@ -175,12 +175,16 @@ export type ToWebview =
   | { type: 'fileMatches'; query: string; files: string[] }
   | { type: 'hunks'; path: string; hunks: HunkView[] }
   | { type: 'dialog'; id: string; dialog: DialogView }
-  | { type: 'closeDialog'; id: string };
+  | { type: 'closeDialog'; id: string }
+  /** Put text into the message box (e.g. a message the user went back to, to edit and resend). */
+  | { type: 'setInput'; text: string };
 
 export type FromWebview =
   | { type: 'ready' }
   | { type: 'send'; text: string; files?: string[]; skills?: string[]; images?: ImageAttachment[] }
   | { type: 'stop' }
+  /** Go back to just before this user message (conversation and files). */
+  | { type: 'rewind'; id: string }
   | { type: 'newTask' }
   | { type: 'compact' }
   | { type: 'approve'; id: string; approved: boolean; feedback?: string; always?: boolean }

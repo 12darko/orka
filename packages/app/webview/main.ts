@@ -604,6 +604,9 @@ document.addEventListener('click', (e) => {
     case 'reset-claude-exe':
       post({ type: 'resetClaudeExecutable' });
       break;
+    case 'rewind':
+      if (target.dataset.id) post({ type: 'rewind', id: target.dataset.id });
+      break;
     case 'init-memory':
       post({ type: 'initMemory' });
       break;
@@ -1774,7 +1777,10 @@ function itemHtml(item: TranscriptItem, nested: boolean): string {
         ...(item.skills ?? []).map((s) => `<span class="chip skill">${icon('skill')}<span class="ellipsis">/${escapeHtml(s)}</span></span>`),
         ...(item.attachments ?? []).map((a) => `<span class="chip">${icon('read')}<span class="ellipsis">${escapeHtml(a)}</span></span>`),
       ];
-      return `<div class="msg user" data-id="${attr(item.id)}"><div class="bubble">${escapeHtml(item.text)}</div>${chips.length ? `<div class="chips sent">${chips.join('')}</div>` : ''}</div>`;
+      const rewind = session.running
+        ? ''
+        : `<button class="rewind" data-action="rewind" data-id="${attr(item.id)}" title="${attr(t('Go back to before this message (conversation and files) to change it'))}">${icon('undo')}${escapeHtml(t('Go back'))}</button>`;
+      return `<div class="msg user" data-id="${attr(item.id)}"><div class="bubble">${escapeHtml(item.text)}</div>${chips.length ? `<div class="chips sent">${chips.join('')}</div>` : ''}${rewind}</div>`;
     }
     case 'assistant': {
       if (nested) return item.text.trim() ? `<div class="step-note" data-id="${attr(item.id)}">${renderMarkdown(item.text)}</div>` : '';
@@ -2081,6 +2087,8 @@ function flush(): void {
 
 function onEvent(event: AgentEvent): void {
   const changedId = applyEvent(session, event);
+  // Sent messages offer "Go back" only while the agent is idle.
+  document.body.classList.toggle('busy', session.running);
   switch (event.type) {
     case 'plan':
       renderPlan();
@@ -2101,6 +2109,7 @@ function onEvent(event: AgentEvent): void {
       break;
     case 'run_finished':
     case 'reset':
+    case 'rewound':
       schedule();
       break;
     default:
@@ -2240,8 +2249,15 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
     case 'closeDialog':
       if (dialogs.delete(message.id)) renderDialogs();
       break;
+    case 'setInput':
+      // Going back puts the message into the box again, to edit and resend.
+      el.input.value = message.text;
+      el.input.dispatchEvent(new Event('input'));
+      el.input.focus();
+      break;
     case 'init':
       session = message.session;
+      document.body.classList.toggle('busy', session.running);
       config = message.config;
       setLocale(config.locale);
       ui.hunks.clear();

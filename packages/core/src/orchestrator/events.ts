@@ -61,7 +61,9 @@ export type AgentEvent =
   /** A supervisor review of the main agent's work (updated in place by id). */
   | { type: 'supervisor'; id: string; scope: SupervisorScope; status: SupervisorStatus; message?: string; model?: string; reason?: string }
   /** The conversation was (or is being) compacted into a handoff note. */
-  | ({ type: 'compaction' } & CompactionView);
+  | ({ type: 'compaction' } & CompactionView)
+  /** The task went back to just before the user message `id`: it and everything after it are gone. */
+  | { type: 'rewound'; id: string };
 
 export type SupervisorStatus = 'reviewing' | 'ok' | 'intervened' | 'error' | 'cancelled';
 

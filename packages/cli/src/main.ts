@@ -339,6 +339,7 @@ const COMMANDS: Array<[string, string]> = [
   ['/new', 'Start a new task'],
   ['/diff', 'Show what the agent changed in this task'],
   ['/undo', 'Revert all changes of this task'],
+  ['/rewind [n]', 'Go back n requests (default 1): the conversation and the files'],
   ['/compact', 'Summarize the conversation to save tokens'],
   ['/mode [ask|balanced|autonomous]', 'Show or change the permission mode'],
   ['/model [provider:]model', 'Show or change the main model'],
@@ -348,7 +349,7 @@ const COMMANDS: Array<[string, string]> = [
   ['/exit', 'Leave (the task is saved; orka -c continues it)'],
 ];
 
-type SlashResult = 'exit' | 'handled' | { run: string; skills: Skill[] } | { handoff: ExternalAgent; text: string };
+type SlashResult = 'exit' | 'handled' | { run: string; skills: Skill[] } | { handoff: ExternalAgent; text: string } | { prefill: string };
 
 async function slash(line: string, session: Session, rl: readline.Interface | undefined, s: Style): Promise<SlashResult> {
   const out = (text = '') => io.stdout.write(`${text}\n`);
@@ -388,6 +389,33 @@ async function slash(line: string, session: Session, rl: readline.Interface | un
       const reverted = await session.orchestrator.changes.revertAll();
       out(s.green(`${t('Reverted')}: ${reverted.join(', ')}`));
       return 'handled';
+    }
+    case 'rewind':
+    case 'back': {
+      const targets = session.orchestrator.rewindTargets;
+      if (!targets.length) {
+        out(s.dim(t('Nothing to go back to in this task.')));
+        return 'handled';
+      }
+      const steps = arg ? Number(arg) : 1;
+      if (!Number.isInteger(steps) || steps < 1 || steps > targets.length) {
+        out(s.red(t('Go back 1 to {n} requests: /rewind [n]', { n: targets.length })));
+        return 'handled';
+      }
+      if (!rl) {
+        out(s.yellow(t('/rewind asks first, so it needs an interactive terminal.')));
+        return 'handled';
+      }
+      const target = targets[targets.length - steps];
+      const shown = target.text.length > 60 ? `${target.text.slice(0, 59)}…` : target.text;
+      const question1 = t('Go back to before "{text}"? Later messages are removed and the files the agents changed since are restored.', { text: shown });
+      const answer = (await question(rl, `${s.yellow('?')} ${question1} (y/n) `)).trim().toLowerCase();
+      if (answer !== 'y' && answer !== 'yes' && answer !== 'e' && answer !== 'evet') return 'handled';
+      const result = await session.orchestrator.rewind(target.id);
+      if (!result) return 'handled';
+      out(s.green(result.restored.length ? `${t('Restored')}: ${result.restored.join(', ')}` : t('Went back.')));
+      // The message comes back at the prompt, to edit and send again.
+      return { prefill: result.text };
     }
     case 'compact':
       await session.orchestrator.compact();
@@ -575,7 +603,7 @@ export async function main(argv: readonly string[], streams: CliIO = { stdin: pr
         if (text.startsWith('/') && !text.startsWith('//')) {
           const result = await slash(text, session, undefined, s);
           if (result === 'exit') break;
-          if (result === 'handled') continue;
+          if (result === 'handled' || 'prefill' in result) continue;
           if ('handoff' in result) await handOff(session, result.handoff, result.text, undefined, s);
           else await runOnce(result.run, result.skills);
           continue;
@@ -585,13 +613,15 @@ export async function main(argv: readonly string[], streams: CliIO = { stdin: pr
       return 0;
     }
     let pending = args.prompt;
+    let prefill: string | undefined;
     let closed = false;
     rl.on('close', () => {
       closed = true;
     });
     while (!closed) {
-      const line = pending ?? (await nextLine(rl, `\n${s.cyan('›')} `));
+      const line = pending ?? (await nextLine(rl, `\n${s.cyan('›')} `, prefill));
       pending = undefined;
+      prefill = undefined;
       if (line === undefined) break;
       exitArmed = false;
       const text = line.trim();
@@ -600,7 +630,8 @@ export async function main(argv: readonly string[], streams: CliIO = { stdin: pr
         const result = await slash(text, session, rl, s);
         if (result === 'exit') break;
         if (result === 'handled') continue;
-        if ('handoff' in result) await handOff(session, result.handoff, result.text, rl, s);
+        if ('prefill' in result) prefill = result.prefill;
+        else if ('handoff' in result) await handOff(session, result.handoff, result.text, rl, s);
         else await runOnce(result.run, result.skills);
         continue;
       }
@@ -615,7 +646,7 @@ export async function main(argv: readonly string[], streams: CliIO = { stdin: pr
 }
 
 /** The next line typed at the prompt, or undefined when input closes (Ctrl+D / Ctrl+C twice). */
-function nextLine(rl: readline.Interface, prompt: string): Promise<string | undefined> {
+function nextLine(rl: readline.Interface, prompt: string, prefill?: string): Promise<string | undefined> {
   return new Promise((resolve) => {
     const onClose = () => resolve(undefined);
     rl.once('close', onClose);
@@ -623,6 +654,7 @@ function nextLine(rl: readline.Interface, prompt: string): Promise<string | unde
       rl.off('close', onClose);
       resolve(answer);
     });
+    if (prefill) rl.write(prefill);
   });
 }
 

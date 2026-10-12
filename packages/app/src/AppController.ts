@@ -203,6 +203,9 @@ export class AppController implements Disposable {
       case 'stop':
         this.stop();
         break;
+      case 'rewind':
+        await this.rewind(message.id);
+        break;
       case 'newTask':
         await this.newTask();
         break;
@@ -410,6 +413,41 @@ export class AppController implements Disposable {
 
   stop(): void {
     this.orchestrator?.stop();
+  }
+
+  /**
+   * Go back to just before one of this task's messages: the conversation from there on is
+   * removed, files the agents changed since are restored, and the message is put back in the box.
+   */
+  async rewind(id: string): Promise<void> {
+    const orchestrator = this.orchestrator;
+    if (!orchestrator) return;
+    if (orchestrator.isRunning) {
+      void this.shell.message('info', t('The agent is still working. Stop it first, then go back.'));
+      return;
+    }
+    if (!orchestrator.rewindTargets.some((p) => p.id === id)) {
+      void this.shell.message('info', t('Going back to this message is no longer possible: the task was compacted or reopened since.'));
+      return;
+    }
+    const back = t('Go back');
+    const choice = await this.shell.message(
+      'warning',
+      t('Go back to before this message? The conversation from here on is removed, and files the agents changed since return to how they were. The file changes stay reviewable in Changes.'),
+      { modal: true },
+      back,
+    );
+    if (choice !== back) return;
+    const result = await orchestrator.rewind(id);
+    if (!result) return;
+    this.shell.post({ type: 'setInput', text: result.text });
+    this.publishNotice(
+      'info',
+      result.restored.length
+        ? t('Went back. Restored {n} file(s): {files}. Edit the message and send it again.', { n: result.restored.length, files: result.restored.slice(0, 8).join(', ') })
+        : t('Went back. Edit the message and send it again.'),
+    );
+    await this.saveTask();
   }
 
   /** Archive the current task in the history and start an empty one. */

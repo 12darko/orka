@@ -643,6 +643,23 @@ export const TR: Record<string, string> = {
   'Start a new task': 'Yeni görev başlat',
   'Show what the agent changed in this task': "Agent'ın bu görevde değiştirdiklerini göster",
   'Revert all changes of this task': 'Bu görevin tüm değişikliklerini geri al',
+  'Go back n requests (default 1): the conversation and the files': 'n istek geri dön (varsayılan 1): konuşma ve dosyalar',
+  'The agent is still working. Stop it first, then go back.': 'Agent hâlâ çalışıyor. Önce durdurun, sonra geri dönün.',
+  'Going back to this message is no longer possible: the task was compacted or reopened since.':
+    'Bu mesaja artık geri dönülemiyor: görev o zamandan beri compact edildi ya da yeniden açıldı.',
+  'Go back': 'Geri dön',
+  'Go back to before this message? The conversation from here on is removed, and files the agents changed since return to how they were. The file changes stay reviewable in Changes.':
+    "Bu mesajın öncesine dönülsün mü? Buradan sonraki konuşma silinir, agent'ların o zamandan beri değiştirdiği dosyalar eski hâline döner. Dosya değişiklikleri Changes panelinde incelenebilir kalır.",
+  'Went back. Restored {n} file(s): {files}. Edit the message and send it again.': 'Geri dönüldü. {n} dosya geri yüklendi: {files}. Mesajı düzenleyip yeniden gönderin.',
+  'Went back. Edit the message and send it again.': 'Geri dönüldü. Mesajı düzenleyip yeniden gönderin.',
+  'Go back to before this message (conversation and files) to change it': 'Değiştirmek için bu mesajın öncesine dön (konuşma ve dosyalar)',
+  'Nothing to go back to in this task.': 'Bu görevde geri dönülecek bir şey yok.',
+  'Go back 1 to {n} requests: /rewind [n]': '1 ile {n} arasında istek geri dönün: /rewind [n]',
+  '/rewind asks first, so it needs an interactive terminal.': '/rewind önce sorar, bu yüzden etkileşimli bir terminal gerekir.',
+  'Go back to before "{text}"? Later messages are removed and the files the agents changed since are restored.':
+    "\"{text}\" öncesine dönülsün mü? Sonraki mesajlar silinir ve agent'ların o zamandan beri değiştirdiği dosyalar geri yüklenir.",
+  Restored: 'Geri yüklendi',
+  'Went back.': 'Geri dönüldü.',
   'Summarize the conversation to save tokens': 'Token tasarrufu için konuşmayı özetle',
   'Show or change the permission mode': 'İzin modunu göster ya da değiştir',
   'Show or change the main model': 'Ana modeli göster ya da değiştir',
