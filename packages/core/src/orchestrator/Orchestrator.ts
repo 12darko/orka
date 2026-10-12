@@ -3,6 +3,7 @@ import { DEFAULT_SUBAGENTS, READONLY_TOOLS, type SubagentProfile } from '../agen
 import type { TaskSnapshot } from '../persistence/TaskStore';
 import { ChangeTracker } from '../changes/ChangeTracker';
 import type { CommandChange, ShadowGit } from '../changes/ShadowGit';
+import { mergeCopy, WorkspaceCopy } from '../changes/WorkspaceCopy';
 import { ContextBuilder, type EditorContext } from '../context/ContextBuilder';
 import { t } from '../i18n';
 import { createSkillTool, invokedSkillBlock, type Skill } from '../skills/Skills';
@@ -61,6 +62,12 @@ export interface OrchestratorSettings {
    * (only in projects that have a `.project-ai/` folder). Default: on.
    */
   learnLessons?: boolean;
+  /**
+   * Workers the agent starts together run side by side, each in its own copy of the workspace,
+   * and their changes are merged afterwards (needs command snapshots). Default: on; off runs them
+   * one after another in the workspace.
+   */
+  parallelWorkers?: boolean;
 }
 
 /** An image the user attached to a request (e.g. a pasted screenshot). */
@@ -199,6 +206,8 @@ export class Orchestrator {
   private agentUsage = new Map<string, AgentUsage>();
   /** One per user request of this task (main agent only), oldest first. */
   private rewindPoints: RewindPoint[] = [];
+  /** Workers of the running side-by-side batch, by tool call id: their copy and, once done, what they changed. */
+  private isolated = new Map<string, { copy: WorkspaceCopy; changes?: CommandChange[] }>();
 
   private messages: ChatMessage[] = [];
   private systemPrompt?: string;
@@ -713,10 +722,16 @@ export class Orchestrator {
           continue;
         }
         // Consecutive read-only sub-agents cannot conflict with each other: run them side by side.
-        // Everything that can write (workers, edits, commands) stays strictly sequential.
+        // Consecutive workers run side by side in their own copies of the workspace and are merged
+        // afterwards. Everything else that can write (edits, commands) stays strictly sequential.
         let end = i + 1;
         if (limit > 1 && this.isParallelSafe(calls[i])) while (end < calls.length && this.isParallelSafe(calls[end])) end++;
-        const outcomes = await mapLimit(calls.slice(i, end), limit, (call) => this.executeToolCall(call, signal));
+        else if (limit > 1 && this.isWorkerCall(calls[i])) while (end < calls.length && this.isWorkerCall(calls[end])) end++;
+        const batch = calls.slice(i, end);
+        const outcomes =
+          batch.length > 1 && this.isWorkerCall(batch[0])
+            ? await this.runWorkersSideBySide(batch, limit, signal)
+            : await mapLimit(batch, limit, (call) => this.executeToolCall(call, signal));
         for (const outcome of outcomes) {
           results.push(outcome.result);
           if (outcome.changedCode) {
@@ -906,6 +921,66 @@ export class Orchestrator {
   private isParallelSafe(call: ToolCallBlock): boolean {
     if (call.name !== SUBAGENT_TOOL) return false;
     return this.taskProfiles.find((p) => p.name === call.input.agent)?.access === 'readonly';
+  }
+
+  /** A delegation to a sub-agent that edits files (a worker). */
+  private isWorkerCall(call: ToolCallBlock): boolean {
+    if (call.name !== SUBAGENT_TOOL) return false;
+    return this.taskProfiles.find((p) => p.name === call.input.agent)?.access === 'full';
+  }
+
+  /**
+   * Several workers at once: each gets its own copy of the workspace (from a fresh snapshot), they
+   * run side by side, and then their changes are merged into the workspace one worker at a time,
+   * in the order they were called. Without snapshots (no git, or turned off) they run one after
+   * another in the workspace instead.
+   */
+  private async runWorkersSideBySide(
+    batch: ToolCallBlock[],
+    limit: number,
+    signal: AbortSignal,
+  ): Promise<Array<{ result: ToolResultBlock; changedCode: boolean; ranCommand: boolean }>> {
+    const snapshots = this.options.commandSnapshots;
+    const base = this.options.getSettings().parallelWorkers !== false && snapshots ? await snapshots.snapshot() : undefined;
+    const sequential = async () => {
+      const outcomes: Array<{ result: ToolResultBlock; changedCode: boolean; ranCommand: boolean }> = [];
+      for (const call of batch) outcomes.push(await this.executeToolCall(call, signal));
+      return outcomes;
+    };
+    if (!base || !snapshots) return sequential();
+    try {
+      for (const call of batch) this.isolated.set(call.id, { copy: await WorkspaceCopy.create(snapshots, base) });
+    } catch {
+      for (const run of this.isolated.values()) await run.copy.dispose();
+      this.isolated.clear();
+      return sequential();
+    }
+    try {
+      const outcomes = await mapLimit(batch, limit, (call) => this.executeToolCall(call, signal));
+      if (signal.aborted) return outcomes;
+      for (let k = 0; k < batch.length; k++) {
+        const run = this.isolated.get(batch[k].id)!;
+        if (!run.changes?.length) continue;
+        const merge = await mergeCopy(run.copy, run.changes, this.options.host, snapshots, this.changes);
+        const lines = [
+          merge.applied.length ? `Merged into the workspace: ${merge.applied.join(', ')}.` : '',
+          merge.skipped.length ? `Binary files not merged (left only in the worker's copy): ${merge.skipped.join(', ')}.` : '',
+          ...merge.conflicts.map((c) => `CONFLICT in ${c.path}: it also changed in the workspace in an overlapping way, so the workspace version was kept. The worker's change was:\n${truncateMiddle(c.diff, 6000)}`),
+        ].filter(Boolean);
+        const outcome = outcomes[k];
+        outcome.result = { ...outcome.result, content: `${outcome.result.content}\n\n${lines.join('\n')}` };
+        if (merge.applied.length) outcome.changedCode = true;
+        if (merge.conflicts.length) {
+          this.emit({ type: 'notice', level: 'warning', message: t('Workers changed the same lines of {files}; the first version was kept and the agent was told.', { files: merge.conflicts.map((c) => c.path).join(', ') }) });
+        }
+      }
+      return outcomes;
+    } finally {
+      for (const call of batch) {
+        await this.isolated.get(call.id)?.copy.dispose();
+        this.isolated.delete(call.id);
+      }
+    }
   }
 
   private canIntervene(watch: { active: boolean; interventions: number }, oversight: SupervisorSettings): boolean {
@@ -1284,7 +1359,9 @@ export class Orchestrator {
       description:
         'Delegate a self-contained task to a sub-agent and receive its final report. The sub-agent does not see this ' +
         'conversation, so the task must include everything it needs: goal, relevant files, constraints and what to report. ' +
-        `Its file changes join the same change list and its actions follow the same permission rules.\nAvailable sub-agents:\n${list}`,
+        'Its file changes join the same change list and its actions follow the same permission rules. Several workers called in ' +
+        'one reply run side by side in copies of the project and are merged afterwards; give them separate files. ' +
+        `\nAvailable sub-agents:\n${list}`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -1309,19 +1386,23 @@ export class Orchestrator {
       throw new ToolError(`Sub-agent "${profile.name}" is not available: ${errorMessage(error)}`);
     }
     const settings = this.options.getSettings();
+    // A worker of a side-by-side batch works in its own copy, with its own change list; its
+    // changes are merged into the workspace after the batch (runWorkersSideBySide).
+    const isolated = this.isolated.get(ctx.callId);
     const child = new Orchestrator({
-      host: this.options.host,
+      host: isolated ? hostAt(this.options.host, isolated.copy.dir) : this.options.host,
       getProvider: () => provider,
       permissions: this.options.permissions,
       getSettings: () => ({ ...this.options.getSettings(), autoVerify: false, maxIterations: profile.maxIterations ?? Math.min(settings.maxIterations, 40) }),
       tools: this.baseTools.filter((tool) => tool.name !== 'update_plan' && (profile.access === 'full' || READONLY_TOOLS.has(tool.name))),
-      changes: this.changes,
+      changes: isolated ? undefined : this.changes,
       role: profile,
       skills: () => this.taskSkills,
       getFallbackProvider: this.options.getFallbackProvider,
-      commandSnapshots: this.options.commandSnapshots,
-      // MCP tools: all of them for workers, only the read-only ones for read-only sub-agents.
-      getExtraTools: async () => (profile.access === 'full' ? this.extraTools : this.extraTools.filter((tool) => tool.readOnly)),
+      commandSnapshots: isolated ? undefined : this.options.commandSnapshots,
+      // MCP tools: all of them for workers, only the read-only ones for read-only sub-agents. Workers
+      // in copies get none: the application an MCP server drives is shared, the copies are not.
+      getExtraTools: async () => (isolated ? [] : profile.access === 'full' ? this.extraTools : this.extraTools.filter((tool) => tool.readOnly)),
     });
     child.on((event) => this.emit({ type: 'subagent', parentId: ctx.callId, agent: profile.name, event }));
     // The secrets guard spans the whole task: what one agent read, no agent may quietly send out.
@@ -1329,8 +1410,9 @@ export class Orchestrator {
     const stopChild = () => child.stop();
     ctx.signal.addEventListener('abort', stopChild, { once: true });
     try {
-      const reason = await child.run(input.task);
+      const reason = await child.run(isolated ? `${input.task}\n\n${ISOLATED_WORKER_NOTE}` : input.task);
       this.secretFile ??= child.secretFile;
+      if (isolated) isolated.changes = await isolated.copy.changes().catch(() => []);
       const own = child.usageByAgent.find((u) => u.agent === profile.name);
       if (own) this.recordUsage(profile.name, own.provider, own.model, own.usage, own.calls);
       this.emitUsage();
@@ -1442,7 +1524,20 @@ Include, specifically:
 
 Be complete but compact (at most about 800 words).`;
 
-const LESSONS_REQUEST = `[Orchestrator] The request is done. Is there anything from it a future session in this project should know? List at most 3 durable, project-specific lessons: for example the build or test command that works, a pitfall and how to avoid it, or a convention or decision the user confirmed. Only facts that stay true - not what you did in this task, not general programming advice, nothing already in the project memory. One short line each, starting with "- ". If there is nothing worth keeping, reply with exactly NONE. Do not call tools; do not repeat your answer to the user.`;
+const ISOLATED_WORKER_NOTE = `[Orka] You work in your own copy of the project, side by side with other workers; your changes are merged into the real workspace when you finish. Dependency and build folders (node_modules, Library, obj, build output) and git are not in this copy, so do not try to build, test or use git here: make the change, check it by reading the code, and say in your report what should be built or tested. Stay within the files your task names, so your work does not collide with the other workers'.`;
+
+/** The same host, rooted in another folder (a worker's copy of the workspace). */
+function hostAt(host: Host, root: string): Host {
+  return new Proxy(host, {
+    get(target, prop) {
+      if (prop === 'workspaceRoot') return root;
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+}
+
+const LESSONS_REQUEST =`[Orchestrator] The request is done. Is there anything from it a future session in this project should know? List at most 3 durable, project-specific lessons: for example the build or test command that works, a pitfall and how to avoid it, or a convention or decision the user confirmed. Only facts that stay true - not what you did in this task, not general programming advice, nothing already in the project memory. One short line each, starting with "- ". If there is nothing worth keeping, reply with exactly NONE. Do not call tools; do not repeat your answer to the user.`;
 
 /** What the agent is told when the user's beforeFinish checks fail. */
 function hookFailureText(failed: readonly HookResult[]): string {

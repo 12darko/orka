@@ -109,6 +109,7 @@ class Session {
       commandTimeoutMs: clamp(c.commandTimeoutSeconds, 5, 3600, 180) * 1000,
       customInstructions: c.customInstructions,
       maxParallelSubagents: 3,
+      parallelWorkers: c.parallelWorkers !== false,
       compaction: { auto: true, thresholdTokens: 150_000 },
       tokenBudget: c.tokenBudget && c.tokenBudget > 0 ? c.tokenBudget : undefined,
       hooks: readHooks(c.hooks),

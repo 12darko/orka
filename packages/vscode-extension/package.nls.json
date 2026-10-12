@@ -35,7 +35,7 @@
   "config.claudeCode.path": "Path to the claude executable. Empty = auto-detect (npm global install, ~/.local/bin, PATH).",
   "config.customProviders": "Extra OpenAI-compatible providers (OpenRouter, DeepSeek, xAI, Mistral, Groq, Together, Ollama, LM Studio, or any other endpoint). Easiest to manage from Settings > Providers in the chat view. API keys are kept in secret storage, not here.",
   "config.subagents.enabled": "Let the main agent delegate to sub-agents (explore, review, worker).",
-  "config.subagents.maxParallel": "How many read-only sub-agents (explore, review) may run at the same time. Workers that edit files always run one at a time. 1 = no parallelism.",
+  "config.subagents.maxParallel": "How many sub-agents called together may run at the same time (explore, review, and workers when orka.subagents.parallelWorkers is on). 1 = one after another.",
   "config.subagents.agents": "Provider and model per sub-agent. Easiest to change from the Agents panel in the chat view.",
   "config.subagents.agents.provider": "'inherit' = same provider and model as the main agent; or a provider id such as gemini or custom:openrouter.",
   "config.subagents.agents.model": "Model ID; empty = the provider's default model.",
@@ -100,5 +100,6 @@
   "config.routing.model": "Model for simple questions; empty = that provider's default model.",
   "config.browser.path": "Chrome, Edge or Chromium executable the agent's browser tool uses to look at pages (headless). Empty = auto-detect the installed browser.",
   "command.handoffFreebuff": "Continue in Freebuff (free terminal agent)",
-  "config.memory.learn": "After a task that changed code, ask the agent for up to 3 lasting lessons about the project (working commands, pitfalls, conventions) and add the new ones to .project-ai/lessons.md. Only in folders that have a .project-ai/ folder (Orka: Initialize Project Memory)."
+  "config.memory.learn": "After a task that changed code, ask the agent for up to 3 lasting lessons about the project (working commands, pitfalls, conventions) and add the new ones to .project-ai/lessons.md. Only in folders that have a .project-ai/ folder (Orka: Initialize Project Memory).",
+  "config.subagents.parallelWorkers": "Workers called together run side by side, each in its own copy of the project (without dependency folders, so they edit but do not build); their changes are merged into the project afterwards and overlapping edits are reported to the main agent. Needs git and orka.trackCommandChanges. Off: workers run one at a time in the project."
 }

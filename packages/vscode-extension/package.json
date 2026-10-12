@@ -468,6 +468,11 @@
           "maximum": 8,
           "description": "%config.subagents.maxParallel%"
         },
+        "orka.subagents.parallelWorkers": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.subagents.parallelWorkers%"
+        },
         "orka.subagents.agents": {
           "type": "object",
           "default": {

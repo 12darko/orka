@@ -53,7 +53,8 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 - **Any model:** Claude API, OpenAI, Gemini, plus OpenRouter, DeepSeek, xAI, Mistral, Groq, Together AI, Ollama, LM Studio or any OpenAI-compatible URL. Model lists are loaded from the provider itself.
 - **Sees what it builds:** a headless Chrome/Edge tool that takes screenshots, clicks, types and reads console errors.
 - **You stay in control:** *Ask*, *Balanced* and *Autonomous* permission modes; risky commands and writes outside the workspace always ask.
-- **Every change is reversible:** per-file and per-hunk revert, inline Keep / Revert in the editor, and snapshots of files changed by terminal commands.
+- **Every change is reversible:** per-file and per-hunk revert, inline Keep / Revert in the editor, snapshots of files changed by terminal commands, and **Go back** to before any message (conversation and files).
+- **Workers in parallel:** several workers edit side by side in their own copies of the project; their changes are merged and overlaps reported.
 - **Your checks, every time:** hooks run your formatter after each edit and your lint/tests before the agent may say "done"; failures go straight back to the agent.
 - **Learns your project:** after a task, lasting lessons (the command that works, a pitfall, a convention) are kept in `.project-ai/lessons.md` for the next task.
 - **Skills and MCP:** built-in playbooks (Unity, debugging, testing, security, ...), your own skills, and tools from MCP servers (Unity Editor, Blender, databases, ...).
@@ -126,7 +127,10 @@ The agent studies the project, proposes a plan, makes the changes, builds and te
 
 Pick a provider and model per role from the **Agents** menu in the chat header or **Settings → Agents**.
 
-**Parallel sub-agents.** When the main agent calls several read-only sub-agents (`explore`, `review`) in one turn, they run at the same time (up to 3 by default, `orka.subagents.maxParallel`). `worker`s that write files always run one after another, so two workers never overwrite the same file and two builds never touch the same `obj/` or Unity `Library/` folder at once.
+**Parallel sub-agents.** When the main agent calls several sub-agents in one turn, they run at the same time (up to 3 by default, `orka.subagents.maxParallel`):
+
+- Read-only `explore` and `review` agents simply run side by side.
+- **`worker`s run side by side in their own copies of the project.** Each gets a private copy made from a fresh snapshot (Orka's own git directory; your repository is not touched), without dependency and build folders, so workers edit but do not build. When they are done, their changes are merged into the project one worker at a time: files only one worker changed are taken over, edits to different parts of the same file are merged three-way, and overlapping edits keep the earlier worker's version and are reported to the main agent with the other worker's diff. Everything merged shows up in the Changes panel. The main agent then builds and tests the result. Turn it off with `orka.subagents.parallelWorkers` (workers then run one after another in the project); it also needs git and `orka.trackCommandChanges`.
 
 ### Supervisor
 
@@ -249,6 +253,7 @@ Agents can use tools from MCP (Model Context Protocol) servers: Unity Editor, Bl
 ## Tasks, history and tokens
 
 - **History:** every request is saved with its task. Open an earlier task from **History** and **continue where you left off**: the conversation, the frozen system prompt and the tool list come back exactly. Unaccepted file changes are kept as checkpoints, so they can still be reverted later.
+- **Go back (rewind):** hover a message you sent and click **Go back** (CLI: `/rewind [n]`). The conversation from that message on is removed, the plan is what it was then, and every file the agents changed since returns to how it was. The message comes back into the input box, so you can change it and send it again. The restored files show up in the Changes panel, so going back can itself be undone. Rewind points last until the task is compacted, a new task starts or the task is reopened.
 - **Compact:** when a request's prompt passes a threshold (150k tokens by default) or you type `/compact`, the conversation is reduced to one handoff message. Orka does not trust the model's summary alone; it adds its own exact record of your requests (verbatim), the plan, changed files with +/− lines, the Supervisor's open corrections and the latest tool results.
 - **Usage:** calls and input / output / cache tokens per role (main, Supervisor, each sub-agent). Click the token line under the chat for the **Usage** panel. Claude API costs are estimated from list prices; for other providers add your own prices (USD per million tokens, `*` wildcards, the most specific match wins):
 
@@ -274,7 +279,7 @@ The same core in the terminal: chat, Supervisor, sub-agents, Skills, MCP, permis
 - `orka -p "explain main.ts"` answers one request and exits; the reply goes to stdout and progress to stderr, so it works in scripts.
 - `orka -c` continues the last task in this folder; `orka models`, `orka config`.
 - Options: `--provider`, `-m/--model`, `--mode ask|balanced|autonomous`, `-y` (autonomous), `--supervisor claude:claude-sonnet-5-5`, `--no-supervisor`, `-C <folder>`, `--lang en|tr`.
-- In a session: `/help`, `/new`, `/diff`, `/undo`, `/compact`, `/mode`, `/model`, `/usage`, `/skills`, `/<skill> <request>`, `/freebuff`, `/exit`; `@file` attaches a file or image; Ctrl+C stops the running request.
+- In a session: `/help`, `/new`, `/diff`, `/undo`, `/rewind [n]`, `/compact`, `/mode`, `/model`, `/usage`, `/skills`, `/<skill> <request>`, `/freebuff`, `/exit`; `@file` attaches a file or image; Ctrl+C stops the running request.
 - Approvals are asked in the terminal (`y` yes · `a` always · `n` no · `d` diff · or type what to do instead). Without a terminal (piped input), anything that needs approval is **declined**, never approved silently.
 - **API keys are read from environment variables only** (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `apiKeyEnv` for custom endpoints); they are never written to the config.
 

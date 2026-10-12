@@ -1825,6 +1825,7 @@ export class AppController implements Disposable {
         customInstructions: s.orchestrator.customInstructions ?? '',
         compaction: s.orchestrator.compaction,
         subagentsMaxParallel: s.orchestrator.maxParallelSubagents ?? 3,
+        parallelWorkers: s.orchestrator.parallelWorkers !== false,
         claude: { effort: s.claude.effort, refusalFallback: s.claude.refusalFallback },
         openai: { baseUrl: s.openai.baseUrl, reasoningEffort: s.openai.reasoningEffort ?? '' },
         gemini: { thinkingLevel: s.gemini.thinkingLevel ?? '' },

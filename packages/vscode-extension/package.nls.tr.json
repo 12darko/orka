@@ -35,7 +35,7 @@
   "config.claudeCode.path": "claude çalıştırılabilir dosyasının yolu. Boş = otomatik bul (npm global kurulum, ~/.local/bin, PATH).",
   "config.customProviders": "Ek OpenAI uyumlu provider'lar (OpenRouter, DeepSeek, xAI, Mistral, Groq, Together, Ollama, LM Studio veya başka bir endpoint). En kolayı sohbet görünümündeki Ayarlar > Provider'lar bölümünden yönetmek. API anahtarları burada değil, güvenli depoda tutulur.",
   "config.subagents.enabled": "Ana agent'ın işleri sub-agent'lara (explore, review, worker) devretmesine izin ver.",
-  "config.subagents.maxParallel": "Aynı anda kaç salt okunur sub-agent'ın (explore, review) çalışabileceği. Dosya düzenleyen worker'lar her zaman tek tek çalışır. 1 = paralellik yok.",
+  "config.subagents.maxParallel": "Birlikte çağrılan kaç sub-agent'ın aynı anda çalışabileceği (explore, review ve orka.subagents.parallelWorkers açıkken worker'lar). 1 = tek tek.",
   "config.subagents.agents": "Her sub-agent için provider ve model. En kolayı sohbet görünümündeki Agents panelinden değiştirmek.",
   "config.subagents.agents.provider": "'inherit' = ana agent ile aynı provider ve model; ya da gemini veya custom:openrouter gibi bir provider ID'si.",
   "config.subagents.agents.model": "Model ID'si; boş = provider'ın varsayılan modeli.",
@@ -100,5 +100,6 @@
   "config.routing.model": "Basit sorular için model; boş = o provider'ın varsayılan modeli.",
   "config.browser.path": "Agent'ın browser aracının sayfalara bakmak için kullandığı Chrome, Edge ya da Chromium (headless). Boş = kurulu tarayıcıyı otomatik bul.",
   "command.handoffFreebuff": "Freebuff'ta Devam Et (ücretsiz terminal agent'ı)",
-  "config.memory.learn": "Kod değiştiren bir görevden sonra agent'tan proje hakkında en fazla 3 kalıcı ders (çalışan komutlar, tuzaklar, kurallar) iste ve yenilerini .project-ai/lessons.md dosyasına ekle. Yalnızca .project-ai/ klasörü olan projelerde (Orka: Proje Hafızasını Başlat)."
+  "config.memory.learn": "Kod değiştiren bir görevden sonra agent'tan proje hakkında en fazla 3 kalıcı ders (çalışan komutlar, tuzaklar, kurallar) iste ve yenilerini .project-ai/lessons.md dosyasına ekle. Yalnızca .project-ai/ klasörü olan projelerde (Orka: Proje Hafızasını Başlat).",
+  "config.subagents.parallelWorkers": "Birlikte çağrılan worker'lar yan yana, her biri projenin kendi kopyasında çalışır (bağımlılık klasörleri olmadan; düzenler ama derlemez); değişiklikleri sonra projeye birleştirilir, çakışan düzenlemeler ana agent'a bildirilir. git ve orka.trackCommandChanges gerekir. Kapalı: worker'lar projede tek tek çalışır."
 }

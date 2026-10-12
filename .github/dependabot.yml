@@ -9,6 +9,12 @@ updates:
         patterns: ['@anthropic-ai/*', 'openai', '@google/genai']
       build-tools:
         patterns: ['esbuild', 'typescript', '@types/*', '@vscode/*', 'marked']
+    ignore:
+      # Must match engines.vscode in packages/vscode-extension/package.json.
+      - dependency-name: '@types/vscode'
+      # A new TypeScript major changes compiler options; upgrade it on purpose, not weekly.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
   - package-ecosystem: github-actions
     directory: /
     schedule:

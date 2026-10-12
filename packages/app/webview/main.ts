@@ -1173,10 +1173,13 @@ function subagentsCard(): string {
     ${config.subagentsEnabled ? rows : ''}
     ${
       config.subagentsEnabled
-        ? `<div class="row"><span class="grow">${escapeHtml(t('Read-only sub-agents in parallel'))}<br><span class="muted small">${escapeHtml(
-            t('explore and review called together run side by side; workers stay one at a time'),
+        ? `<div class="row"><span class="grow">${escapeHtml(t('Sub-agents at the same time'))}<br><span class="muted small">${escapeHtml(
+            t('explore, review and workers called together run side by side, up to this many'),
           )}</span></span>
-      <input class="num" type="number" min="1" max="8" data-type="int" data-setting="subagents.maxParallel" value="${config.settings.subagentsMaxParallel}" aria-label="${attr(t('Parallel sub-agents'))}"></div>`
+      <input class="num" type="number" min="1" max="8" data-type="int" data-setting="subagents.maxParallel" value="${config.settings.subagentsMaxParallel}" aria-label="${attr(t('Parallel sub-agents'))}"></div>
+      <label class="check"><input type="checkbox" data-setting="subagents.parallelWorkers"${config.settings.parallelWorkers ? ' checked' : ''}><span>${escapeHtml(
+        t('Workers side by side in copies of the project'),
+      )}<br><span class="muted">${escapeHtml(t('Each worker edits its own copy; the changes are merged afterwards and overlaps are reported. Off: workers run one at a time in the project.'))}</span></span></label>`
         : ''
     }
   </div>`;

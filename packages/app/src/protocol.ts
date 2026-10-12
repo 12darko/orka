@@ -74,6 +74,7 @@ export interface SettingsView {
   customInstructions: string;
   compaction: { auto: boolean; thresholdTokens: number };
   subagentsMaxParallel: number;
+  parallelWorkers: boolean;
   claude: { effort: string; refusalFallback: boolean };
   openai: { baseUrl: string; reasoningEffort: string };
   gemini: { thinkingLevel: string };

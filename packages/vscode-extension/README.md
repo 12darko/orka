@@ -9,6 +9,7 @@ An AI coding agent for VS Code that works with the model of your choice: Claude 
 - **Review every change:** changed lines are highlighted in the editor with Keep / Revert above each change; the Changes panel diffs, keeps or reverts per file, per hunk or all at once. Files changed by terminal commands are included.
 - **Hooks:** your formatter or linter runs after each edit and your checks before the agent finishes (`orka.hooks`); failures go back to the agent.
 - **Learns your project:** lasting lessons from each task are kept in `.project-ai/lessons.md` for the next one.
+- **Go back and parallel workers:** rewind to before any message (conversation and files), and let several workers edit side by side in copies of the project.
 - **Hand off to Freebuff:** continue a task in the free Freebuff terminal agent; Orka copies a task summary and afterwards shows what Freebuff changed, ready to keep or revert.
 - **History, compaction and usage:** earlier tasks can be continued; long tasks are compacted with a handoff note; token use and cost are shown per agent, with an optional token budget per request.
 - **Languages:** English and Turkish; the UI follows the machine's language.

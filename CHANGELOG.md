@@ -7,6 +7,8 @@
 - Three apps on one core: VS Code extension, desktop app (also as a single Windows executable, `orka-desktop.exe`) and the `orka` CLI.
 - Hooks: your formatter or linter after each edit (`afterEdit`) and your checks before the agent finishes (`beforeFinish`), with failures sent back to the agent.
 - Learning from tasks: lasting project lessons in `.project-ai/lessons.md`.
+- Go back (rewind) to before any message of a task: the conversation and the files the agents changed since.
+- Workers called together run side by side in their own copies of the project; their changes are merged three-way afterwards and overlapping edits are reported.
 - Permission modes (Ask, Balanced, Autonomous) with per-category overrides; risky commands, downloads, inline scripts with file/network access and writes outside the workspace always ask.
 - Change review: Changes panel, per-hunk revert, inline Keep / Revert in the editor, snapshots of files changed by terminal commands.
 - Headless browser tool, background processes, web fetch.

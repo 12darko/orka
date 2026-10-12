@@ -63,6 +63,8 @@ export interface OrkaConfig {
   hooks?: { afterEdit?: unknown[]; beforeFinish?: unknown[] };
   /** learn: after a task that changed code, add lasting lessons to .project-ai/lessons.md (default true; needs that folder). */
   memory?: { learn?: boolean };
+  /** Workers started together run side by side in copies of the project (default true). */
+  parallelWorkers?: boolean;
 }
 
 export function loadConfig(file = CONFIG_FILE): { config: OrkaConfig; error?: string } {

@@ -177,6 +177,7 @@ export function readSettings(c: SettingsStore): AppSettings {
       commandTimeoutMs: Math.max(5, c.get<number>('commandTimeoutSeconds', 180)) * 1000,
       customInstructions: c.get<string>('customInstructions', ''),
       maxParallelSubagents: Math.min(8, Math.max(1, c.get<number>('subagents.maxParallel', 3))),
+      parallelWorkers: c.get<boolean>('subagents.parallelWorkers', true),
       compaction: {
         auto: c.get<boolean>('compaction.auto', true),
         thresholdTokens: Math.max(10_000, c.get<number>('compaction.thresholdTokens', 150_000)),
@@ -267,6 +268,7 @@ export const WEBVIEW_SETTINGS: Record<string, (value: unknown) => boolean> = {
   'compaction.thresholdTokens': int(10_000, 2_000_000),
   'subagents.enabled': (v) => typeof v === 'boolean',
   'subagents.maxParallel': int(1, 8),
+  'subagents.parallelWorkers': (v) => typeof v === 'boolean',
   'supervisor.enabled': (v) => typeof v === 'boolean',
   'supervisor.frequency': (v) => ['checkpoints', 'every_turn', 'on_changes', 'final_only'].includes(v as string),
   'supervisor.maxInterventions': int(1, 50),

@@ -403,8 +403,13 @@ export const TR: Record<string, string> = {
   'read-only': 'salt okunur',
   edits: 'düzenler',
   'the main agent delegates to them': 'ana agent işleri onlara devreder',
-  'Read-only sub-agents in parallel': 'Paralel salt okunur sub-agent\'lar',
-  'explore and review called together run side by side; workers stay one at a time': 'birlikte çağrılan explore ve review yan yana çalışır; worker\'lar tek tek çalışır',
+  'Sub-agents at the same time': "Aynı anda çalışan sub-agent'lar",
+  'explore, review and workers called together run side by side, up to this many': "birlikte çağrılan explore, review ve worker'lar en fazla bu kadarı yan yana çalışır",
+  'Workers side by side in copies of the project': "Worker'lar projenin kopyalarında yan yana",
+  'Each worker edits its own copy; the changes are merged afterwards and overlaps are reported. Off: workers run one at a time in the project.':
+    "Her worker kendi kopyasını düzenler; değişiklikler sonra birleştirilir, çakışmalar bildirilir. Kapalı: worker'lar projede tek tek çalışır.",
+  'Workers changed the same lines of {files}; the first version was kept and the agent was told.':
+    "Worker'lar {files} dosyasının aynı satırlarını değiştirdi; ilk sürüm tutuldu ve agent'a bildirildi.",
   'Parallel sub-agents': 'Paralel sub-agent sayısı',
   'who does what, on which model': 'kim ne yapıyor, hangi modelle',
   'All settings…': 'Tüm ayarlar…',

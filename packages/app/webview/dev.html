@@ -196,6 +196,7 @@
           projectMemory: 'missing',
           compaction: { auto: true, thresholdTokens: 150000 },
           subagentsMaxParallel: 3,
+          parallelWorkers: true,
           presets: [['openrouter','OpenRouter'],['deepseek','DeepSeek'],['xai','xAI (Grok)'],['mistral','Mistral'],['groq','Groq'],['together','Together AI'],['ollama','Ollama (local)'],['lmstudio','LM Studio (local)']].map(([id, label]) => ({ id, label, baseUrl: '', requiresKey: !/local/.test(label) })),
         },
       };

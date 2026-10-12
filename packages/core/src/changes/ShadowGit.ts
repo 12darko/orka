@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync, promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { IGNORED_DIRS } from '../tools/workspace';
 
@@ -51,12 +52,7 @@ export class ShadowGit {
   async changedSince(snapshot: string): Promise<CommandChange[]> {
     await this.git(['add', '-A'], SNAPSHOT_TIMEOUT_MS);
     const out = await this.git(['diff', '--cached', '--name-status', '--no-renames', snapshot]);
-    const changes: CommandChange[] = [];
-    for (const line of out.split('\n')) {
-      const m = /^([AMD])\t(.+)$/.exec(line.trim());
-      if (m) changes.push({ path: m[2], status: m[1] === 'A' ? 'added' : m[1] === 'D' ? 'deleted' : 'modified' });
-    }
-    return changes;
+    return parseNameStatus(out);
   }
 
   /** A file's content in a snapshot; undefined for binary files (they are not revertible as text). */
@@ -65,6 +61,25 @@ export class ShadowGit {
     if (data === null) return null;
     if (data.subarray(0, 8000).includes(0)) return undefined;
     return data.toString('utf8');
+  }
+
+  /**
+   * Write a snapshot's files into the empty folder `dir`. `index` is a git index file of the
+   * copy's own, so the workspace's snapshots are not disturbed.
+   */
+  async exportTo(snapshot: string, dir: string, index: string): Promise<void> {
+    await this.init();
+    const copy = { workTree: dir, env: { GIT_INDEX_FILE: index } };
+    await this.gitBuffer(['read-tree', snapshot], SNAPSHOT_TIMEOUT_MS, copy);
+    await this.gitBuffer(['checkout-index', '-a', '-f'], SNAPSHOT_TIMEOUT_MS, copy);
+  }
+
+  /** Files that differ between a snapshot and a copy made with exportTo. */
+  async changedIn(dir: string, index: string, snapshot: string): Promise<CommandChange[]> {
+    const copy = { workTree: dir, env: { GIT_INDEX_FILE: index } };
+    await this.gitBuffer(['add', '-A'], SNAPSHOT_TIMEOUT_MS, copy);
+    const out = (await this.gitBuffer(['diff', '--cached', '--name-status', '--no-renames', snapshot], 30_000, copy)).toString('utf8');
+    return parseNameStatus(out);
   }
 
   private init(): Promise<void> {
@@ -82,10 +97,11 @@ export class ShadowGit {
     return this.gitBuffer(args, timeout).then((b) => b.toString('utf8'));
   }
 
-  private gitBuffer(args: string[], timeout = 30_000): Promise<Buffer> {
+  private gitBuffer(args: string[], timeout = 30_000, copy?: { workTree: string; env: Record<string, string> }): Promise<Buffer> {
+    const workTree = copy?.workTree ?? this.root;
     const full = [
       `--git-dir=${this.gitDir}`,
-      `--work-tree=${this.root}`,
+      `--work-tree=${workTree}`,
       '-c', 'core.autocrlf=false',
       '-c', 'core.quotepath=false',
       '-c', 'core.safecrlf=false',
@@ -94,10 +110,40 @@ export class ShadowGit {
       '-c', 'commit.gpgsign=false',
       ...args,
     ];
+    const env = copy ? { ...process.env, ...copy.env } : process.env;
     return new Promise((resolve, reject) =>
-      execFile('git', full, { cwd: this.root, timeout, maxBuffer: 64 * 1024 * 1024, windowsHide: true, encoding: 'buffer' }, (error, stdout, stderr) =>
+      execFile('git', full, { cwd: workTree, env, timeout, maxBuffer: 64 * 1024 * 1024, windowsHide: true, encoding: 'buffer' }, (error, stdout, stderr) =>
         error ? reject(new Error(`${error.message}\n${stderr.toString('utf8')}`)) : resolve(stdout),
       ),
     );
+  }
+}
+
+function parseNameStatus(out: string): CommandChange[] {
+  const changes: CommandChange[] = [];
+  for (const line of out.split('\n')) {
+    const m = /^([AMD])\t(.+)$/.exec(line.trim());
+    if (m) changes.push({ path: m[2], status: m[1] === 'A' ? 'added' : m[1] === 'D' ? 'deleted' : 'modified' });
+  }
+  return changes;
+}
+
+/**
+ * Three-way merge of a text file that two sides changed from `base` (git merge-file). `clean` is
+ * false when the changes overlap.
+ */
+export async function mergeText(current: string, base: string, theirs: string): Promise<{ clean: boolean; text: string }> {
+  const dir = await fs.mkdtemp(path.join(tmpdir(), 'orka-merge-'));
+  try {
+    const files = ['current', 'base', 'theirs'].map((name) => path.join(dir, name));
+    await Promise.all([current, base, theirs].map((text, i) => fs.writeFile(files[i], text, 'utf8')));
+    return await new Promise((resolve) =>
+      execFile('git', ['merge-file', '-p', ...files], { cwd: dir, windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' }, (error, stdout) =>
+        // The exit code is the number of conflicts (negative on errors).
+        resolve({ clean: !error, text: stdout }),
+      ),
+    );
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
