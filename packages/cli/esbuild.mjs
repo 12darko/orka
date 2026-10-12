@@ -9,6 +9,8 @@ rmSync('dist', { recursive: true, force: true });
 mkdirSync('dist/skills', { recursive: true });
 cpSync('../core/skills', 'dist/skills', { recursive: true });
 
+// One file with everything in it (@orka/core and the provider SDKs): the published package needs
+// no runtime dependencies.
 await esbuild.build({
   entryPoints: ['src/main.ts'],
   outfile: 'dist/orka.js',

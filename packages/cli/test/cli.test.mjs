@@ -48,7 +48,7 @@ function lastToolResults(body) {
     .map((b) => (typeof b.content === 'string' ? b.content : b.content.map((c) => c.text ?? '').join('')));
 }
 
-describe('orka CLI', { skip: !existsSync(ORKA) && 'build the CLI first (npm run build -w orka-cli)' }, () => {
+describe('orka CLI', { skip: !existsSync(ORKA) && 'build the CLI first (npm run build -w orka-agent)' }, () => {
   let server;
   let baseURL;
   let script = [];

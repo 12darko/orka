@@ -68,7 +68,7 @@ function terminal() {
   };
 }
 
-describe('orka CLI in a terminal', { skip: !existsSync(ORKA) && 'build the CLI first (npm run build -w orka-cli)' }, () => {
+describe('orka CLI in a terminal', { skip: !existsSync(ORKA) && 'build the CLI first (npm run build -w orka-agent)' }, () => {
   let server;
   let script = [];
   let requests = [];

@@ -15,7 +15,7 @@ npm test
 ```
 
 - **VS Code extension:** open the folder in VS Code and press **F5** (*Run Extension*).
-- **Desktop app:** `npm run desktop`
+- **Desktop app:** `npm run desktop`; `npm run desktop:exe` builds it as a single executable that needs no Node (`packages/desktop/dist/orka-desktop.exe`)
 - **CLI:** `node packages/cli/dist/orka.js`
 - **Chat UI in a browser** with a sample session: `npm run preview -w @orka/app`, then open <http://localhost:5178> (`?light`, `?empty`, `?tr`, `?nocc`, `?settings=providers`).
 
@@ -41,9 +41,9 @@ Small, focused pull requests are easier to review. For a larger change, open an 
 
 ## Releasing (maintainers)
 
-1. Bump `version` in `packages/vscode-extension/package.json` and add a `## <version>` section to `CHANGELOG.md`.
+1. Bump `version` in `packages/vscode-extension/package.json` (and in `packages/cli/package.json` and `packages/desktop/package.json`) and add a `## <version>` section to `CHANGELOG.md`.
 2. Commit, then tag and push: `git tag v<version>` and `git push origin v<version>`.
-3. The *Release* workflow builds, tests and packages the extension and publishes a GitHub release with the `.vsix` and the changelog section.
+3. The *Release* workflow builds, tests and packages the extension, builds the desktop app as one Windows executable (`npm run desktop:exe`), and publishes a GitHub release with the `.vsix`, `orka-desktop.exe` and the changelog section. When the repository has an `NPM_TOKEN` secret, it also publishes the CLI to npm (`npm publish -w orka-agent`).
 
 ## Reporting bugs
 
