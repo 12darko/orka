@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import * as path from 'node:path';
 import { DesktopShell } from './DesktopShell';
 import { openAppWindow, openExternal } from './native';
+import { appDir } from './sea';
 import { UiServer } from './server';
 
 declare const ORKA_VERSION: string;
@@ -58,6 +59,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
   const args = parsed;
   const home = process.env.ORKA_HOME || path.join(homedir(), '.orka');
+  // dist, or the same files extracted from orka-desktop.exe.
+  const files = appDir(home, VERSION);
   const uiStateFile = path.join(home, 'desktop', 'ui-state.json');
   let uiState: unknown = readJson(uiStateFile);
 
@@ -75,7 +78,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   };
 
   const server = new UiServer({
-    distDir: __dirname,
+    distDir: files,
     onMessage: (message) => shell?.receive(message),
     getState: () => uiState,
     setState: (state) => {
@@ -97,7 +100,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     },
   });
 
-  shell = new DesktopShell(home, server, { folder: args.folder, skillsDir: path.join(__dirname, 'skills') });
+  shell = new DesktopShell(home, server, { folder: args.folder, skillsDir: path.join(files, 'skills') });
   controller = new AppController(shell);
   await server.listen(args.port);
   await controller.initialize();
