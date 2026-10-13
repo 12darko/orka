@@ -118,8 +118,9 @@ API keys come from the environment only: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMI
 (custom endpoints: "apiKeyEnv" in the config). Claude Code (unofficial, opt-in with
 "claudeCode": { "enabled": true } in the config) needs no key: it uses your logged-in claude CLI.
 
-In a session: /help lists the commands (/new, /diff, /undo, /compact, /mode, /model, /usage,
-/skills, /exit). Ctrl+C stops the running request; press it twice at the prompt to leave.`;
+In a session: /help lists the commands (/new, /diff, /undo, /rewind, /compact, /mode, /model,
+/usage, /skills, /freebuff, /exit). Ctrl+C stops the running request; press it twice at the prompt
+to leave.`;
 
 export const HELP_TR = `Orka - terminalde AI coding orchestrator
 
@@ -146,5 +147,6 @@ API key'ler yalnızca ortam değişkenlerinden okunur: ANTHROPIC_API_KEY, OPENAI
 GEMINI_API_KEY (custom endpoint'ler: config'de "apiKeyEnv"). Claude Code (resmi değil, config'de
 "claudeCode": { "enabled": true } ile açılır) key istemez: giriş yapılmış claude CLI'ını kullanır.
 
-Oturumda: /help komutları listeler (/new, /diff, /undo, /compact, /mode, /model, /usage,
-/skills, /exit). Ctrl+C çalışan isteği durdurur; prompt'ta iki kez basınca çıkar.`;
+Oturumda: /help komutları listeler (/new, /diff, /undo, /rewind, /compact, /mode, /model,
+/usage, /skills, /freebuff, /exit). Ctrl+C çalışan isteği durdurur; prompt'ta iki kez basınca
+çıkar.`;

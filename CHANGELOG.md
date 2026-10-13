@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.1
+
+Security fixes found by code scanning after 0.1.0. Please update.
+
+**Security**
+
+- Pages and command output the agent reads can no longer stall Orka: turning HTML into text, removing terminal color codes and parsing Supervisor replies, lessons and inline scripts now take linear time. Before, a crafted 50 KB page took 1.3 s, and the time grew with the square of its size. The page text is the same as in 0.1.0, also for Turkish pages and pages without a closing `</head>`; only an unclosed `<script>` or `<style>` now hides the rest of the page, as in a browser.
+- Windows: MCP servers started through a batch file (`npx.cmd` and the like) get their arguments quoted and escaped, so no argument can start another command. Servers found on the PATH as programs start directly.
+- The chat UI escapes every value it gets from the app before showing it (statuses, numbers and token counts too) and only accepts messages from the app itself.
+- The Claude Code provider's working folder is created with `mkdtemp`: it is private to your user (on macOS and Linux) and no longer sits in a shared `orka-claude-code` folder in the temp directory.
+- Smaller fixes: `data:` and `vbscript:` links in fetched pages are no longer shown to the agent as links, the binary content-type check is anchored to the start of the header, selectors reach the headless browser URI-encoded, and three check-then-use file accesses became single steps.
+
+**Requirements**
+
+- Node.js 22 or newer (the provider SDKs and the browser tool need it) and VS Code 1.101 or newer for the extension.
+
+**Distribution**
+
+- The CLI is attached to the release as `orka-agent-<version>.tgz`: `npm install -g` it from the release URL.
+- `orka-desktop.exe` shows up as *Orka Desktop* by Enophia Software, with Orka's icon, instead of as Node.js.
+- The extension, the CLI package and the desktop app ship a `THIRD_PARTY_NOTICES.txt` with the licenses of the open-source software they include, and the release notes say how to install each app.
+- Updated provider SDKs (Anthropic, OpenAI, Google Gen AI), `marked` 18 and the GitHub Actions used by CI and releases.
+
 ## 0.1.0 (first public release)
 
 - Main agent, Supervisor and explore / review / worker sub-agents, each on its own provider and model.

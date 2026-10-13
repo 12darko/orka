@@ -1010,7 +1010,9 @@ function renderUsage(): void {
     )}</p>`;
 }
 
-function fmt(n: number): string {
+function fmt(value: number): string {
+  // Token counts come from providers and go into HTML: only ever print a number.
+  const n = Number(value) || 0;
   return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 

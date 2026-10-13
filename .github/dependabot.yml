@@ -8,10 +8,13 @@ updates:
       provider-sdks:
         patterns: ['@anthropic-ai/*', 'openai', '@google/genai']
       build-tools:
-        patterns: ['esbuild', 'typescript', '@types/*', '@vscode/*', 'marked']
+        patterns: ['esbuild', 'typescript', '@types/*', '@vscode/*', 'marked', 'postject', 'resedit']
     ignore:
       # Must match engines.vscode in packages/vscode-extension/package.json.
       - dependency-name: '@types/vscode'
+      # Must match the oldest Node in engines (22), so newer Node APIs don't slip in.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
       # A new TypeScript major changes compiler options; upgrade it on purpose, not weekly.
       - dependency-name: typescript
         update-types: ['version-update:semver-major']
@@ -19,3 +22,6 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    groups:
+      actions:
+        patterns: ['*']

@@ -262,4 +262,11 @@ describe('orka CLI', { skip: !existsSync(ORKA) && 'build the CLI first (npm run 
     assert.equal(stdout.trim(), 'Hello from the local model.');
     assert.equal(requests.at(-1).model, 'qwen3-coder');
   });
+
+  it('ships the licenses of the bundled packages', () => {
+    const notices = readFileSync(path.join(path.dirname(ORKA), 'THIRD_PARTY_NOTICES.txt'), 'utf8');
+    for (const name of ['@anthropic-ai/sdk', 'openai', '@google/genai']) assert.match(notices, new RegExp(`^${name} \\d+\\.\\d+\\.\\d+ \\(`, 'm'));
+    assert.match(notices, /Apache License/);
+    assert.doesNotMatch(notices, /^@orka\//m);
+  });
 });

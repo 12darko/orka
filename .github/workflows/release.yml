@@ -1,12 +1,14 @@
 name: Release
 
-# Push a tag like v0.2.0 (matching the version in packages/vscode-extension/package.json and a
-# "## 0.2.0" section in CHANGELOG.md) to build, test and publish a GitHub release with the .vsix
-# and the desktop app as one Windows executable. With an NPM_TOKEN secret, the CLI is published
-# to npm too.
+# Push a tag like v0.2.0 (the version in every package.json, see scripts/check-version.mjs, and a
+# "## 0.2.0" section in CHANGELOG.md) to build, test and publish a GitHub release with the .vsix,
+# the desktop app as one Windows executable and the CLI as an npm package file. With an NPM_TOKEN
+# secret, the CLI is published to npm too. Started by hand, it is a dry run: everything is built
+# and kept as a workflow artifact, nothing is published.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,18 +17,22 @@ jobs:
   desktop-exe:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # No dependency cache in a job whose output gets published.
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
       - run: npm ci
       - run: npm run desktop:exe
       - run: ./packages/desktop/dist/orka-desktop.exe --version
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: orka-desktop-exe
-          path: packages/desktop/dist/orka-desktop.exe
+          path: |
+            packages/desktop/dist/orka-desktop.exe
+            packages/desktop/dist/THIRD_PARTY_NOTICES.txt
           if-no-files-found: error
 
   release:
@@ -35,38 +41,72 @@ jobs:
     permissions:
       contents: write
       id-token: write # npm provenance
+    env:
+      # Only a pushed tag publishes; a run started by hand never does, not even on a tag.
+      PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
           registry-url: https://registry.npmjs.org
-      - name: Check the tag matches the extension version
+      - name: Check the version
         run: |
-          version="v$(node -p "require('./packages/vscode-extension/package.json').version")"
-          if [ "$version" != "$GITHUB_REF_NAME" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match the extension version $version." >&2
-            exit 1
-          fi
+          if [ "$PUBLISH" = true ]; then node scripts/check-version.mjs "$GITHUB_REF_NAME"; else node scripts/check-version.mjs; fi
       - run: npm ci
       - run: npm run build
       - run: npm test
       - run: npm run package
-      - name: Release notes from CHANGELOG.md
+      - name: Pack the CLI
         run: |
-          awk -v v="${GITHUB_REF_NAME#v}" '/^## /{p = index($0, "## " v) == 1; next} p' CHANGELOG.md > notes.md
-          if [ ! -s notes.md ]; then echo "No \"## ${GITHUB_REF_NAME#v}\" section in CHANGELOG.md." >&2; exit 1; fi
-      - uses: actions/download-artifact@v4
+          npm run prepublishOnly -w orka-agent
+          node packages/cli/dist/orka.js --version
+          mkdir -p release
+          npm pack -w orka-agent --pack-destination release
+      - uses: actions/download-artifact@v8
         with:
           name: orka-desktop-exe
           path: desktop-exe
+      - name: Collect the release files
+        run: |
+          cp packages/vscode-extension/dist/*.vsix release/
+          cp desktop-exe/orka-desktop.exe release/
+          cp desktop-exe/THIRD_PARTY_NOTICES.txt release/orka-desktop-THIRD_PARTY_NOTICES.txt
+          ls -l release
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          awk -v v="$version" '/^## /{p = ($2 == v); next} p' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "No \"## $version\" section in CHANGELOG.md." >&2; exit 1; fi
+          cat >> notes.md <<EOF
+
+          ## Install
+
+          - **VS Code** (1.101 or newer): download \`orka-vscode-$version.vsix\` below, then run **Extensions: Install from VSIX…**, or \`code --install-extension orka-vscode-$version.vsix\`.
+          - **Desktop app for Windows:** download \`orka-desktop.exe\` and run it. It needs Edge or Chrome for its window, not Node.js. A console window opens next to the app; closing it quits Orka. The file is not code-signed yet: SmartScreen asks you to confirm the first start (**More info → Run anyway**), and where Windows' Smart App Control is on, it is blocked.
+          - **CLI** (Node.js 22 or newer): \`npm install -g https://github.com/$GITHUB_REPOSITORY/releases/download/v$version/orka-agent-$version.tgz\`, then run \`orka\`.
+
+          Setup, providers and settings: [README](https://github.com/$GITHUB_REPOSITORY#readme). The licenses of the open-source software inside each app are in its \`THIRD_PARTY_NOTICES.txt\` (for the desktop app: \`orka-desktop-THIRD_PARTY_NOTICES.txt\` below).
+          EOF
+          cat notes.md
+      - name: Keep the files (dry run)
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dry-run
+          path: |
+            release/
+            notes.md
       - name: Publish the release
+        if: env.PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" packages/vscode-extension/dist/*.vsix desktop-exe/orka-desktop.exe --title "Orka $GITHUB_REF_NAME" --notes-file notes.md
+        run: gh release create "$GITHUB_REF_NAME" release/* --title "Orka $GITHUB_REF_NAME" --notes-file notes.md
       - name: Check for an npm token
         id: npm
+        if: env.PUBLISH == 'true'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |

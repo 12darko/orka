@@ -293,27 +293,33 @@ function dropComments(html: string): string {
 
 /**
  * Replace every <tag ...>…</tag> element with the given names in one forward pass: the element
- * ends at the first closing tag after its opener (like a lazy regex), found with indexOf so that a
- * page full of unclosed tags cannot make it slow. `replace` gets the lowercase tag, the opener's
- * attributes and the inner HTML. An opener without a closing tag stays as it is, or with
- * `dropUnclosed` the rest of the page is dropped.
+ * ends at the first closing tag after its opener (like a lazy regex). Each search starts where the
+ * last element ended and a tag without a closing tag is not searched for again, so a page full of
+ * unclosed tags cannot make it slow. `replace` gets the lowercase tag, the opener's attributes and
+ * the inner HTML. An opener without a closing tag stays as it is, or with `dropUnclosed` the rest
+ * of the page is dropped.
  */
 function replaceElements(html: string, tags: string, replace: (tag: string, attrs: string, inner: string) => string, dropUnclosed = false): string {
-  const lower = html.toLowerCase();
   const opener = new RegExp(`<(${tags})\\b([^<>]*)>`, 'gi');
+  const closers = new Map<string, RegExp>();
   const unclosed = new Set<string>();
   let out = '';
   let last = 0;
   for (let m = opener.exec(html); m; m = opener.exec(html)) {
     const tag = m[1].toLowerCase();
-    const close = unclosed.has(tag) ? -1 : lower.indexOf(`</${tag}`, opener.lastIndex);
+    // The exact closing tag ("</b" must not match "</body>"), searched in the HTML itself: a
+    // lowercased copy can be longer ("İ" becomes two characters) and shift every index after it.
+    let closer = closers.get(tag);
+    if (!closer) closers.set(tag, (closer = new RegExp(`</${tag}[\\s>]`, 'gi')));
+    closer.lastIndex = opener.lastIndex;
+    const close = unclosed.has(tag) ? -1 : (closer.exec(html)?.index ?? -1);
     if (close === -1) {
       unclosed.add(tag);
       if (!dropUnclosed) continue;
       out += html.slice(last, m.index);
       return out;
     }
-    const end = lower.indexOf('>', close);
+    const end = html.indexOf('>', close);
     const after = end === -1 ? html.length : end + 1;
     out += html.slice(last, m.index) + replace(tag, m[2], html.slice(opener.lastIndex, close));
     last = after;
@@ -343,7 +349,10 @@ const NOT_A_PAGE = /^\s*(#|javascript:|data:|vbscript:)/i;
 export function htmlToText(html: string, baseUrl?: string): { title?: string; text: string } {
   const titleHtml = firstElement(html, 'title');
   const title = titleHtml === undefined ? undefined : decodeEntities(stripTags(titleHtml)).replace(/\s+/g, ' ').trim() || undefined;
-  let s = replaceElements(dropComments(html), 'script|style|noscript|svg|iframe|template|head|nav|footer|form', () => '', true);
+  // Only an unclosed script, style and the like hides the rest of the page (as in a browser);
+  // head, nav, footer and form are dropped when closed, and </head> is optional in HTML.
+  let s = replaceElements(dropComments(html), 'script|style|noscript|svg|iframe|template', () => '', true);
+  s = replaceElements(s, 'head|nav|footer|form', () => '');
   const main = firstElement(s, 'main|article');
   if (main !== undefined && stripTags(main).trim().length > 200) s = main;
   // Keep code blocks verbatim through the whitespace clean-up below.

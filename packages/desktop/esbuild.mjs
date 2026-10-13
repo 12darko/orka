@@ -1,5 +1,6 @@
 import * as esbuild from 'esbuild';
 import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { writeThirdPartyNotices } from '../../scripts/third-party-notices.mjs';
 import { webviewBuilds } from '../app/webview-builds.mjs';
 
 const production = process.argv.includes('--production');
@@ -12,14 +13,14 @@ cpSync('../core/skills', 'dist/skills', { recursive: true });
 copyFileSync('theme.css', 'dist/theme.css');
 copyFileSync('../vscode-extension/media/orka-128.png', 'dist/icon.png');
 
-await Promise.all([
+const results = await Promise.all([
   esbuild.build({
     entryPoints: ['src/main.ts'],
     outfile: 'dist/orka-desktop.js',
     bundle: true,
     platform: 'node',
     format: 'cjs',
-    target: 'node20',
+    target: 'node22',
     banner: { js: '#!/usr/bin/env node' },
     define: {
       ORKA_VERSION: JSON.stringify(version),
@@ -30,9 +31,16 @@ await Promise.all([
     },
     sourcemap: !production,
     minify: production,
+    metafile: true,
   }),
   // The chat UI is the same one the VS Code extension shows (packages/app).
   ...webviewBuilds('dist', { production }).map((options) => esbuild.build(options)),
 ]);
 chmodSync('dist/orka-desktop.js', 0o755);
+// scripts/build-exe.mjs adds the license of the Node runtime it builds in.
+writeThirdPartyNotices(
+  'dist/THIRD_PARTY_NOTICES.txt',
+  'Orka Desktop',
+  results.map((result) => result.metafile),
+);
 console.log('[esbuild] dist/orka-desktop.js');

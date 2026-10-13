@@ -4,7 +4,7 @@ Thanks for your interest! Bug reports, ideas and pull requests are all welcome.
 
 ## Getting started
 
-You need Node.js 20 or newer, git, and VS Code (for the extension). Chrome or Edge is needed for the browser tool and the desktop app tests.
+You need Node.js 22 or newer, git, and VS Code 1.101 or newer (for the extension). Chrome or Edge is needed for the browser tool and the desktop app tests.
 
 ```bash
 git clone https://github.com/12darko/orka.git
@@ -41,12 +41,14 @@ Small, focused pull requests are easier to review. For a larger change, open an 
 
 ## Releasing (maintainers)
 
-1. Bump `version` in `packages/vscode-extension/package.json` (and in `packages/cli/package.json` and `packages/desktop/package.json`) and add a `## <version>` section to `CHANGELOG.md`.
-2. Commit, then tag and push: `git tag v<version>` and `git push origin v<version>`.
-3. The *Release* workflow builds, tests and packages the extension, builds the desktop app as one Windows executable (`npm run desktop:exe`), and publishes a GitHub release with the `.vsix`, `orka-desktop.exe` and the changelog section. When the repository has an `NPM_TOKEN` secret, it also publishes the CLI to npm (`npm publish -w orka-agent`).
+1. Set the new version everywhere at once: `npm version <version> --no-git-tag-version --workspaces --include-workspace-root`, then `VERSION` in `packages/core/src/version.ts`, the file names in `README.md` and `packages/cli/README.md`, and a `## <version>` section in `CHANGELOG.md`. `npm run check:version` lists anything that still differs (CI runs it too).
+2. Commit and push to `main`, and wait for CI to pass (it runs the version check and builds what a release ships).
+3. Optional dry run: start the *Release* workflow by hand on `main` (**Actions → Release → Run workflow**). It builds and tests the pushed commit and keeps the files as a workflow artifact; a run started by hand never publishes.
+4. Tag that commit and push the tag: `git tag v<version>` and `git push origin v<version>`.
+5. The *Release* workflow builds, tests and packages the extension, builds the desktop app as one Windows executable (`npm run desktop:exe`) and the CLI as an npm package file, and publishes a GitHub release with the `.vsix`, `orka-desktop.exe`, `orka-agent-<version>.tgz`, the desktop app's third-party notices, the changelog section and install notes. When the repository has an `NPM_TOKEN` secret, it also publishes the CLI to npm (`npm publish -w orka-agent`). Don't upload files built on your own machine instead: release files come from a clean `npm ci` on CI, and only CI adds npm provenance.
 
 ## Reporting bugs
 
 Use the bug report template and include your OS, the app (VS Code / desktop / CLI), the provider and model, and what you expected to happen. For security problems, see [SECURITY.md](SECURITY.md).
 
-By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE).
+Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE).

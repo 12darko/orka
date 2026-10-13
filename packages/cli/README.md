@@ -4,12 +4,13 @@ Orka in the terminal: an AI coding orchestrator with a main agent, a Supervisor 
 
 ## Install
 
-Node.js 20 or newer.
+Node.js 22 or newer. The CLI is not on the npm registry yet; install the `orka` command from the [GitHub release](https://github.com/12darko/orka/releases/latest):
 
 ```bash
-npx orka-agent                 # run without installing
-npm install -g orka-agent      # or install the `orka` command
+npm install -g https://github.com/12darko/orka/releases/download/v0.1.1/orka-agent-0.1.1.tgz
 ```
+
+Or build it from source: clone the repository, run `npm install` and `npm run build`, then `node packages/cli/dist/orka.js` (or `npm link` in `packages/cli`).
 
 ## Usage
 
@@ -34,7 +35,7 @@ orka config                Show where the config lives and what is in use
 | `--lang <en\|tr>` | Language (default: the system language) |
 | `-h, --help`, `-v, --version` | |
 
-In a session, `/help` lists the commands: `/new`, `/diff`, `/undo`, `/compact`, `/mode`, `/model`, `/usage`, `/skills`, `/<skill> <request>`, `/freebuff`, `/exit`. `@path` attaches a file or image; Ctrl+C stops the running request.
+In a session, `/help` lists the commands: `/new`, `/diff`, `/undo`, `/rewind [n]`, `/compact`, `/mode`, `/model`, `/usage`, `/skills`, `/<skill> <request>`, `/freebuff`, `/exit`. `@path` attaches a file or image; Ctrl+C stops the running request.
 
 Approvals are asked in the terminal. Without a terminal (piped input), anything that needs approval is declined, never approved silently.
 
@@ -54,4 +55,4 @@ Settings live in `~/.orka/config.json` (or `$ORKA_HOME/config.json`); `orka conf
 ## Links
 
 - Source, issues and the other Orka apps: https://github.com/12darko/orka
-- License: MIT
+- License: MIT. The bundled open-source packages and their licenses are listed in `dist/THIRD_PARTY_NOTICES.txt`.

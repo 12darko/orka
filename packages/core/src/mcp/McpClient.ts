@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from 'node:child_process';
 import { findExecutable } from '../handoff/Handoff';
 import type { JsonSchema } from '../types';
+import { VERSION } from '../version';
 
 /**
  * A minimal Model Context Protocol client over stdio (newline-delimited JSON-RPC 2.0): enough to
@@ -65,7 +66,7 @@ export class McpClient {
   constructor(
     readonly name: string,
     readonly config: McpServerConfig,
-    private readonly clientInfo = { name: 'orka', version: '0.1.0' },
+    private readonly clientInfo = { name: 'orka', version: VERSION },
   ) {}
 
   /** Start the server (once), do the handshake and load its tool list. */

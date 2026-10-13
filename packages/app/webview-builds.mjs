@@ -18,6 +18,8 @@ export function webviewBuilds(outdir, { production = false } = {}) {
       target: 'es2022',
       sourcemap: !production,
       minify: production,
+      // Lists the bundled packages for THIRD_PARTY_NOTICES.txt.
+      metafile: true,
     },
     {
       entryPoints: [path.join(here, 'webview/styles.css')],

@@ -1,6 +1,6 @@
 {
   "name": "orka-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Orka in the terminal: the AI coding orchestrator of the VS Code extension, as a command-line app.",
   "keywords": [
     "ai",
@@ -42,12 +42,12 @@
     "prepublishOnly": "node esbuild.mjs --production"
   },
   "devDependencies": {
-    "@orka/core": "0.1.0",
+    "@orka/core": "*",
     "@types/node": "^22.0.0",
     "esbuild": "^0.28.2",
     "typescript": "^5.6.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }

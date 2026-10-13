@@ -1,6 +1,6 @@
 {
   "name": "@orka/app",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Orka's chat UI and the controller behind it, shared by the VS Code extension and the desktop app.",
   "license": "MIT",
@@ -27,7 +27,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "esbuild": "^0.28.2",
-    "marked": "^14.0.0",
+    "marked": "^18.1.1",
     "typescript": "^5.6.0"
   }
 }

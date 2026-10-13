@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/12darko/orka/actions/workflows/ci.yml"><img src="https://github.com/12darko/orka/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg" alt="Node.js 20+">
+  <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg" alt="Node.js 22+">
 </p>
 
 Orka uses Claude, GPT, Gemini or any OpenAI-compatible model not as a chatbot that writes code, but as a **decision engine that runs the development loop**:
@@ -63,15 +63,23 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 
 ## Install
 
-**VS Code extension (quickest):** download `orka-vscode-<version>.vsix` from the [latest release](https://github.com/12darko/orka/releases/latest), then run **Extensions: Install from VSIX…** in VS Code, or:
+**VS Code extension (quickest):** download `orka-vscode-<version>.vsix` from the [latest release](https://github.com/12darko/orka/releases/latest), then run **Extensions: Install from VSIX…** in VS Code (1.101 or newer), or:
 
 ```bash
-code --install-extension orka-vscode-0.1.0.vsix
+code --install-extension orka-vscode-0.1.1.vsix
 ```
 
-**Desktop app for Windows:** download `orka-desktop.exe` from the same release and run it; it needs no Node.js, only Edge or Chrome for its window. The file is not code-signed yet, so Windows SmartScreen may ask you to confirm the first start.
+**Desktop app for Windows:** download `orka-desktop.exe` from the same release and run it; it needs no Node.js, only Edge or Chrome for its window. A console window opens next to the app; closing it quits Orka. The file is not code-signed yet, so Windows SmartScreen may ask you to confirm the first start (**More info → Run anyway**), and on PCs where Windows' Smart App Control is on, it is blocked; use the CLI or run it from source there.
 
-**From source** (the CLI, and the desktop app on other systems): you need **Node.js 20+** and **git**. The browser tool and the desktop app use an installed **Chrome or Edge**.
+**CLI:** with **Node.js 22+**, install the `orka` command from the release (it is not on npm yet):
+
+```bash
+npm install -g https://github.com/12darko/orka/releases/download/v0.1.1/orka-agent-0.1.1.tgz
+```
+
+The extension, the desktop app and the CLI package each include a `THIRD_PARTY_NOTICES.txt` with the licenses of the open-source software inside them. To hear about new versions, **Watch → Custom → Releases** on GitHub.
+
+**From source** (the desktop app on other systems, or to change Orka): you need **Node.js 22+** and **git**. The browser tool and the desktop app use an installed **Chrome or Edge**.
 
 ```bash
 git clone https://github.com/12darko/orka.git
@@ -87,7 +95,7 @@ npm run package
 ```
 
 ```bash
-code --install-extension packages/vscode-extension/dist/orka-vscode-0.1.0.vsix
+code --install-extension packages/vscode-extension/dist/orka-vscode-0.1.1.vsix
 ```
 
 **Desktop app** — run it, or build the single executable yourself (`packages/desktop/dist/orka-desktop.exe`, or `orka-desktop` on Linux):
@@ -168,7 +176,7 @@ Model pickers group versions by family (e.g. **Opus** 5.5, 5, 4.8 · **GPT-6** A
 
 ### Claude Code (optional, unofficial)
 
-Orka can use the locally installed [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI as a provider, so a logged-in `claude` works without an API key. It is **off by default**; turn it on in **Settings → Providers → Use my local Claude Code CLI as a provider** (`orka.claudeCode.enabled`), or with `"claudeCode": { "enabled": true }` in the CLI config.
+Orka can use the locally installed [Claude Code](https://code.claude.com/docs) CLI as a provider, so a logged-in `claude` works without an API key. It is **off by default**; turn it on in **Settings → Providers → Use my local Claude Code CLI as a provider** (`orka.claudeCode.enabled`), or with `"claudeCode": { "enabled": true }` in the CLI config.
 
 > **Please read:** Orka is not affiliated with or endorsed by Anthropic. This option runs *your own* Claude Code login, and it is your responsibility to make sure your use follows [Anthropic's terms](https://www.anthropic.com/legal). Subscription plans are meant for Claude Code itself; for teams, products or anything beyond personal use, connect with a Claude API key.
 
@@ -373,7 +381,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to get involved and [CHANGELOG.md](CHANGE
 
 ## License and disclaimer
 
-Orka is developed by **Enophia Software**, part of Enophia Studio, and released as open source under the [MIT License](LICENSE).
+Orka is developed by **Enophia Software**, part of [Enophia Studio](https://enophiastudio.com), and released as open source under the [MIT License](LICENSE). The apps also contain open-source software by others, listed with their licenses in each app's `THIRD_PARTY_NOTICES.txt`.
 
 Orka is an independent project and is not affiliated with, endorsed by or sponsored by Anthropic, OpenAI, Google or any other model provider. Claude, GPT, Gemini and other names are trademarks of their respective owners. You are responsible for your use of each provider and for following its terms. AI agents can make mistakes: review changes before you keep them, and be careful with the *Autonomous* mode.
 

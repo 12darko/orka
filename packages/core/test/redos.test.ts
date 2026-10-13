@@ -37,6 +37,22 @@ describe('Text processing stays fast on hostile input', () => {
     assert.doesNotMatch(text, /menu|x\(\)|<!--/);
   });
 
+  it('keeps pages with optional end tags, similar tag names and Turkish text', () => {
+    // </head> is optional in HTML: the page must not vanish.
+    assert.match(htmlToText('<html><head><meta charset=utf-8><title>Docs</title><body><h1>Guide</h1><p>Hello world.</p>').text, /# Guide\n\nHello world\./);
+    assert.match(htmlToText('<body><nav><a href="/a">A</a><h1>Guide</h1><p>Body.</p>').text, /# Guide/);
+    // "</a" is not "</abbr>", "</b" is not "</body>".
+    assert.equal(htmlToText('<p><a href="/x"><abbr>API</abbr> reference</a></p>', 'https://e.com/').text, '[API reference](https://e.com/x)');
+    assert.match(htmlToText('<p><b>Note:</p><h2>Install</h2><p>Para one.</p></body>').text, /^## Install$/m);
+    // "İ" lowercases to two characters; nothing may shift after it.
+    const tr = htmlToText('<head><title>İzmir İstanbul</title></head><p>İçerik <b>kalın</b> ve <a href="/x">bağlantı</a>.</p>', 'https://e.com/');
+    assert.equal(tr.title, 'İzmir İstanbul');
+    assert.equal(tr.text, 'İçerik **kalın** ve [bağlantı](https://e.com/x).');
+    fast('similar closing tags', () => htmlToText('<a href="x"></abbr>'.repeat(100_000)));
+    fast('unclosed nav, form and head', () => htmlToText('<nav><form><head>x'.repeat(100_000)));
+    fast('Turkish text between tags', () => htmlToText('<p>İ<b>İ</b></p>'.repeat(100_000)));
+  });
+
   it('command output, supervisor replies, lessons and commands', () => {
     fast('unterminated escape sequences', () => stripAnsi('\u001b]'.repeat(300_000)));
     assert.equal(stripAnsi('\u001b[31mred\u001b[0m \u001b]0;title\u0007done'), 'red done');

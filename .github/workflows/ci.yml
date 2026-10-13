@@ -17,12 +17,37 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run check:version
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+
+  # What the Release workflow ships, so a packaging problem shows up before a tag is pushed.
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run package
+      - run: npm run desktop:exe
+      - run: ./packages/desktop/dist/orka-desktop.exe --version
+      # The minified CLI the release attaches, through the CLI's end-to-end tests.
+      - run: npm run prepublishOnly -w orka-agent
+      - run: node --test "test/*.test.mjs"
+        working-directory: packages/cli
+      - run: npm pack -w orka-agent --dry-run
