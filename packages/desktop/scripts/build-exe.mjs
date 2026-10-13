@@ -36,7 +36,7 @@ const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'ut
 appendFileSync(
   path.join(dist, 'THIRD_PARTY_NOTICES.txt'),
   `\n${'-'.repeat(79)}\n\nNode.js ${process.versions.node}, the runtime built into the executable\n` +
-    `https://github.com/nodejs/node\n\n${(await nodeLicense()).trim()}\n`,
+    `https://github.com/nodejs/node\n\n${nodeLicense().trim()}\n`,
 );
 
 // 2. Every file next to the bundle becomes an asset, plus a manifest that lists them with a
@@ -94,17 +94,18 @@ function walk(dir) {
   });
 }
 
-/** Node's LICENSE: next to the binary in the nodejs.org archives, else from the same release tag. */
-async function nodeLicense() {
+/**
+ * Node's LICENSE, which the nodejs.org archives (and so CI) have next to the binary. The Windows
+ * installer leaves it out: a local build then links to it, a CI build stops.
+ */
+function nodeLicense() {
   const dir = path.dirname(process.execPath);
   for (const file of [path.join(dir, 'LICENSE'), path.join(dir, '..', 'LICENSE')]) {
     if (existsSync(file)) return readFileSync(file, 'utf8');
   }
-  // The Windows installer leaves the file out.
-  const url = `https://raw.githubusercontent.com/nodejs/node/v${process.versions.node}/LICENSE`;
-  const response = await fetch(url);
-  if (!response.ok) fail(`Could not get the Node.js license from ${url} (HTTP ${response.status}).`);
-  return response.text();
+  if (process.env.CI) fail(`No LICENSE next to ${process.execPath}; a release must include Node's license.`);
+  console.log('[sea] No LICENSE next to this Node (the Windows installer leaves it out); the notices link to it.');
+  return `The license text is at https://github.com/nodejs/node/blob/v${process.versions.node}/LICENSE`;
 }
 
 /**
