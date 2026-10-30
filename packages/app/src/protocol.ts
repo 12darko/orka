@@ -19,6 +19,29 @@ export interface ProviderView {
   key?: { source: 'stored' | 'env'; hint: string };
   /** Set for user-added OpenAI-compatible endpoints. */
   custom?: { id: string; baseUrl: string; requiresKey: boolean };
+  /** A coding agent driven over ACP ("agent:<id>"): only the main agent can use it. */
+  agent?: true;
+}
+
+/** A coding agent Orka can drive as its main agent (Settings > Providers > Agent CLIs). */
+export interface AgentCliView {
+  /** "gemini", or "custom:<slug>". */
+  id: string;
+  label: string;
+  vendor: string;
+  custom: boolean;
+  enabled: boolean;
+  status: { state: 'unknown' | 'checking' | 'ready' | 'not_found' | 'error'; version?: string; executable?: string; detail?: string };
+  /** The executable the user chose ('' = found on PATH). */
+  path: string;
+  /** For a custom agent: the command line Orka runs. */
+  commandLine?: string;
+  note: string;
+  termsUrl: string;
+  docsUrl: string;
+  installHint: string;
+  loginCommand?: string;
+  preview: boolean;
 }
 
 export interface AgentView {
@@ -32,6 +55,8 @@ export interface AgentView {
   model: string;
   /** What will actually run, after inheritance and defaults. */
   effective: { provider: string; model: string };
+  /** Why it does not run at all right now (the Supervisor next to an agent CLI with no model). */
+  unavailable?: string;
 }
 
 export interface ClaudeCodeStatus {
@@ -119,6 +144,10 @@ export interface ConfigView {
   settings: SettingsView;
   /** Orka's own version and the newest release, if an update check found one. */
   app: AppVersionView;
+  /** Coding agents Orka can drive as the main agent, and which are turned on. */
+  agentClis: AgentCliView[];
+  /** Why some well-known agents are not offered (shown under the list). */
+  agentClisLeftOut: Array<{ id: string; reason: string }>;
   /** Desktop only: the window's layout and color theme. */
   ui?: { layout: 'ide' | 'classic'; theme: 'system' | 'light' | 'dark' };
 }
@@ -142,6 +171,25 @@ export interface SessionGroup {
   name: string;
   tasks: TaskSummary[];
 }
+
+/** How the user arranged the session list: their own groups, which task is in which, hidden tasks. */
+export interface SessionOrganizerView {
+  groups: Array<{ id: string; name: string }>;
+  /** Task id -> group id. */
+  assigned: Record<string, string>;
+  /** Task ids kept out of the list. */
+  hidden: string[];
+}
+
+export type SessionOrganizeOp =
+  /** Asks for a name; with taskId, that task moves into the new group. */
+  | { op: 'createGroup'; taskId?: string }
+  | { op: 'renameGroup'; groupId: string }
+  /** The group's sessions go back under their folders. */
+  | { op: 'deleteGroup'; groupId: string }
+  /** Without groupId, the task leaves its group. */
+  | { op: 'moveToGroup'; taskId: string; groupId?: string }
+  | { op: 'hide'; taskId: string; hidden: boolean };
 
 export interface ExternalAgentView {
   id: string;
@@ -198,7 +246,7 @@ export type ToWebview =
   | { type: 'showHistory' }
   | { type: 'history'; tasks: TaskSummary[]; currentId?: string }
   /** Desktop: the tasks of the recent folders, for the session list; taskId: the task open now (saved or not). */
-  | { type: 'sessions'; groups: SessionGroup[]; taskId?: string }
+  | { type: 'sessions'; groups: SessionGroup[]; taskId?: string; organizer: SessionOrganizerView }
   | { type: 'fileMatches'; query: string; files: string[] }
   | { type: 'hunks'; path: string; hunks: HunkView[] }
   | { type: 'dialog'; id: string; dialog: DialogView }
@@ -228,6 +276,16 @@ export type FromWebview =
   | { type: 'loadModels'; provider: string }
   | { type: 'checkClaudeCode' }
   | { type: 'updateClaudeCode' }
+  /** Agent CLIs: turn one on or off, check it, sign in with its own login, choose its program, add or remove a custom one. */
+  | { type: 'toggleAgentCli'; id: string; enabled: boolean }
+  | { type: 'checkAgentCli'; id: string }
+  | { type: 'loginAgentCli'; id: string }
+  | { type: 'pickAgentExecutable'; id: string }
+  | { type: 'resetAgentExecutable'; id: string }
+  | { type: 'addCustomAgent' }
+  | { type: 'removeCustomAgent'; id: string }
+  /** Open an agent's documentation or terms (the URLs come from Orka's catalog, never from the page). */
+  | { type: 'openAgentLink'; id: string; link: 'docs' | 'terms' }
   /** Continue the task in an external agent; text: what the user typed but did not send. */
   | { type: 'handoff'; agent: string; text?: string }
   | { type: 'checkForUpdates' }
@@ -241,6 +299,8 @@ export type FromWebview =
   | { type: 'openSettings' }
   | { type: 'listTasks' }
   | { type: 'listSessions' }
+  /** Desktop session list: the user's own groups and hidden sessions. */
+  | ({ type: 'organizeSessions' } & SessionOrganizeOp)
   /** folder: a recent folder the task belongs to (desktop session list); default the current one. */
   | { type: 'openTask'; id: string; folder?: string }
   | { type: 'deleteTask'; id: string; folder?: string }

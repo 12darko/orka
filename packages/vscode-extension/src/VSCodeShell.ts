@@ -1,6 +1,6 @@
 import type { ApprovalRequest, ApprovalResponse, EditorContext, NodeHost, Orchestrator } from '@orka/core';
-import type { AppSettings, AppShell, Folder, FromWebview, InputOptions, PickItem, SecretStore, StateStore, TerminalHandle, ToWebview } from '@orka/app';
-import { USER_SKILLS_DIR } from '@orka/app';
+import type { AppSettings, AppShell, Folder, FromWebview, InputOptions, PickItem, SecretStore, StateStore, TerminalHandle, TerminalProgram, ToWebview } from '@orka/app';
+import { editorTerminal, USER_SKILLS_DIR } from '@orka/app';
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
@@ -188,10 +188,11 @@ export class VSCodeShell implements AppShell, vscode.Disposable {
     await vscode.env.clipboard.writeText(text);
   }
 
-  runInTerminal(options: { name: string; cwd: string; command: string; onClose?: () => void }): TerminalHandle {
-    const terminal = vscode.window.createTerminal({ name: options.name, cwd: options.cwd, iconPath: new vscode.ThemeIcon('rocket') });
+  runInTerminal(options: { name: string; cwd: string; command: string | TerminalProgram; onClose?: () => void }): TerminalHandle {
+    const { command } = options;
+    const terminal = vscode.window.createTerminal({ name: options.name, cwd: options.cwd, iconPath: new vscode.ThemeIcon('rocket'), ...editorTerminal(command) });
     if (options.onClose) this.terminalClosers.set(terminal, options.onClose);
-    terminal.sendText(options.command);
+    if (typeof command === 'string') terminal.sendText(command);
     return { show: () => terminal.show() };
   }
 

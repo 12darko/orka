@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import { comspec } from '../src/host/commands';
 import { resolveCommand } from '../src/mcp/McpClient';
 import { tempWorkspace } from './helpers';
 
@@ -20,8 +21,8 @@ describe('Starting an MCP server through a Windows .cmd shim', { skip: process.p
     const marker = path.join(ws.root, 'pwned.txt');
     const args = ['plain', 'with space', 'quote " inside', 'trailing\\', 'C:\\dir\\', 'a & b', 'x | y', '<in>', 'caret ^', '(paren)', `" & echo pwned > "${marker}`];
     const { file, args: quoted, shell } = resolveCommand(path.join(ws.root, 'echo args.cmd'), args, 'win32');
-    assert.equal(shell, true);
-    const result = spawnSync(file, quoted, { shell: true, encoding: 'utf8', windowsHide: true });
+    assert.equal(shell, comspec());
+    const result = spawnSync(file, quoted, { shell, encoding: 'utf8', windowsHide: true });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), args);
     assert.ok(!require('node:fs').existsSync(marker), 'no injected command ran');

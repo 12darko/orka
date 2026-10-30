@@ -1,5 +1,5 @@
 import { type ApprovalRequest, type ApprovalResponse, copyToClipboard, type EditorContext, NodeHost, type Orchestrator, t, unifiedDiff } from '@orka/core';
-import type { AppSettings, AppShell, DialogView, Disposable, Folder, FromWebview, InputOptions, PickItem, StateStore, TerminalHandle, ToWebview } from '@orka/app';
+import type { AppSettings, AppShell, DialogView, Disposable, Folder, FromWebview, InputOptions, PickItem, StateStore, TerminalHandle, TerminalProgram, ToWebview } from '@orka/app';
 import { findFilesByName, USER_SKILLS_DIR } from '@orka/app';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, type FSWatcher, mkdirSync, promises as fs, statSync, watch } from 'node:fs';
@@ -215,7 +215,7 @@ export class DesktopShell implements AppShell, Disposable {
     copyToClipboard(text);
   }
 
-  runInTerminal(options: { name: string; cwd: string; command: string; onClose?: () => void }): TerminalHandle {
+  runInTerminal(options: { name: string; cwd: string; command: string | TerminalProgram; onClose?: () => void }): TerminalHandle {
     openTerminalWindow({ title: options.name, cwd: options.cwd, command: options.command, onClose: options.onClose });
     return { show: () => undefined };
   }

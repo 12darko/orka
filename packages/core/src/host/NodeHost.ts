@@ -1,9 +1,10 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type { ApprovalRequest, ApprovalResponse, CommandOptions, CommandResult, DirEntry, Host } from './Host';
 import { closeBrowser } from '../browser/HeadlessBrowser';
-import { BackgroundProcess } from './processes';
+import { childEnv, programPath } from './commands';
+import { BackgroundProcess, killTree } from './processes';
 import { isViewableFile } from '../tools/workspace';
 
 export interface NodeHostOptions {
@@ -25,16 +26,18 @@ export class NodeHost implements Host {
   readonly shellName: string;
   readonly ripgrepPath?: string;
   readonly editorName: string;
-  private readonly shellCommand: { file: string; args: (command: string) => string[] };
+  private readonly shellCommand: { program: string; args: (command: string) => string[] };
   readonly processes = new Map<string, BackgroundProcess>();
   readonly browserPath?: string;
 
   /** Start a long-running process in the shell; it keeps running until stopped (or the host goes away). */
   startProcess(options: { name: string; command: string; cwd: string }): BackgroundProcess {
-    const child = spawn(this.shellCommand.file, this.shellCommand.args(options.command), {
+    const shell = programPath(this.shellCommand.program);
+    if (!shell) throw new Error(shellNotFound(this.shellCommand.program));
+    const child = spawn(shell, this.shellCommand.args(options.command), {
       cwd: options.cwd,
       // No CI flag here (dev servers behave differently in CI); don't let tools open browsers on their own.
-      env: shellEnv(this.shellCommand.file, { FORCE_COLOR: '0', NO_COLOR: '1', BROWSER: 'none' }),
+      env: childEnv(shellEnv(shell, { FORCE_COLOR: '0', NO_COLOR: '1', BROWSER: 'none' })),
       windowsHide: true,
       detached: process.platform !== 'win32',
     });
@@ -56,17 +59,18 @@ export class NodeHost implements Host {
     this.browserPath = options.browserPath;
     this.editorName = options.editorName ?? 'a code editor';
     this.shellCommand = resolveShell(options.shell);
-    this.shellName = path.basename(this.shellCommand.file).replace(/\.exe$/i, '');
+    this.shellName = path.basename(this.shellCommand.program).replace(/\.exe$/i, '');
   }
 
   /** Open a URL or a viewable file (page, image, PDF, text) with the operating system's default handler. */
   async openUrl(target: string): Promise<void> {
     // The default handler of a script or executable runs it: only ever hand over viewable files.
     if (!/^https?:\/\//i.test(target) && !isViewableFile(target)) throw new Error(`Refusing to open ${target}: only web pages, images, PDFs and text files.`);
-    const [file, args] =
-      process.platform === 'win32' ? ['explorer.exe', [target]] : process.platform === 'darwin' ? ['open', [target]] : ['xdg-open', [target]];
+    const opener = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+    const file = programPath(opener);
+    if (!file) throw new Error(`${opener} was not found.`);
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(file, args, { detached: true, stdio: 'ignore', windowsHide: true });
+      const child = spawn(file, [target], { detached: true, stdio: 'ignore', windowsHide: true });
       child.once('error', reject);
       child.once('spawn', () => {
         child.unref();
@@ -115,14 +119,18 @@ export class NodeHost implements Host {
   }
 
   runCommand(options: CommandOptions): Promise<CommandResult> {
+    const shell = programPath(this.shellCommand.program);
+    if (!shell) return Promise.resolve({ exitCode: null, output: shellNotFound(this.shellCommand.program), timedOut: false, aborted: false });
     return new Promise((resolve) => {
       let output = '';
       let timedOut = false;
       let aborted = false;
       let settled = false;
-      const child = spawn(this.shellCommand.file, this.shellCommand.args(options.command), {
+      const child = spawn(shell, this.shellCommand.args(options.command), {
         cwd: options.cwd,
-        env: shellEnv(this.shellCommand.file, { FORCE_COLOR: '0', NO_COLOR: '1', CI: process.env.CI ?? '1' }),
+        // The shell is found by its full path; the programs the command names must not come from
+        // the working folder either (cmd.exe would look there first).
+        env: childEnv(shellEnv(shell, { FORCE_COLOR: '0', NO_COLOR: '1', CI: process.env.CI ?? '1' })),
         windowsHide: true,
         // Own process group on POSIX so a timeout/stop can kill the whole tree.
         detached: process.platform !== 'win32',
@@ -180,12 +188,18 @@ export function shellEnv(shell: string, extra: Record<string, string> = {}, env:
   return out;
 }
 
-function resolveShell(explicit?: string): { file: string; args: (command: string) => string[] } {
-  const file = explicit || (process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash');
-  const name = path.basename(file).toLowerCase();
+/** What the model reads when the shell is not installed. */
+function shellNotFound(program: string): string {
+  return `The shell ${program} was not found on this machine. Install it, or choose another shell in Orka's settings.`;
+}
+
+/** The shell by name (or path, as configured); programPath finds it each time it starts. */
+function resolveShell(explicit?: string): { program: string; args: (command: string) => string[] } {
+  const program = explicit || (process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash');
+  const name = path.basename(program).toLowerCase();
   if (name.startsWith('powershell') || name.startsWith('pwsh')) {
     return {
-      file,
+      program,
       // UTF-8 output so we can decode it reliably, and propagate the real exit code: -Command
       // otherwise reports 1 for any failing native command. The command sits on its own line so
       // a trailing comment in it cannot swallow the epilogue.
@@ -203,23 +217,6 @@ function resolveShell(explicit?: string): { file: string; args: (command: string
       ],
     };
   }
-  if (name === 'cmd.exe' || name === 'cmd') return { file, args: (command) => ['/d', '/s', '/c', command] };
-  return { file, args: (command) => ['-c', command] };
-}
-
-function killTree(pid: number | undefined): void {
-  if (!pid) return;
-  try {
-    if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
-    } else {
-      process.kill(-pid, 'SIGKILL');
-    }
-  } catch {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      /* already gone */
-    }
-  }
+  if (name === 'cmd.exe' || name === 'cmd') return { program, args: (command) => ['/d', '/s', '/c', command] };
+  return { program, args: (command) => ['-c', command] };
 }

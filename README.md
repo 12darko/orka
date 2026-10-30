@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/12darko/orka/actions/workflows/ci.yml"><img src="https://github.com/12darko/orka/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Enophia-Studio/orka/actions/workflows/ci.yml"><img src="https://github.com/Enophia-Studio/orka/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg" alt="Node.js 22+">
 </p>
@@ -33,6 +33,7 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 - [Quick start](#quick-start)
 - [Agents](#agents)
 - [Providers](#providers)
+  - [Agent CLIs (agent mode)](#agent-clis-agent-mode)
 - [Permissions and safety](#permissions-and-safety)
 - [Reviewing changes](#reviewing-changes)
 - [Hooks](#hooks)
@@ -63,10 +64,10 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 
 ## Install
 
-**VS Code extension (quickest):** download `orka-vscode-<version>.vsix` from the [latest release](https://github.com/12darko/orka/releases/latest), then run **Extensions: Install from VSIX…** in VS Code (1.101 or newer), or:
+**VS Code extension (quickest):** download `orka-vscode-<version>.vsix` from the [latest release](https://github.com/Enophia-Studio/orka/releases/latest), then run **Extensions: Install from VSIX…** in VS Code (1.101 or newer), or:
 
 ```bash
-code --install-extension orka-vscode-0.2.0.vsix
+code --install-extension orka-vscode-0.3.0.vsix
 ```
 
 **Desktop app for Windows:** download `orka-desktop.exe` from the same release and run it; it needs no Node.js, only Edge or Chrome for its window. Only the Orka window opens; closing it quits Orka. If it does not start, the reason is in `~/.orka/desktop/desktop.log`. The file is not code-signed yet, so Windows SmartScreen may ask you to confirm the first start (**More info → Run anyway**), and on PCs where Windows' Smart App Control is on, it is blocked; use the CLI or run it from source there.
@@ -74,7 +75,7 @@ code --install-extension orka-vscode-0.2.0.vsix
 **CLI:** with **Node.js 22+**, install the `orka` command from the release (it is not on npm yet):
 
 ```bash
-npm install -g https://github.com/12darko/orka/releases/download/v0.2.0/orka-agent-0.2.0.tgz
+npm install -g https://github.com/Enophia-Studio/orka/releases/download/v0.3.0/orka-agent-0.3.0.tgz
 ```
 
 The extension, the desktop app and the CLI package each include a `THIRD_PARTY_NOTICES.txt` with the licenses of the open-source software inside them.
@@ -84,7 +85,7 @@ The extension, the desktop app and the CLI package each include a `THIRD_PARTY_N
 **From source** (the desktop app on other systems, or to change Orka): you need **Node.js 22+** and **git**. The browser tool and the desktop app use an installed **Chrome or Edge**.
 
 ```bash
-git clone https://github.com/12darko/orka.git
+git clone https://github.com/Enophia-Studio/orka.git
 cd orka
 npm install
 npm run build
@@ -97,7 +98,7 @@ npm run package
 ```
 
 ```bash
-code --install-extension packages/vscode-extension/dist/orka-vscode-0.2.0.vsix
+code --install-extension packages/vscode-extension/dist/orka-vscode-0.3.0.vsix
 ```
 
 **Desktop app** — run it, or build the single executable yourself (`packages/desktop/dist/orka-desktop.exe`, or `orka-desktop` on Linux):
@@ -169,6 +170,7 @@ Other modes: *On changes* (every file, command or plan step), *Every step* and *
 | **Gemini API** | API key / `GEMINI_API_KEY` | Official `@google/genai` SDK; thought signatures are preserved |
 | **Added providers** | API key or none | **Settings → Providers → Add a provider**: OpenRouter, DeepSeek, xAI (Grok), Mistral, Groq, Together AI, Ollama, LM Studio, or any OpenAI-compatible URL |
 | **Claude Code (local)** | Your Claude Code login | Optional and off by default, see below |
+| **Agent CLIs** | The agent's own login | Gemini CLI, Codex, GitHub Copilot CLI or Cursor CLI as the main agent, see [agent mode](#agent-clis-agent-mode) |
 
 Model pickers group versions by family (e.g. **Opus** 5.5, 5, 4.8 · **GPT-6** Astra, Sol, Luna · **Gemini Flash** 3.8, 3.7, ...). **Load list** fetches the provider's own model list; models Orka does not know yet are added to the right family and marked "new". Lists are refreshed once a day in the background, and **Other…** lets you type any model id. The built-in catalog lives in `packages/core/src/providers/catalog.ts`.
 
@@ -184,6 +186,12 @@ Orka can use the locally installed [Claude Code](https://code.claude.com/docs) C
 
 How it works: each conversation opens one `claude -p --input-format stream-json` process. The CLI's own tools, MCP servers and settings are turned off, and Orka's tools are used through a text protocol. Tool results the model makes up are discarded, and a malformed tool call is sent back once to be rewritten. Updating the CLI automatically (`orka.claudeCode.autoUpdate`) is also off by default.
 
+### Agent CLIs (agent mode)
+
+A coding agent CLI you installed and signed in to yourself can be the main agent: **Gemini CLI**, **Codex** (through `codex-acp`), **GitHub Copilot CLI**, **Cursor CLI**, or an ACP agent you add on your own responsibility. Orka runs it over the [Agent Client Protocol](https://agentclientprotocol.com) and keeps its safety net around it: Orka's permission rules answer the agent's permission requests, the files it asks Orka for stay inside the workspace, the files it changes in the workspace (also with its own tools, but not ones git ignores) show up in Changes and can be reverted, and the Supervisor reviews the final result. What the agent does with its own tools follows its own sandbox and settings. The agent brings its own model and context, so the light model, fallback, compaction and lessons are off in agent mode, and its token use is not reported.
+
+Orka never reads, stores or forwards an agent's sign-in, only runs the unmodified program you installed, never downloads one and never turns on an "approve everything" mode. Turn an agent on in `orka.agentClis.enabled` and choose it with `orka.provider` set to `agent:<id>` (CLI: `orka --provider agent:gemini`; `orka agents` lists them); agent mode needs git for its snapshots. Supported agents, their terms, what Orka keeps doing and how to add your own: **[docs/EXTERNAL_AGENTS.md](docs/EXTERNAL_AGENTS.md)**.
+
 ## Permissions and safety
 
 | | Read | Plan | Edit files | Delete | Command | Risky command* | Git write |
@@ -192,7 +200,7 @@ How it works: each conversation opens one `claude -p --input-format stream-json`
 | **Balanced** (default) | auto | auto | auto | asks | auto | asks | asks |
 | **Autonomous** | auto | auto | auto | auto (reversible) | auto | asks | auto (push/reset ask) |
 
-\* Patterns such as `rm -rf`, `Remove-Item -Recurse`, `git push`, `git reset --hard`, `curl … | sh`, `DROP TABLE`, `npm publish`; encoded PowerShell, `Start-Process -Verb RunAs`, downloads to a file (`-OutFile`, `curl -o`, `wget`, `certutil`, `bitsadmin`), inline scripts that touch files, processes, the network or your home folder (`node -e`, `python -c`, ...), `mshta`/`regsvr32`/`rundll32`, scheduled tasks and services, `setx`, global package installs, `git config --global`, and **commands that write outside the workspace** (absolute paths, `~`, `$env:USERPROFILE`, `..\..\`; temp folders and `/dev/null` excepted). See `packages/core/src/permissions/commandRisk.ts`. Sub-agents follow the same rules.
+\* Patterns such as `rm -rf`, `Remove-Item -Recurse`, `git push`, `git reset --hard`, `curl … | sh`, `DROP TABLE`, `npm publish`; encoded PowerShell, `Start-Process -Verb RunAs`, downloads to a file (`-OutFile`, `curl -o`, `wget`, `certutil`, `bitsadmin`), inline scripts that touch files, processes, the network or your home folder (`node -e`, `python -c`, ...), `mshta`/`regsvr32`/`rundll32`, scheduled tasks and services, `setx`, global package installs, `git config --global`, and **commands that write outside the workspace** (absolute paths, `~`, `$env:USERPROFILE`, `..\..\`; temp folders and `/dev/null` excepted). A command only counts as read-only when Orka can read every part of it: command substitution (`$(…)`, backticks), a single `&`, `env <program>`, options that start programs (`rg --pre`, `find -exec`) and redirections into files are never read-only. See `packages/core/src/permissions/commandRisk.ts`. Sub-agents follow the same rules.
 
 **What the modes mean:** in *Balanced* and *Autonomous*, the agent runs your project's commands (builds, tests, scripts it writes) without asking; the risky patterns above still ask. That is what makes it fast, and it also means a model following instructions hidden in a web page or file could run project code. **For code or content you do not trust, use *Ask* mode.**
 
@@ -201,7 +209,8 @@ How it works: each conversation opens one `claude -p --input-format stream-json`
 - Web pages and fetched content are treated as data, not instructions. `web_fetch` and the browser never reach cloud metadata services or link-local addresses (also not through a redirect or a DNS name pointing there).
 - Once any agent in a task has read a file that may hold secrets (`.env`, keys and certificates, `credentials`, `appsettings*.json`, Terraform state, service-account files, ...), web access and MCP tools ask for approval for the rest of that task, whatever the mode, so secrets cannot be sent out silently.
 - A server's own "read-only" hint does not make its MCP tools approval-free: they follow the terminal rules, and tools marked destructive always ask.
-- A repository whose own git config makes git run programs (an `fsmonitor` hook, filters other than Git LFS, diff drivers, includes) is detected: Orka then does not run `git status` on its own, and git commands ask. Orka's own git calls never use fsmonitor, external diff or textconv programs.
+- A repository whose own git config makes git run programs (an `fsmonitor` hook, `core.hooksPath`, filters other than Git LFS, diff drivers, signature programs, pagers, includes; also in nested repositories) is detected: Orka then does not run `git status` on its own, and git commands ask. Orka's own git calls never use fsmonitor, external diff, textconv or signature programs.
+- **Windows:** Orka starts git, your shell and its other helpers by their full path from `PATH`, never from the open folder. In the desktop app and the CLI, nothing Orka starts (commands, background processes, MCP servers, agents, terminal windows) picks a program from its current folder by its bare name: use `.\name` or a full path, e.g. `.\gradlew`.
 - `open_browser` only hands web pages, images, PDFs and text files to the system, never scripts or executables.
 
 ## Reviewing changes
@@ -258,6 +267,7 @@ Agents can use tools from MCP (Model Context Protocol) servers: Unity Editor, Bl
 - **Import from Claude Code:** brings the MCP servers from `~/.claude.json` (global and this project's) into Orka in one click.
 - **Edit the list:** `orka.mcpServers`, each entry either `{"command": "uvx", "args": ["blender-mcp"]}` (stdio) or `{"url": "http://localhost:8080/mcp"}` (Streamable HTTP).
 - A project's **`.mcp.json`** (Claude Code format) is used too; because it starts programs on your machine, Orka asks the first time.
+- On Windows, a server whose `command` is a bare name that is not on `PATH` but sits in its configured `cwd` starts from there by its full path. Programs the server itself starts are not looked up in its folder by bare name.
 - Servers start when a task needs them and stay up between tasks. Their state (ready · N tools / error / off) is shown, and each one can be turned on or off. Tools are named `mcp__<server>__<tool>` and follow the terminal rules; read-only sub-agents only see tools their server marks read-only.
 
 ## Tasks, history and tokens
@@ -287,7 +297,8 @@ The same core in the terminal: chat, Supervisor, sub-agents, Skills, MCP, permis
 
 - `orka` starts a session; `orka "fix the login bug"` starts with a request.
 - `orka -p "explain main.ts"` answers one request and exits; the reply goes to stdout and progress to stderr, so it works in scripts.
-- `orka -c` continues the last task in this folder; `orka models`, `orka config`.
+- `orka -c` continues the last task in this folder; `orka models`, `orka agents`, `orka config`.
+- `orka --provider agent:gemini` makes an agent CLI the main agent ([agent mode](#agent-clis-agent-mode)).
 - Options: `--provider`, `-m/--model`, `--mode ask|balanced|autonomous`, `-y` (autonomous), `--supervisor claude:claude-sonnet-5-5`, `--no-supervisor`, `-C <folder>`, `--lang en|tr`.
 - In a session: `/help`, `/new`, `/diff`, `/undo`, `/rewind [n]`, `/compact`, `/mode`, `/model`, `/usage`, `/skills`, `/<skill> <request>`, `/freebuff`, `/exit`; `@file` attaches a file or image; Ctrl+C stops the running request.
 - Approvals are asked in the terminal (`y` yes · `a` always · `n` no · `d` diff · or type what to do instead). Without a terminal (piped input), anything that needs approval is **declined**, never approved silently.

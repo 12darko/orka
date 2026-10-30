@@ -4,14 +4,14 @@
   "description": "Orka runs a pod of AI agents in your project: a main agent that plans, edits, runs and verifies, sub-agents, and a supervisor that keeps it on track. Works with Claude, GPT, Gemini and any OpenAI-compatible model.",
   "license": "MIT",
   "author": "Enophia Software",
-  "homepage": "https://github.com/12darko/orka#readme",
+  "homepage": "https://github.com/Enophia-Studio/orka#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/12darko/orka.git",
+    "url": "git+https://github.com/Enophia-Studio/orka.git",
     "directory": "packages/vscode-extension"
   },
   "bugs": {
-    "url": "https://github.com/12darko/orka/issues"
+    "url": "https://github.com/Enophia-Studio/orka/issues"
   },
   "keywords": [
     "ai",
@@ -24,7 +24,7 @@
     "mcp",
     "unity"
   ],
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "12darko",
   "private": true,
   "engines": {
@@ -297,7 +297,7 @@
           "type": "string",
           "default": "claude",
           "description": "%config.provider%",
-          "pattern": "^(claude|openai|gemini|claude-code|custom:[a-z0-9][a-z0-9-]*)$"
+          "pattern": "^(claude|openai|gemini|claude-code|custom:[a-z0-9][a-z0-9-]*|agent:(gemini|codex|copilot|cursor|custom:[a-z0-9][a-z0-9-]{0,39}))$"
         },
         "orka.claude.model": {
           "type": "string",
@@ -432,6 +432,57 @@
               }
             }
           }
+        },
+        "orka.agentClis.enabled": {
+          "type": "array",
+          "scope": "application",
+          "default": [],
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(gemini|codex|copilot|cursor|custom:[a-z0-9][a-z0-9-]{0,39})$"
+          },
+          "markdownDescription": "%config.agentClis.enabled%"
+        },
+        "orka.agentClis.paths": {
+          "type": "object",
+          "scope": "machine",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "%config.agentClis.paths%"
+        },
+        "orka.agentClis.custom": {
+          "type": "array",
+          "scope": "machine",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "command"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "%config.agentClis.custom.name%"
+              },
+              "command": {
+                "type": "string",
+                "description": "%config.agentClis.custom.command%"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "%config.agentClis.custom.args%"
+              }
+            }
+          },
+          "markdownDescription": "%config.agentClis.custom%"
         },
         "orka.routing.provider": {
           "type": "string",

@@ -48,6 +48,8 @@ const ICON: Record<string, string> = {
   arrow: '<path d="M2 8h9M8 4l4 4-4 4"/>',
   arrowUp: '<path d="M8 13V3.5M4 7.5l4-4 4 4"/>',
   arrowDown: '<path d="M8 3v9.5M4 8.5l4 4 4-4"/>',
+  more: '<circle cx="3.5" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12.5" cy="8" r=".9"/>',
+  folderPlus: '<path d="M2 4.5V12a1 1 0 001 1h10a1 1 0 001-1V6a1 1 0 00-1-1H8L6.5 3.5H3a1 1 0 00-1 1z"/><path d="M8 7v4M6 9h4"/>',
   copy: '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V4a1.5 1.5 0 00-1.5-1.5H4A1.5 1.5 0 002.5 4v5A1.5 1.5 0 004 10.5h1.5"/>',
   back: '<path d="M10 3L5 8l5 5"/>',
   key: '<circle cx="5.5" cy="10.5" r="3"/><path d="M7.7 8.3L13 3M11 5l1.5 1.5"/>',

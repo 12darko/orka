@@ -4,8 +4,8 @@
  * the ETag, so an unchanged answer is a 304 that GitHub does not count against the rate limit.
  */
 
-export const LATEST_RELEASE_API = 'https://api.github.com/repos/12darko/orka/releases/latest';
-const RELEASE_PAGE = 'https://github.com/12darko/orka/releases/tag/';
+export const LATEST_RELEASE_API = 'https://api.github.com/repos/Enophia-Studio/orka/releases/latest';
+const RELEASE_PAGE = 'https://github.com/Enophia-Studio/orka/releases/tag/';
 const TIMEOUT_MS = 10_000;
 /** A release answer is a few KB; anything this big is not one. */
 const MAX_BODY_BYTES = 1_000_000;

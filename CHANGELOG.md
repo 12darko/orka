@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.3.0
+
+Coding agents you installed yourself can now be Orka's main agent, and the desktop session list gets your own groups.
+
+**Agent CLIs (agent mode)**
+
+- **Supported agents:** Gemini CLI, Codex (through the `codex-acp` adapter), GitHub Copilot CLI (preview), Cursor CLI, or any agent that speaks the Agent Client Protocol (ACP). Each one runs as the main agent: pick it in the agent menu after turning it on in **Settings → Providers → Agent CLIs**.
+- **The agent runs its own loop. Orka keeps control of the rest:**
+  - it answers the agent's permission requests with your permission mode;
+  - the files the agent asks Orka for stay inside the project (what the agent does with its own tools follows its own sandbox and settings);
+  - it lists the files the agent changes in the project in Changes, including files it writes with its own tools (a snapshot is taken around each request), so you can review and revert them. Files git ignores, such as `.env` or `node_modules`, are not snapshotted;
+  - going back starts a fresh agent session, and the Supervisor reviews the result.
+- **What it asks for:** a command request Orka cannot read, or one that runs outside the project, always asks and shows what the agent sent. A file the agent writes through Orka goes straight to disk (in VS Code an open editor reloads it); a link inside the project is written through to its target, a link out of it is refused.
+- **Revert and Go back** put back the exact bytes a file had when the request began, and delete a file the agent created during the request with its own tools.
+- **Supervisor:** next to an agent it needs a model provider of its own; without one it sits out, and Orka says so.
+- **Signing in:** Orka never reads, stores or passes on an agent's sign-in. You sign in with the agent's own login command, which Orka opens in a terminal, with the agent's program by its full path and in your home folder. Orka runs only programs you installed and never downloads one.
+- **Not offered:** Antigravity (Google's terms do not allow it through third-party software on consumer plans) and the Claude ACP adapter (licence unclear). Claude stays available through the Claude API and the opt-in Claude Code provider.
+- **CLI:** `orka --provider agent:gemini` and `orka agents`. More in [docs/EXTERNAL_AGENTS.md](docs/EXTERNAL_AGENTS.md).
+
+**Desktop app**
+
+- **Your own session groups:** create, rename and remove them, and move a session in or out through its **…** menu. Folders and groups fold away, and sessions can be hidden from the list and shown again.
+
+**Security (everywhere)**
+
+- **Read-only commands are read word by word.** A command only counts as read-only (no approval in Ask mode) when Orka can read every part of it. Command substitution (`$(…)`, backticks), a single `&`, `env <program>`, options that start programs (`rg --pre`, `find -exec`, `tree -o`, `git --output`), wildcards or variables that could turn into options, and redirections into files now ask. Before, some of these ran without asking.
+- **A repository's git config is read the way git reads it:** also a key on its section line, in nested repositories and submodules, and with signature programs, pagers and `core.hooksPath` counted as programs git would run. Git commands then ask, and Orka's own `git log` never verifies signatures.
+- **Windows: no programs from the open folder.** Orka starts git, your shell and its other helpers by their full path from `PATH`, so a `git.exe` or `powershell.exe` a repository ships never runs. In the desktop app and the CLI, nothing Orka starts (commands, background processes, MCP servers, agents, terminal windows) picks a program from its current folder by its bare name: in cmd.exe and npm scripts, use `.\name` or a full path (`.\gradlew`). An MCP server whose `command` sits in its configured `cwd` still starts.
+- Task history saves run one after another, so a request that ends while you start a new task is kept in its own task.
+
+**Other**
+
+- The repository moved to [Enophia-Studio/orka](https://github.com/Enophia-Studio/orka). Links and the update check follow; the old address still redirects.
+
 ## 0.2.0
 
 The desktop app gets a calm, roomy window of its own: your sessions on the left, the conversation in the middle, the plan and the changes on the right.

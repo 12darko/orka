@@ -7,7 +7,7 @@ Thanks for your interest! Bug reports, ideas and pull requests are all welcome.
 You need Node.js 22 or newer, git, and VS Code 1.101 or newer (for the extension). Chrome or Edge is needed for the browser tool and the desktop app tests.
 
 ```bash
-git clone https://github.com/12darko/orka.git
+git clone https://github.com/Enophia-Studio/orka.git
 cd orka
 npm install
 npm run build
@@ -34,7 +34,7 @@ npm test
 1. `npm run typecheck` and `npm test` pass.
 2. New behaviour has a test. Core logic is tested in `packages/core/test`, the controller and the UI's helpers in `packages/app/test` (with a fake shell), the CLI and desktop app end to end in their own `test` folders.
 3. Every user-facing string goes through `t()` and has a Turkish entry in `packages/core/src/i18n/tr.ts`; a test checks this. Technical terms (Agent, Supervisor, Provider, Skills, Token, MCP) stay in English in the Turkish UI.
-4. Anything that can change files or run commands goes through the permission system. Never add a path that skips approval.
+4. Anything Orka does that edits files or runs commands goes through the permission system; never add a path that skips approval. In agent mode the vendor's agent acts on its own: where it asks (its permission requests, and the file writes and terminal commands it asks Orka to do), the answer comes from Orka's permission rules and prompts; what it does with its own tools without asking is observed and revertible through the workspace snapshots, for the files git would track (ignored files and anything outside the workspace are not covered, and docs must not claim they are). Its actions are never silently trusted.
 5. Keep the conversation append-only (system prompt and tool list stay fixed during a task) so prompt caching keeps working.
 
 Small, focused pull requests are easier to review. For a larger change, open an issue first so we can agree on the approach.

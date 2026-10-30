@@ -3,7 +3,7 @@
 // Everything else is real: the shared controller, the local server and its security checks,
 // in-app dialogs, file writes, task history and (on Windows) DPAPI-protected API keys.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import * as http from 'node:http';
 import { createRequire } from 'node:module';
@@ -248,6 +248,24 @@ describe('Orka desktop app', { skip: (!existsSync(APP) && 'build first (npm run 
     await browser.clickSelector('[data-action="open-settings"]');
     await browser.clickSelector('[data-action="tab"][data-tab="providers"]');
     await until(async () => (await text()).includes('sk-tes••••7890'), 'the stored key hint', 120_000);
+  });
+});
+
+describe('Orka desktop process', { skip: (process.platform !== 'win32' && 'Windows-only') || (!existsSync(APP) && 'build first (npm run build -w orka-desktop)') }, () => {
+  it('sets up its own process at start: nothing it or its children start by bare name comes from the current folder', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'orka-lookup-'));
+    try {
+      // Loaded before the app; reports the variable as the app leaves it.
+      const probe = path.join(dir, 'probe.cjs');
+      writeFileSync(probe, "process.on('exit', () => process.stderr.write(`lookup=${process.env.NoDefaultCurrentDirectoryInExePath}\\n`));\n");
+      const env = { ...process.env };
+      for (const key of Object.keys(env)) if (key.toLowerCase() === 'nodefaultcurrentdirectoryinexepath') delete env[key];
+      const run = spawnSync(process.execPath, ['--require', probe, APP, '--version'], { cwd: dir, env, encoding: 'utf8' });
+      assert.equal(run.status, 0, run.stderr);
+      assert.match(run.stderr, /lookup=1/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

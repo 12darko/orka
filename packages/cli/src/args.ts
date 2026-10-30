@@ -16,8 +16,8 @@ export interface CliArgs {
   lang?: string;
   help: boolean;
   version: boolean;
-  /** `orka models [provider]`, `orka config`. */
-  command?: 'models' | 'config';
+  /** `orka models [provider]`, `orka config`, `orka agents [id]`. */
+  command?: 'models' | 'config' | 'agents';
   commandArg?: string;
 }
 
@@ -83,7 +83,7 @@ export function parseArgs(argv: readonly string[]): CliArgs | { error: string } 
         words.push(raw);
     }
   }
-  if ((words[0] === 'models' || words[0] === 'config') && words.length <= 2 && !args.print) {
+  if ((words[0] === 'models' || words[0] === 'config' || words[0] === 'agents') && words.length <= 2 && !args.print) {
     args.command = words[0];
     args.commandArg = words[1];
   } else if (words.length) {
@@ -101,10 +101,12 @@ Usage
   orka -p "explain main.ts"  Answer one request and exit (reply on stdout)
   orka -c                    Continue the last task in this folder
   orka models [provider]     List the models Orka knows
+  orka agents [id]           List the agent CLIs Orka can run as the main agent, and their status
   orka config                Show where the config lives and what is in use
 
 Options
-  --provider <id>        claude, openai, gemini, claude-code (opt-in), or a custom id from the config
+  --provider <id>        claude, openai, gemini, claude-code (opt-in), a custom id from the config,
+                         or agent:<id> to make an agent CLI the main agent (see Agent mode)
   -m, --model <id>       Model for the main agent (e.g. claude-sonnet-5-5, gpt-6-astra)
   --mode <m>             ask | balanced (default) | autonomous
   -y, --yes              Same as --mode autonomous (dangerous commands still ask)
@@ -117,6 +119,18 @@ Options
 API keys come from the environment only: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
 (custom endpoints: "apiKeyEnv" in the config). Claude Code (unofficial, opt-in with
 "claudeCode": { "enabled": true } in the config) needs no key: it uses your logged-in claude CLI.
+
+Agent mode: --provider agent:gemini (or agent:codex, agent:copilot, agent:cursor, or
+agent:custom:<name> for an agent in "agentClis.custom" in the config) makes an agent CLI you
+installed and signed in to yourself the main agent. Orka never reads its sign-in. Orka's
+permission rules (and you, where they ask) answer the agent's permission requests, file writes and
+commands; every file the agent changes stays reviewable and revertible (/diff, /undo; needs git),
+and the Supervisor reviews the final result. "provider" in the config may only name agents in
+"agentClis.enabled". In a session, /model agent:<id> switches to one. orka agents shows what is
+installed and each agent's terms.
+
+Without a terminal to ask (piped input: scripts, CI), every approval that would ask is declined,
+never approved silently; in agent mode that includes the agent's own permission requests.
 
 Once a day Orka asks GitHub in the background whether a newer release is out and mentions it at
 the next start; it never downloads anything. Turn this off with "updateCheck": false in the config
@@ -134,10 +148,12 @@ Kullanım
   orka -p "main.ts'i açıkla" Tek isteği yanıtla ve çık (yanıt stdout'a)
   orka -c                    Bu klasördeki son göreve devam et
   orka models [provider]     Orka'nın bildiği modeller
+  orka agents [id]           Orka'nın ana agent olarak çalıştırabildiği agent CLI'lar ve durumları
   orka config                Config nerede, ne kullanılıyor
 
 Seçenekler
-  --provider <id>        claude, openai, gemini, claude-code (isteğe bağlı) ya da config'deki custom id
+  --provider <id>        claude, openai, gemini, claude-code (isteğe bağlı), config'deki custom id
+                         ya da bir agent CLI'ı ana agent yapmak için agent:<id> (bkz. Agent modu)
   -m, --model <id>       Ana agent'ın modeli (ör. claude-sonnet-5-5, gpt-6-astra)
   --mode <m>             ask | balanced (varsayılan) | autonomous
   -y, --yes              --mode autonomous ile aynı (tehlikeli komutlar yine sorar)
@@ -150,6 +166,18 @@ Seçenekler
 API key'ler yalnızca ortam değişkenlerinden okunur: ANTHROPIC_API_KEY, OPENAI_API_KEY,
 GEMINI_API_KEY (custom endpoint'ler: config'de "apiKeyEnv"). Claude Code (resmi değil, config'de
 "claudeCode": { "enabled": true } ile açılır) key istemez: giriş yapılmış claude CLI'ını kullanır.
+
+Agent modu: --provider agent:gemini (ya da agent:codex, agent:copilot, agent:cursor veya config'deki
+"agentClis.custom" listesinde bir agent için agent:custom:<ad>) kendiniz kurup giriş yaptığınız bir
+agent CLI'ı ana agent yapar. Orka onun oturum bilgilerini asla okumaz. Agent'ın izin isteklerini,
+dosya yazmalarını ve komutlarını Orka'nın izin kuralları (ve kuralların sorduğu yerde siz)
+yanıtlar; agent'ın değiştirdiği her dosya incelenebilir ve geri alınabilir kalır (/diff, /undo; git
+gerekir) ve Supervisor son sonucu inceler. Config'deki "provider" yalnızca "agentClis.enabled"
+listesindeki agent'ları seçebilir. Oturumda /model agent:<id> bir agent'a geçer. orka agents neyin
+kurulu olduğunu ve her agent'ın koşullarını gösterir.
+
+Soracak bir terminal yoksa (yönlendirilmiş girdi: script'ler, CI), onay isteyen her işlem reddedilir,
+asla sessizce onaylanmaz; agent modunda buna agent'ın kendi izin istekleri de dahildir.
 
 Orka günde bir kez arka planda GitHub'a yeni bir sürüm çıkıp çıkmadığını sorar ve varsa bir sonraki
 açılışta söyler; hiçbir şey indirmez. Kapatmak için config'de "updateCheck": false ya da

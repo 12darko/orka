@@ -35,8 +35,22 @@ export interface SettingsStore {
   onDidChange(listener: () => void): Disposable;
 }
 
-/** A built-in provider or a user-added OpenAI-compatible endpoint ("custom:<id>"). */
-export type ProviderRef = ProviderKind | `custom:${string}`;
+/**
+ * A built-in provider, a user-added OpenAI-compatible endpoint ("custom:<id>"), or (main agent
+ * only) a coding agent Orka drives over ACP ("agent:<id>", e.g. "agent:gemini", "agent:custom:<slug>").
+ */
+export type ProviderRef = ProviderKind | `custom:${string}` | `agent:${string}`;
+
+export function isAgentRef(ref: string): ref is `agent:${string}` {
+  return ref.startsWith('agent:');
+}
+
+/** An ACP agent the user added: a name and the command line that starts its ACP server. */
+export interface CustomAgentSetting {
+  name: string;
+  command: string;
+  args: string[];
+}
 
 /** Setting key holding each built-in provider's default model. */
 export const MODEL_SETTING: Record<ProviderKind, string> = {
@@ -103,6 +117,11 @@ export interface AppSettings {
   hooksFromWorkspace: boolean;
   /** Look for a newer Orka release once a day (notify only). */
   checkUpdates: boolean;
+  /**
+   * Coding agents (Gemini CLI, Codex, Copilot, Cursor, custom) the user turned on as possible main
+   * agents; their executable paths and custom agents come only from the user's own settings.
+   */
+  agentClis: { enabled: string[]; paths: Record<string, string>; custom: CustomAgentSetting[] };
   /** The desktop app's window: sessions and side panels ("ide") or one column ("classic"), and its colors. */
   desktop: { layout: 'ide' | 'classic'; theme: 'system' | 'light' | 'dark' };
 }
@@ -118,6 +137,7 @@ export function readSettings(c: SettingsStore): AppSettings {
 
   const customProviders = readCustomProviders(c.get<unknown[]>('customProviders', []));
   const claudeCodeEnabled = c.get<boolean>('claudeCode.enabled', false);
+  const agentClis = readAgentClis(c);
   const valid = (value: string | undefined): ProviderRef | undefined => {
     if (!value) return undefined;
     if (value === 'claude-code' && !claudeCodeEnabled) return undefined;
@@ -133,8 +153,12 @@ export function readSettings(c: SettingsStore): AppSettings {
     agents[profile.name] = { provider: valid(choice.provider) ?? 'inherit', model: (choice.model ?? '').trim() };
   }
 
+  // Only the main agent can be an agent CLI, and only one the user turned on.
+  const mainRef = c.get<string>('provider', 'claude');
+  const agentMain = typeof mainRef === 'string' && isAgentRef(mainRef) && agentClis.enabled.includes(mainRef.slice('agent:'.length)) ? (mainRef as ProviderRef) : undefined;
+
   return {
-    provider: valid(c.get<string>('provider', 'claude')) ?? 'claude',
+    provider: agentMain ?? valid(mainRef) ?? 'claude',
     providerExplicit: c.isSet('provider'),
     models,
     customProviders,
@@ -203,6 +227,7 @@ export function readSettings(c: SettingsStore): AppSettings {
     hooksFromWorkspace: c.scopeOf?.('hooks') === 'workspace',
     mcp: { enabled: c.get<boolean>('mcp.enabled', true), servers: readMcpServers(c.get<Record<string, unknown>>('mcpServers', {})) },
     checkUpdates: c.get<boolean>('updates.check', true) !== false,
+    agentClis,
     desktop: {
       layout: c.get<string>('desktop.layout', '') === 'classic' ? 'classic' : 'ide',
       theme: (['light', 'dark'] as const).find((v) => v === c.get<string>('desktop.theme', '')) ?? 'system',
@@ -225,6 +250,28 @@ export function readMcpServers(raw: Record<string, unknown> | undefined): Record
       out[name] = { command: v.command, args: strings(v.args), env: record(v.env), cwd: typeof v.cwd === 'string' ? v.cwd : undefined, disabled };
   }
   return out;
+}
+
+const AGENT_ID = /^(?:[a-z][a-z0-9-]{0,39}|custom:[a-z0-9][a-z0-9-]{0,39})$/;
+
+/** The agent CLIs block; ids, paths and command lines that do not look right are dropped. */
+function readAgentClis(c: SettingsStore): AppSettings['agentClis'] {
+  const custom: CustomAgentSetting[] = [];
+  for (const item of c.get<unknown[]>('agentClis.custom', []) ?? []) {
+    if (!item || typeof item !== 'object') continue;
+    const def = item as Partial<CustomAgentSetting>;
+    const name = typeof def.name === 'string' ? def.name.trim().slice(0, 60) : '';
+    const command = typeof def.command === 'string' ? def.command.trim() : '';
+    if (!name || !command || command.length > 1000) continue;
+    const args = Array.isArray(def.args) ? def.args.filter((a): a is string => typeof a === 'string').slice(0, 50) : [];
+    custom.push({ name, command, args });
+  }
+  const paths: Record<string, string> = {};
+  for (const [id, value] of Object.entries(c.get<Record<string, unknown>>('agentClis.paths', {}) ?? {})) {
+    if (AGENT_ID.test(id) && typeof value === 'string' && value.trim()) paths[id] = value.trim();
+  }
+  const enabled = (c.get<unknown[]>('agentClis.enabled', []) ?? []).filter((id): id is string => typeof id === 'string' && AGENT_ID.test(id));
+  return { enabled: [...new Set(enabled)], paths, custom };
 }
 
 function readPricing(raw: Record<string, unknown> | undefined): PriceTable {
@@ -312,6 +359,8 @@ export const DESKTOP_SETTINGS = new Set(['desktop.layout', 'desktop.theme']);
 export const MACHINE_SETTINGS = new Set([
   'shell',
   'claudeCode.path',
+  'agentClis.paths',
+  'agentClis.custom',
   'browser.path',
   'mcpServers',
   'customProviders',
@@ -333,6 +382,7 @@ export const USER_LEVEL_SETTINGS = new Set([
   'skills.enabled',
   'pricing',
   'updates.check',
+  'agentClis.enabled',
   ...DESKTOP_SETTINGS,
   ...MACHINE_SETTINGS,
 ]);

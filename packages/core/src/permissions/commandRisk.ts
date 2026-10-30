@@ -35,7 +35,9 @@ const DANGEROUS: Array<[RegExp, string]> = [
   [/\breg(\.exe)?\s+(delete|add)\b|\bset-executionpolicy\b|\bnetsh\b|\bbcdedit\b/i, 'system configuration'],
   [/>\s*\/dev\/sd[a-z]/i, 'raw device write'],
   [/:\(\)\s*\{\s*:\|:&\s*\};:/, 'fork bomb'],
-  [/\b(powershell|pwsh)(\.exe)?\b.*\s-(e|ec|en|enc|encodedcommand)\s/i, 'encoded PowerShell command'],
+  // -EncodedCommand and every abbreviation PowerShell accepts (-e, -ec, -en, -enc, -enco...), also
+  // with "--", "/" or a typographic dash.
+  [/\b(powershell|pwsh)(\.exe)?\b.*\s(--?|[/\u2013\u2014\u2015])e(c|n[a-z]*)?(\s|:|$)/i, 'encoded PowerShell command'],
   [/\bstart-process\b.*-verb\s+runas\b/i, 'elevated privileges'],
   [/\bcertutil(\.exe)?\b.*-(urlcache|decode|encode)\b|\bbitsadmin(\.exe)?\b.*\/transfer\b/i, 'download with a system tool'],
   [/\b(mshta|regsvr32|rundll32|wscript|cscript)(\.exe)?\b/i, 'script host execution'],
@@ -110,30 +112,194 @@ const WRITE_VERBS = new RegExp(
 /** Locations outside the workspace that are fine to write (null devices and temp folders). */
 const HARMLESS_TARGET = /^(\/dev\/(null|stdout|stderr)|\$null|nul|\/tmp(\/|$)|\$env:(temp|tmp)\b|%(temp|tmp)%)/i;
 const HOME_REF =
-  /(^|[\s"'=(])(~[\\/]|\$home\b|\$env:(userprofile|appdata|localappdata|programfiles|programdata|windir|systemroot)\b|%(userprofile|appdata|localappdata|programfiles|programdata|windir|systemroot)%)/i;
+  /(^|[\s"'=(])(~[\\/]|\$\{?home\b|\$env:(userprofile|appdata|localappdata|programfiles|programdata|windir|systemroot)\b|%(userprofile|appdata|localappdata|programfiles|programdata|windir|systemroot)%)/i;
 
 export interface CommandContext {
   /** Absolute workspace root; enables the outside-the-workspace check. */
   workspaceRoot?: string;
   /** Absolute directory the command runs in (default: the root). */
   cwd?: string;
-  /** The repository's own git config makes git run programs (see gitConfigRisk): any git command asks. */
+  /**
+   * The config of the repository the command runs in (`cwd`) makes git run programs (see
+   * gitConfigRisk): any git command asks.
+   */
   gitRisk?: string;
 }
 
 const GIT_WRITE = /\bgit\s+(commit|merge|rebase|tag|push|reset|stash|cherry-pick|revert|am|apply|pull|checkout\s+-b|switch\s+-c|branch\s+-[dDmM]|remote\s+(add|remove|set-url)|rm)\b/i;
 
+/**
+ * Commands that only read, tested against each stage's words as the shell passes them on (see
+ * stageOf). Options that make one of them run a program or write a file keep it out.
+ */
 const SAFE_PREFIXES = [
-  /^(ls|dir|pwd|cd|echo|cat|type|head|tail|wc|tree|which|where|whoami|date|env|printenv|file|stat|du|df)\b/i,
-  /^(get-childitem|gci|get-content|gc|get-location|gl|test-path|select-string|sls|get-item|gi|resolve-path|measure-object|get-command|write-output|write-host)\b/i,
-  /^(grep|rg|findstr|find(?!.*(-delete|-exec)))\b/i,
-  /^git\s+(status|diff|log|show|branch(\s+(-a|-r|--list|-v|-vv))*\s*$|remote\s+-v|rev-parse|ls-files|blame|describe|shortlog|config\s+--get)/i,
-  /^(node|npm|npx|pnpm|yarn|python|python3|py|pip|dotnet|go|cargo|rustc|java|javac|tsc|deno|bun|unity|git)\s+(-v|--version|version)\s*$/i,
+  /^(ls|dir|pwd|cd|echo|cat|type|head|tail|wc|which|where|whoami|date|printenv|file|stat|du|df)(\.exe)?(\s|$)/i,
+  // With arguments, env runs them as a command.
+  /^env\s*$/i,
+  // tree -o writes its listing to a file (-R adds -o).
+  /^tree(\.com)?(?!.*\s(-[a-z]*[or]|--output))(\s|$)/i,
+  /^(get-childitem|gci|get-content|gc|get-location|gl|test-path|select-string|sls|get-item|gi|resolve-path|measure-object|write-output|write-host)(\s|$)/i,
+  // Names only: with -ArgumentList, -Syntax or -ShowCommandInfo, Get-Command runs a script's dynamicparam block.
+  /^(get-command|gcm)(\s+(?!-(ar|sy|sh))[\w.:-]+)*\s*$/i,
+  /^(grep|findstr)(\.exe)?(?!.*\s--pre)(\s|$)/i,
+  // ripgrep runs --pre for every file it searches, --hostname-bin, and decompressors with -z.
+  /^rg(\.exe)?(?!.*\s(--(pre|hostname-bin|search-zip)\b|-[a-z]*z))(\s|$)/i,
+  // find runs (-exec, -execdir, -ok, -okdir), deletes or writes files (-fprint, -fls) with these.
+  /^find(\.exe)?(?!.*\s-(exec|ok|delete|fprint|fls))(\s|$)/i,
+  /^(?!.*\s--output(=|\s|$))git(\.exe)?(\s+--no-pager)?\s+(status|diff|log|show|branch(\s+(-a|-r|--list|-v|-vv))*\s*$|remote\s+-v\s*$|rev-parse|ls-files|blame|describe|shortlog|config\s+--get(-[a-z]+)?)(\s|$)/i,
+  // Version checks (not yarn, pnpm, dotnet, nor rustup's cargo and rustc: they run a version or SDK the project names).
+  /^(node|npm|npx|python|python3|py|pip|go|java|javac|tsc|deno|bun|unity|git)\s+(-v|--version|version)\s*$/i,
 ];
+
+/** Commands whose options can make them run a program or write a file: they are safe only with literal words. */
+const OPTION_SENSITIVE = /^(rg|grep|findstr|find|tree|git)(\.exe|\.com)?$/i;
+/** Commands that change the folder the rest of the line runs in. */
+const DIR_CHANGE = /^(cd|chdir|pushd|popd|set-location|sl|push-location|pop-location)(\.exe)?(\s|$)/i;
+/** Git started by the line, also by a quoted name or a path (`"git"`, `/usr/bin/git`). */
+const RUNS_GIT = /(^|[\s;&|(`'"\\/])git(\.exe|\.cmd|\.bat|\.com)?(['"\s]|$)/i;
+/** Forms that look like grouping but run nothing: ${name}, ${env:NAME}, git's HEAD@{1} and @{u}. */
+const INERT_BRACES = /\$\{[A-Za-z_][\w:]*\}|@\{[\w.:/-]*\}/g;
+/**
+ * cmd's substring and replace forms (%PATH:~0,0%, %PATH:a=%) make characters the line does not
+ * show, separators too: text between two percent signs with a name, a colon, then ~ or =. A scan,
+ * not a regex, so a long run of percent signs and colons stays linear.
+ */
+function cmdSubstring(line: string): boolean {
+  const parts = line.split('%');
+  for (let i = 1; i < parts.length - 1; i++) {
+    const colon = parts[i].indexOf(':');
+    if (colon >= 0 && !/\s/.test(parts[i].slice(0, colon)) && /[~=]/.test(parts[i].slice(colon + 1))) return true;
+  }
+  return false;
+}
+/** Redirections that write no file: copying or closing a stream (2>&1, >&2, 2>&-), or into the null device. */
+const HARMLESS_REDIRECT = /[\d*]?>&(\d+|-)|[\d*&]?>{1,2}\s*(\$null|\/dev\/null|nul)(?![\w./\\:-])/gi;
+
+/** One stage of a command line (a command and its arguments, between separators and pipes). */
+interface Stage {
+  /** Its words as the shell passes them on (quotes removed, and backslashes after the program's name), joined by spaces. */
+  text: string;
+  /**
+   * Every word says what it passes: no variable ($1, ${x}, $'...', PowerShell's @splat) and no
+   * wildcard that can stand for an option (`rg foo *` next to a file named "--pre=x.sh").
+   */
+  literal: boolean;
+}
+
+/**
+ * The line has quotes some shell reads differently: an escaped quote (bash's \" ends a PowerShell
+ * string), bash's $'...', cmd's ^", or a typographic quote (PowerShell's, which also ends a '...').
+ */
+function quotesAmbiguous(line: string): boolean {
+  if (/[\u2018-\u201f]/.test(line)) return true;
+  let quote = '';
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    const next = line[i + 1];
+    if (quote === "'") {
+      if (c === "'") quote = '';
+    } else if (quote === '"') {
+      if (c === '\\' && next === '"') return true;
+      if (c === '"') quote = '';
+    } else if ((c === '\\' || c === '^' || c === '$') && (next === '"' || next === "'")) return true;
+    else if (c === '"' || c === "'") quote = c;
+  }
+  return false;
+}
+
+function stageOf(raw: string): Stage {
+  const tracksQuotes = !quotesAmbiguous(raw);
+  const words: string[] = [];
+  let literal = true;
+  let word: string | undefined;
+  let wildcard = false;
+  let quote = '';
+  const endWord = () => {
+    if (word === undefined) return;
+    if (wildcard && /^[-*?[]/.test(word)) literal = false;
+    // A backslash in the program's name makes it a path; elsewhere bash drops it (r\g, --p\re).
+    words.push(words.length ? word.replace(/\\/g, '') : word);
+    word = undefined;
+    wildcard = false;
+  };
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    const next = raw[i + 1] ?? '';
+    if (quote === "'") {
+      if (c === "'") quote = '';
+      else word += c;
+    } else if (quote === '"') {
+      if (c === '"') quote = '';
+      else {
+        if (c === '$' && /[\w{(@*#?!$^-]/.test(next)) literal = false;
+        word += c;
+      }
+    } else if (/\s/.test(c)) {
+      endWord();
+    } else {
+      if (word === undefined) word = '';
+      if (c === '"' || c === "'" || /[\u2018-\u201f]/.test(c)) {
+        // Where shells read quotes differently they are dropped, and what they enclose counts as unquoted.
+        if (tracksQuotes) quote = c;
+        continue;
+      }
+      if (c === '$' && /[\w{(@*#?!$^'"-]/.test(next)) literal = false;
+      else if (c === '@' && word === '' && /[A-Za-z_]/.test(next)) literal = false;
+      else if (c === '*' || c === '?' || c === '[') wildcard = true;
+      word += c;
+    }
+  }
+  endWord();
+  return { text: words.join(' '), literal };
+}
+
+function isSafeStage(stage: Stage): boolean {
+  if (!SAFE_PREFIXES.some((re) => re.test(stage.text))) return false;
+  // A variable or a wildcard could still spell an option that runs a program (rg --pr$1e).
+  return stage.literal || !OPTION_SENSITIVE.test(stage.text.split(' ')[0]);
+}
+
+/**
+ * The line may start git, also by a name written with quotes, escapes or variables (g''it,
+ * gi$1t): the repository's git config is worth reading for it.
+ */
+export function mayRunGit(command: string): boolean {
+  // What is left with quotes, escapes and variables ($1 is one digit, $x a whole name) taken out.
+  return RUNS_GIT.test(command) || RUNS_GIT.test(command.replace(/["'`^\\\u2018-\u201f]|\$\{\w*\}|\$(\d|[@*]|[A-Za-z_]\w*)|%[^%\s]*%/g, ''));
+}
+
+/**
+ * The line can start a program other than the ones its stages name: command or process
+ * substitution ($(...), `...`, <(...), >(...), zsh's =(...)), a single & (bash runs what follows
+ * in the background, PowerShell and cmd call it), a lone CR (a statement break in PowerShell), cmd's
+ * substring forms, or, outside single quotes, a parenthesis or brace (PowerShell runs groups,
+ * sub-expressions and script blocks, also as arguments). Quotes count only where every shell reads
+ * them alike.
+ */
+function startsOtherPrograms(line: string): boolean {
+  if (/[`\u0085\u2028\u2029]|\r(?!\n)/.test(line) || cmdSubstring(line)) return true;
+  // The & of &&, 2>&1 and &> is no call; the digits around a redirection don't matter here.
+  if (line.replace(/&&|>&|&>/g, '').includes('&')) return true;
+  const text = line.replace(INERT_BRACES, '');
+  const tracksQuotes = !quotesAmbiguous(text);
+  let quote = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quote === "'") {
+      if (c === "'") quote = '';
+    } else if (quote === '"') {
+      if (c === '"') quote = '';
+      else if (c === '$' && (text[i + 1] === '(' || text[i + 1] === '{')) return true;
+    } else if (tracksQuotes && (c === "'" || c === '"')) quote = c;
+    else if (c === '(' || c === '{') return true;
+  }
+  // An unclosed quote: the shell reads the line some other way.
+  return quote !== '';
+}
 
 function segments(command: string): string[] {
   return command
-    .split(/&&|\|\||;|\r?\n/)
+    .split(/&&|\|\||;|\r?\n|\r/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -151,16 +317,21 @@ export function classifyCommand(command: string, context: CommandContext = {}): 
   if (context.workspaceRoot && writesOutside(trimmed, context.workspaceRoot, context.cwd ?? context.workspaceRoot)) {
     return { category: 'command', risk: 'dangerous', reason: 'writes outside the workspace' };
   }
-  if (context.gitRisk && /(^|[\s;&|(])git(\.exe)?\s/i.test(` ${trimmed}`)) {
+  // A pipeline is safe only if every stage is safe (e.g. `git log | head`).
+  const stages = segments(trimmed)
+    .flatMap((p) => p.split('|'))
+    .map(stageOf)
+    .filter((s) => s.text);
+  const runsGit = mayRunGit(trimmed) || stages.some((s) => RUNS_GIT.test(s.text));
+  if (context.gitRisk && runsGit) {
     return { category: 'command', risk: 'dangerous', reason: 'git runs programs from this repository' };
   }
   if (GIT_WRITE.test(trimmed)) return { category: 'git', risk: 'normal', reason: 'changes git state' };
 
-  const parts = segments(trimmed);
-  // A pipeline is safe only if every stage is safe (e.g. `git log | head`).
-  const stages = parts.flatMap((p) => p.split('|').map((s) => s.trim())).filter(Boolean);
-  const hasRedirect = /(^|[^2])>{1,2}(?!&)/.test(trimmed.replace(/2>&1|2>\s*\$null|2>\s*\/dev\/null|>\s*\$null|>\s*\/dev\/null/gi, ''));
-  if (!hasRedirect && stages.length > 0 && stages.every((s) => SAFE_PREFIXES.some((re) => re.test(s)))) {
+  const hasRedirect = />/.test(trimmed.replace(HARMLESS_REDIRECT, ''));
+  // Git's risk is known for the folder the command starts in, not for one the line moves to.
+  const movesGit = runsGit && stages.some((s) => DIR_CHANGE.test(s.text));
+  if (!hasRedirect && !movesGit && !startsOtherPrograms(trimmed) && stages.length > 0 && stages.every(isSafeStage)) {
     return { category: 'command', risk: 'safe' };
   }
   return { category: 'command', risk: 'normal' };
@@ -168,10 +339,11 @@ export function classifyCommand(command: string, context: CommandContext = {}): 
 
 /** A file-writing command that names a path outside the workspace (absolute, home-relative or ../..). */
 function writesOutside(command: string, root: string, cwd: string): boolean {
-  const redirectTargets = [...command.matchAll(/(^|[^2&])>{1,2}\s*("[^"]+"|'[^']+'|[^\s;&|]+)/g)].map((m) => m[2].replace(/^["']|["']$/g, ''));
+  // Every redirection into a file: >, >>, 2>, &>, *>, and >&file (not >&2 or 2>&1, which copy a stream).
+  const redirectTargets = [...command.matchAll(/(?<!>)>{1,2}(?!&[\d-])&?\s*("[^"]+"|'[^']+'|[^\s;&|<>]+)/g)].map((m) => m[1].replace(/^["']|["']$/g, ''));
   const hasWriteVerb = WRITE_VERBS.test(command);
   if (!hasWriteVerb && !redirectTargets.some((t) => !HARMLESS_TARGET.test(t))) return false;
-  if (hasWriteVerb && HOME_REF.test(command)) return true;
+  if ((hasWriteVerb && HOME_REF.test(command)) || redirectTargets.some((t) => HOME_REF.test(t))) return true;
   const candidates = hasWriteVerb ? [...pathTokens(command), ...redirectTargets] : redirectTargets;
   return candidates.some((token) => !HARMLESS_TARGET.test(token) && isOutside(token, root, cwd));
 }

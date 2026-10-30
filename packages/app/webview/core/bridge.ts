@@ -13,6 +13,8 @@ export interface UiState {
   draft?: string;
   sidebarClosed?: boolean;
   asideClosed?: boolean;
+  /** Folded sections of the session list ("group:<id>", "folder:<path>"). */
+  collapsedSections?: string[];
 }
 
 const initial = vscode.getState();

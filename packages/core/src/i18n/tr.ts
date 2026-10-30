@@ -78,6 +78,8 @@ export const TR: Record<string, string> = {
   'global git configuration': 'global git yapılandırması',
   'writes outside the workspace': 'çalışma alanının dışına yazıyor',
   'changes git state': 'git durumunu değiştiriyor',
+  'git runs programs from this repository': 'git bu depodaki programları çalıştırıyor',
+  'a command Orka cannot read': "Orka'nın okuyamadığı bir komut",
 
   // ------------------------------------------------------------ model catalog (dynamic keys)
   'most capable': 'en yetenekli',
@@ -686,6 +688,51 @@ export const TR: Record<string, string> = {
   'Checking…': 'Kontrol ediliyor…',
   Download: 'İndir',
 
+  // Agent CLIs in the orka CLI (agent mode: --provider agent:<id>, orka agents, "agentClis" in the config)
+  '{provider} is an agent CLI: it can only be the main agent, not the Supervisor, the light model, the fallback or a sub-agent.':
+    '{provider} bir agent CLI: yalnızca ana agent olabilir; Supervisor, hafif model, fallback ya da sub-agent olamaz.',
+  '"agentClis" must be an object with "enabled", "paths" and "custom".': '"agentClis", "enabled", "paths" ve "custom" alanları olan bir nesne olmalı.',
+  '"agentClis.custom" must be a list.': '"agentClis.custom" bir liste olmalı.',
+  'Skipped an entry of "agentClis.custom": it needs a "name" and a "command" ("args" is a list of strings).':
+    '"agentClis.custom" içindeki bir kayıt atlandı: "name" ve "command" gerekir ("args" bir metin listesidir).',
+  'Skipped the custom agent "{name}": its id ({id}) may have at most 40 letters, digits and dashes.':
+    'Custom agent "{name}" atlandı: id\'si ({id}) en fazla 40 harf, rakam ve tireden oluşabilir.',
+  'Skipped the custom agent "{name}": another one already has the id {id}.': 'Custom agent "{name}" atlandı: {id} id\'si zaten başka bir agent\'ta var.',
+  'Unknown agent "{id}". Known: {known}. Add your own ACP agent under "agentClis.custom" in the config.':
+    'Bilinmeyen agent "{id}". Bilinenler: {known}. Kendi ACP agent\'ınızı config\'de "agentClis.custom" altına ekleyin.',
+  '{agent} is not turned on: add "{id}" to "agentClis.enabled" in {file}, or choose it with --provider {provider}.':
+    '{agent} açık değil: {file} dosyasında "agentClis.enabled" listesine "{id}" ekleyin ya da --provider {provider} ile seçin.',
+  '{agent} uses the model set in its own settings; Orka does not choose one for it. Leave out the model for {provider}.':
+    '{agent} kendi ayarlarındaki modeli kullanır; Orka onun yerine model seçmez. {provider} için model belirtmeyin.',
+  '{agent} uses the model set in its own settings. To switch to a model, name its provider: /model <provider>:<model>.':
+    '{agent} kendi ayarlarındaki modeli kullanır. Bir modele geçmek için provider\'ını da yazın: /model <provider>:<model>.',
+  '{agent} needs command snapshots, so every file it changes can be reviewed and reverted: remove "trackCommandChanges": false from {file}.':
+    '{agent} komut snapshot\'larına ihtiyaç duyar; böylece değiştirdiği her dosya incelenip geri alınabilir: {file} dosyasından "trackCommandChanges": false ayarını kaldırın.',
+  '{agent} needs git: Orka snapshots the folder with it, so every file the agent changes can be reviewed and reverted. Install git and try again.':
+    "{agent} git gerektirir: Orka klasörün snapshot'ını git ile alır; böylece agent'ın değiştirdiği her dosya incelenip geri alınabilir. git'i kurup tekrar deneyin.",
+  'Fix or remove its entry in "agentClis.paths" in {file}.': '{file} dosyasında "agentClis.paths" altındaki kaydını düzeltin ya da kaldırın.',
+  'Check its "command" in "agentClis.custom" in {file}.': '{file} dosyasında "agentClis.custom" altındaki "command" değerini kontrol edin.',
+  'If it is installed somewhere else, set its path in "agentClis.paths" in {file}.': 'Başka bir yerde kuruluysa yolunu {file} dosyasında "agentClis.paths" altına yazın.',
+  'No Supervisor in this session: next to an agent CLI it needs a model provider of its own. Choose one with --supervisor <provider[:model]> or "supervisor": { "provider": ... } in the config.':
+    'Bu oturumda Supervisor yok: bir agent CLI\'ın yanında kendi model provider\'ı gerekir. --supervisor <provider[:model]> ile ya da config\'de "supervisor": { "provider": ... } ile seçin.',
+  'Agent CLIs (agent mode): orka --provider agent:<id>': "Agent CLI'lar (agent modu): orka --provider agent:<id>",
+  'Orka runs the agent you installed and signed in to with its own login. It never reads or stores that sign-in, never downloads an agent and never turns on an approve-everything mode.':
+    "Orka, kurduğunuz ve kendi girişiyle oturum açtığınız agent'ı çalıştırır. Bu oturum bilgilerini asla okumaz ya da saklamaz, hiçbir agent'ı indirmez ve her şeyi onaylayan bir modu asla açmaz.",
+  'check failed: {detail}': 'kontrol başarısız: {detail}',
+  'your own ACP agent': "kendi ACP agent'ınız",
+  'public preview': 'herkese açık önizleme',
+  'turned on': 'açık',
+  'Runs: {command}': 'Çalıştırılan: {command}',
+  'Install: {command}': 'Kurulum: {command}',
+  'Sign in: run "{command}" in a terminal': 'Giriş: bir terminalde "{command}" çalıştırın',
+  'Terms: {url}': 'Koşullar: {url}',
+  'Docs: {url}': 'Belgeler: {url}',
+  'Not in the catalog': 'Katalogda olmayanlar',
+  '--provider agent:<id> runs any agent above; "provider" in {file} may only name the ones in "agentClis.enabled". More: {url}':
+    '--provider agent:<id> yukarıdaki her agent\'ı çalıştırır; {file} içindeki "provider" yalnızca "agentClis.enabled" listesindekileri seçebilir. Ayrıntılar: {url}',
+  'Agent CLIs turned on': "Açık agent CLI'lar",
+  'token use not reported': 'token kullanımı bildirilmiyor',
+
   // Desktop IDE layout: sessions, side panel, appearance
   'New session': 'Yeni oturum',
   'New session in {folder}': '{folder} içinde yeni oturum',
@@ -714,6 +761,69 @@ export const TR: Record<string, string> = {
   'Use a skill or command': 'Skill ya da komut kullan',
   '{n} tokens': '{n} token',
   'Jump to the newest': 'En yeniye in',
+  'New group': 'Yeni grup',
+  'New group…': 'Yeni grup…',
+  'Rename group': 'Grubu yeniden adlandır',
+  'e.g. Lobby work': 'ör. Lobby işleri',
+  'Enter a name.': 'Bir ad girin.',
+  'At most {n} characters.': 'En fazla {n} karakter.',
+  'At most {n} groups.': 'En fazla {n} grup.',
+  'More for this session': 'Bu oturum için diğer işlemler',
+  'Remove the group (its sessions stay)': 'Grubu kaldır (oturumları kalır)',
+  'Move sessions here with their … menu.': 'Oturumları … menüsüyle buraya taşıyın.',
+  'Hide the hidden sessions': 'Gizli oturumları sakla',
+  'Move to group': 'Gruba taşı',
+  'Take out of the group': 'Gruptan çıkar',
+  'Show in the list': 'Listede göster',
+  'Hide from the list': 'Listeden gizle',
+  '{n} hidden session': '{n} gizli oturum',
+  '{n} hidden sessions': '{n} gizli oturum',
+
+  // Agent CLIs in the app (settings, pickers, notices)
+  '{agent} is not installed. Install it ({hint}), then check it again in Settings > Providers.':
+    '{agent} kurulu değil. Kurun ({hint}), sonra Ayarlar > Providers bölümünde yeniden kontrol edin.',
+  '{agent} could not be started: {error}': '{agent} başlatılamadı: {error}',
+  'That agent CLI is turned off. Turn it on in Settings > Providers > Agent CLIs.': "Bu agent CLI kapalı. Ayarlar > Providers > Agent CLI'lar bölümünden açın.",
+  'An agent CLI can only be the main agent.': 'Bir agent CLI yalnızca ana agent olabilir.',
+  '{agent}: sign in': '{agent}: giriş',
+  'cmd.exe cannot run {part} safely. Run this in a terminal yourself: {command}':
+    'cmd.exe {part} öğesini güvenle çalıştıramıyor. Şunu bir terminalde kendiniz çalıştırın: {command}',
+  'Choose the {agent} program': '{agent} programını seçin',
+  Programs: 'Programlar',
+  'Add an ACP agent': 'ACP agent ekle',
+  'A name for it': 'Bir ad',
+  'e.g. My agent': 'ör. Benim agent',
+  'The command that starts its ACP server (program and arguments)': 'ACP sunucusunu başlatan komut (program ve argümanlar)',
+  'e.g. my-agent --acp': 'ör. my-agent --acp',
+  'Enter a command.': 'Bir komut girin.',
+  'An agent called {name} already exists.': '{name} adında bir agent zaten var.',
+  'Orka will run exactly this program as an agent in your project: {command}. Only add agents you trust, and follow their terms.':
+    'Orka projenizde agent olarak tam olarak bu programı çalıştıracak: {command}. Yalnızca güvendiğiniz agent\'ları ekleyin ve şartlarına uyun.',
+  'Set in the agent': "Agent'ın kendi ayarı",
+  'Agent CLI': 'Agent CLI',
+  'the agent does not report its tokens': "agent token kullanımını bildirmiyor",
+  'not ready': 'hazır değil',
+  'Agent CLIs': "Agent CLI'lar",
+  '{provider} is not ready.': '{provider} hazır değil.',
+  '{agent} runs its own tools; Orka asks you where it asks, and every file it changes can be reviewed and reverted.':
+    '{agent} kendi araçlarını çalıştırır; izin istediğinde Orka size sorar ve değiştirdiği her dosya incelenip geri alınabilir.',
+  'Not installed': 'Kurulu değil',
+  'Not checked': 'Kontrol edilmedi',
+  Command: 'Komut',
+  'Install it yourself, then check again:': 'Kendiniz kurun, sonra yeniden kontrol edin:',
+  Check: 'Kontrol et',
+  'Opens {command} in a terminal; you sign in there, Orka never sees it.': '{command} bir terminalde açılır; girişi orada yaparsınız, Orka göremez.',
+  'Sign in…': 'Giriş yap…',
+  Docs: 'Belgeler',
+  Terms: 'Şartlar',
+  preview: 'önizleme',
+  'Offer it as the main agent': 'Ana agent olarak sun',
+  'Coding agents you installed and signed in to yourself. As the main agent they run their own tools; Orka answers their permission requests, keeps their file changes reviewable and revertible, and its Supervisor reviews the result. Orka never reads or stores their sign-in.':
+    "Kendi kurup giriş yaptığınız kodlama agent'ları. Ana agent olduklarında kendi araçlarını çalıştırırlar; Orka izin isteklerine yanıt verir, dosya değişikliklerini incelenebilir ve geri alınabilir tutar, Supervisor sonucu inceler. Orka giriş bilgilerini hiçbir zaman okumaz ya da saklamaz.",
+  'Any agent that speaks the Agent Client Protocol: you enter the command that starts it, and Orka runs exactly that.':
+    "Agent Client Protocol konuşan herhangi bir agent: onu başlatan komutu girersiniz, Orka tam olarak onu çalıştırır.",
+  'Add…': 'Ekle…',
+  'Not offered here:': 'Burada sunulmayanlar:',
 
   // Hand-off to external agents (Freebuff)
   'Free, ad-supported terminal coding agent (open models, daily allowance).': 'Ücretsiz, reklamla desteklenen terminal coding agent\'ı (açık modeller, günlük kota).',
@@ -745,6 +855,53 @@ export const TR: Record<string, string> = {
   '/diff shows them, /undo reverts them.': '/diff gösterir, /undo geri alır.',
   '/undo asks first, so it needs an interactive terminal.': '/undo önce sorar, bu yüzden etkileşimli terminal gerekir.',
   'Continue in Freebuff (free); Orka then shows what it changed': 'Freebuff ile devam et (ücretsiz); sonra Orka neyi değiştirdiğini gösterir',
+
+  // Agent CLIs over ACP (Gemini CLI, Codex, Copilot, Cursor, custom) as the main agent
+  '{n} agent processes are already working. Wait for one to finish or stop it, then try again.':
+    '{n} agent süreci zaten çalışıyor. Birinin bitmesini bekleyin ya da birini durdurun, sonra tekrar deneyin.',
+  'Outside the workspace: {paths}': 'Çalışma alanının dışında: {paths}',
+  'Files: {paths}': 'Dosyalar: {paths}',
+  'Input: {input}': 'Girdi: {input}',
+  '{agent} was not found. Install it ({command}) or set its path in the settings.': '{agent} bulunamadı. Kurun ({command}) ya da yolunu ayarlardan belirtin.',
+  '{agent} was not found at "{path}".': '{agent} "{path}" konumunda bulunamadı.',
+  '{program} was not found. Install it ({command}), then sign in again.': '{program} bulunamadı. Kurun ({command}), sonra tekrar giriş yapın.',
+  'It sits out: next to an agent CLI it needs a model provider of its own. Add an API key, or pick a provider for it here.':
+    "Devre dışı: bir agent CLI'ın yanında kendi model Provider'ı gerekiyor. Bir API anahtarı ekleyin ya da buradan bir Provider seçin.",
+  'sits out (no model provider)': "devre dışı (model Provider'ı yok)",
+  'No Supervisor while {agent} is the main agent: it needs a model provider of its own. Add an API key, or pick a provider for the Supervisor in Settings > Agents.':
+    "{agent} ana agent iken Supervisor yok: kendi model Provider'ı gerekiyor. Bir API anahtarı ekleyin ya da Ayarlar > Agents bölümünden Supervisor için bir Provider seçin.",
+  '{agent} did not answer within {n} seconds.': '{agent} {n} saniye içinde yanıt vermedi.',
+  '{agent} cannot start: Orka cannot snapshot this folder ({reason}), so the files it changes could not be reviewed or reverted.':
+    "{agent} başlatılamıyor: Orka bu klasörün snapshot'ını alamıyor ({reason}); bu yüzden değiştirdiği dosyalar incelenemez ve geri alınamaz.",
+  '{agent} cannot start: turn on "Make command changes revertible" in the settings, so every file it changes can be reviewed and reverted.':
+    '{agent} başlatılamıyor: değiştirdiği her dosyanın incelenip geri alınabilmesi için ayarlardan "Komut değişikliklerini geri alınabilir yap" seçeneğini açın.',
+  'With {agent} as the main agent, the Supervisor reviews only the final result: an outside agent cannot be corrected in the middle of its turn.':
+    'Ana agent {agent} olduğunda Supervisor yalnızca son sonucu inceler: dışarıdan bir agent turunun ortasında düzeltilemez.',
+  '{agent} does not report its token use, so the token budget cannot pause it.': '{agent} token kullanımını bildirmiyor; bu yüzden token bütçesi onu duraklatamaz.',
+  '{agent} reached its own limit of model requests for one turn. Send "continue" to let it keep going.':
+    '{agent} bir tur için kendi model isteği sınırına ulaştı. Devam etmesi için "devam" yazın.',
+  '{agent} does not accept images, so the attached images were not sent.': '{agent} görsel kabul etmiyor; eklenen görseller gönderilmedi.',
+  '{agent} is not signed in. Run "{command}" in a terminal and sign in there, then send your message again.':
+    '{agent} oturum açmamış. Bir terminalde "{command}" çalıştırıp orada giriş yapın, sonra mesajınızı tekrar gönderin.',
+  '{agent} is not signed in. Sign in with its own login, then send your message again.':
+    '{agent} oturum açmamış. Kendi giriş yöntemiyle giriş yapın, sonra mesajınızı tekrar gönderin.',
+  '{agent} keeps its own context; there is nothing for Orka to compact.': "{agent} kendi bağlamını kendisi tutuyor; Orka'nın compact edeceği bir şey yok.",
+  '{agent} takes over as the main agent, with a summary of this task so far.': '{agent} ana agent olarak devralıyor; bu görevin şu ana kadarki özetiyle birlikte.',
+  // Agent policy notes and catalog exclusions (dynamic keys)
+  "Runs your installed Gemini CLI in its ACP mode. Orka never uses Gemini CLI's sign-in itself: Google's terms forbid other software from using it. Google moved unpaid and Google One accounts from Gemini CLI to Antigravity.":
+    "Kurulu Gemini CLI'ınızı ACP modunda çalıştırır. Orka, Gemini CLI'ın oturumunu asla kendisi kullanmaz: Google'ın koşulları başka yazılımların bunu kullanmasını yasaklar. Google, ücretsiz ve Google One hesaplarını Gemini CLI'dan Antigravity'ye taşıdı.",
+  'Runs the codex-acp adapter (Apache-2.0) you installed. Sign in with Codex itself, with a ChatGPT plan or an API key.':
+    "Kurduğunuz codex-acp adaptörünü (Apache-2.0) çalıştırır. Codex'in kendisiyle, bir ChatGPT planı ya da API key ile giriş yapın.",
+  'Runs your installed GitHub Copilot CLI as an ACP server. GitHub documents this mode for other clients; it is a public preview and may change.':
+    "Kurulu GitHub Copilot CLI'ınızı ACP sunucusu olarak çalıştırır. GitHub bu modu diğer istemciler için belgeliyor; herkese açık önizlemededir ve değişebilir.",
+  'Runs your installed Cursor CLI ("agent acp"), which Cursor documents for custom clients.':
+    'Kurulu Cursor CLI\'ınızı ("agent acp") çalıştırır; Cursor bu modu özel istemciler için belgeliyor.',
+  "An ACP agent you added yourself. Orka runs exactly the command you entered; make sure your use follows that agent's terms.":
+    "Kendi eklediğiniz bir ACP agent'ı. Orka tam olarak girdiğiniz komutu çalıştırır; kullanımınızın o agent'ın koşullarına uygun olduğundan emin olun.",
+  "Google's terms do not allow using Antigravity through third-party software on consumer plans.":
+    "Google'ın koşulları, bireysel planlarda Antigravity'nin üçüncü taraf yazılımlar üzerinden kullanılmasına izin vermiyor.",
+  "The Claude ACP adapter's licence is unclear. Claude stays available through the Claude API provider and the opt-in Claude Code provider.":
+    "Claude ACP adaptörünün lisansı belirsiz. Claude, Claude API provider'ı ve isteğe bağlı Claude Code provider'ı üzerinden kullanılabilir olmaya devam ediyor.",
 
   // Shared controller and the desktop app
   'No API key set for {provider}. Add one (kept in secure storage on this machine), or pick another provider for the main agent.':

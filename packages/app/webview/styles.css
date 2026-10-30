@@ -2041,6 +2041,11 @@ input.num.wide {
   flex: none;
 }
 
+.left-out {
+  margin: 4px 0 0;
+  padding-left: 1.2em;
+}
+
 /* ---------------------------------------------------------------- desktop app: folder, dialogs */
 
 .folder-btn {

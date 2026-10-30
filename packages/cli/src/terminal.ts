@@ -46,7 +46,8 @@ export class Renderer {
   private midLine = false;
   private seen = new Map<string, ToolCallView['status']>();
   private lastPlan = '';
-  usage?: { total: Usage; model: string; provider?: string };
+  /** `unreported`: an agent CLI did part of the work and does not report its tokens. */
+  usage?: { total: Usage; model: string; provider?: string; unreported?: boolean };
   changes: FileChange[] = [];
 
   constructor(
@@ -97,7 +98,12 @@ export class Renderer {
         this.changes = event.changes;
         break;
       case 'usage':
-        this.usage = { total: event.total, model: event.model, provider: event.byAgent?.find((a) => a.agent === 'main')?.provider };
+        this.usage = {
+          total: event.total,
+          model: event.model,
+          provider: event.byAgent?.find((a) => a.agent === 'main')?.provider,
+          unreported: !!event.byAgent?.some((a) => a.unreported),
+        };
         break;
       case 'notice': {
         const mark = event.level === 'error' ? s.red('✗') : event.level === 'warning' ? s.yellow('!') : s.cyan('i');
@@ -182,7 +188,10 @@ export class Renderer {
     }
     if (this.usage) {
       const u = this.usage.total;
-      parts.push(`${formatTokens(u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens)} in · ${formatTokens(u.outputTokens)} out`);
+      const input = u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens;
+      // An agent CLI's tokens are unknown: say so instead of showing them as 0.
+      if (input + u.outputTokens > 0 || !this.usage.unreported) parts.push(`${formatTokens(input)} in · ${formatTokens(u.outputTokens)} out`);
+      if (this.usage.unreported) parts.push(t('token use not reported'));
       const cost = estimateCost(this.usage.provider ?? '', this.usage.model, u);
       if (cost.kind === 'usd') parts.push(`~$${cost.usd.toFixed(cost.usd < 1 ? 3 : 2)}`);
       else if (cost.kind === 'subscription') parts.push(t('subscription'));

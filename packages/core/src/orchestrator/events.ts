@@ -34,6 +34,11 @@ export interface AgentUsage {
   model: string;
   calls: number;
   usage: Usage;
+  /**
+   * Some of these calls went to an agent that does not report its tokens (a third-party agent
+   * over ACP): they count as 0, so `usage` covers only the rest. UIs show "not reported".
+   */
+  unreported?: true;
 }
 
 export type RunEndReason = 'completed' | 'stopped' | 'error' | 'max_iterations' | 'budget' | 'refusal';

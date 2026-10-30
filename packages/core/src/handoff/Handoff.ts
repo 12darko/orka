@@ -1,9 +1,10 @@
-import { existsSync } from 'node:fs';
 import * as path from 'node:path';
 import type { ChangeTracker } from '../changes/ChangeTracker';
 import type { CommandChange, ShadowGit } from '../changes/ShadowGit';
 import { formatPlan, type Plan } from '../planning/Plan';
 import type { ChatMessage } from '../types';
+
+export { findExecutable } from '../host/commands';
 
 /**
  * A coding agent that runs on its own in a terminal (no API to call it from Orka). Orka hands a
@@ -35,24 +36,6 @@ export const EXTERNAL_AGENTS: readonly ExternalAgent[] = [
 
 export function externalAgent(id: string): ExternalAgent | undefined {
   return EXTERNAL_AGENTS.find((a) => a.id === id);
-}
-
-/**
- * Full path of an executable on PATH, or undefined. On Windows only PATHEXT files run (npm puts
- * an extensionless shell script for Git Bash next to "freebuff.cmd"; that one cannot be started).
- */
-export function findExecutable(command: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
-  const exts = platform === 'win32' ? (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean) : [''];
-  for (const dir of (env.PATH ?? env.Path ?? '').split(path.delimiter)) {
-    if (!dir) continue;
-    for (const ext of exts) {
-      for (const name of new Set([command + ext.toLowerCase(), command + ext])) {
-        const full = path.join(dir, name);
-        if (existsSync(full)) return full;
-      }
-    }
-  }
-  return undefined;
 }
 
 const MAX_REQUEST_CHARS = 1500;
@@ -93,8 +76,10 @@ export function handoffBrief(input: { requests: readonly string[]; plan?: Plan; 
 
 /**
  * Files changed since a snapshot, recorded in the change tracker with their earlier content so
- * they can be diffed and reverted. Files the tracker already follows keep their older original and
- * are only reported with `includeTracked`.
+ * they can be diffed and reverted. Files the tracker already follows keep their older original
+ * (the current rewind point still captures their content from the snapshot) and are only reported
+ * with `includeTracked`. Once `current` says no (the tracker now holds another task), nothing more
+ * is recorded.
  */
 export async function recordChangesSince(
   snapshots: ShadowGit,
@@ -102,30 +87,35 @@ export async function recordChangesSince(
   changes: ChangeTracker,
   root: string,
   includeTracked = false,
+  current: () => boolean = () => true,
 ): Promise<CommandChange[]> {
   const changed = await snapshots.changedSince(before);
   const recorded: CommandChange[] = [];
   for (const change of changed) {
     const abs = path.join(root, change.path);
-    if (changes.isTracked(abs)) {
-      if (includeTracked) recorded.push(change);
-      continue;
-    }
-    const original = change.status === 'added' ? null : await snapshots.fileAt(before, change.path);
-    if (original === undefined) continue; // binary: not revertible as text
+    const tracked = changes.isTracked(abs);
+    if (tracked && includeTracked) recorded.push(change);
+    if (tracked && changes.capturedInEpoch(abs)) continue;
+    const original = change.status === 'added' ? null : await snapshots.contentAt(before, change.path);
+    // Binary, a link, or git failed: not revertible as text. Only an added file did not exist.
+    if (original === undefined || (original === null && change.status !== 'added')) continue;
+    if (!current()) return [];
     changes.recordOriginal(abs, original);
-    recorded.push(change);
+    if (!tracked) recorded.push(change);
   }
   if (recorded.length) changes.notify();
   return recorded;
 }
 
-/** One hand-off: a snapshot when it starts, and the files changed since when it ends. */
-export class Handoff {
+/**
+ * One hand-off: a snapshot when it starts, and the files changed since when it ends. An ACP agent
+ * (acp/) uses the same pair around each prompt, so it only needs the agent's id and label.
+ */
+export class Handoff<A extends { id: string; label: string } = ExternalAgent> {
   private baseline?: string;
 
   constructor(
-    readonly agent: ExternalAgent,
+    readonly agent: A,
     private readonly root: string,
     private readonly snapshots: ShadowGit | undefined,
     private readonly changes: ChangeTracker,
@@ -147,13 +137,33 @@ export class Handoff {
     return !!this.baseline;
   }
 
-  /** Record what changed since begin() (and start over from now, for a hand-off that goes on). */
-  async collect(continueTracking = false): Promise<CommandChange[]> {
+  /**
+   * Record a file's original before the agent writes it through Orka. The agent may already have
+   * changed it unseen (its own tools, a command), so the original is the file as it was at begin(),
+   * from the snapshot: its exact bytes on disk while unchanged since, or "did not exist" for one
+   * the agent created (or renamed) since. The file on disk serves only where the snapshot cannot
+   * tell: a binary file, a link, one the snapshots leave out (.gitignore), or no snapshot. Once
+   * `current` says no (the tracker now holds another task), nothing is recorded.
+   */
+  async recordBefore(absPath: string, current: () => boolean = () => true): Promise<void> {
+    if (!current() || (this.changes.isTracked(absPath) && this.changes.capturedInEpoch(absPath))) return;
+    const rel = path.relative(this.root, absPath).split(path.sep).join('/');
+    const original = this.baseline && this.snapshots ? await this.snapshots.originalAt(this.baseline, rel) : undefined;
+    if (!current()) return;
+    if (original === undefined) await this.changes.recordBefore(absPath, current);
+    else this.changes.recordOriginal(absPath, original);
+  }
+
+  /**
+   * Record what changed since begin() (and start over from now, for a hand-off that goes on).
+   * `current`: false once the change tracker holds another task, which must not get these changes.
+   */
+  async collect(continueTracking = false, current?: () => boolean): Promise<CommandChange[]> {
     const before = this.baseline;
     if (!before || !this.snapshots) return [];
     let changed: CommandChange[] = [];
     try {
-      changed = await recordChangesSince(this.snapshots, before, this.changes, this.root, true);
+      changed = await recordChangesSince(this.snapshots, before, this.changes, this.root, true, current);
     } finally {
       this.baseline = continueTracking ? await this.snapshots.snapshot().catch(() => undefined) : undefined;
     }

@@ -27,4 +27,4 @@ Settings live under `orka.*` and in the view's own settings screen. The same eng
 
 If you have the Claude Code CLI installed and logged in, you can turn on `orka.claudeCode.enabled` (Settings → Providers) to use it as a provider without an API key. Orka is not affiliated with Anthropic; this runs your own Claude Code login, so make sure your use follows Anthropic's terms. For teams and products, use a Claude API key.
 
-Source, documentation and issues: <https://github.com/12darko/orka>. Made by Enophia Software, open source under the MIT License.
+Source, documentation and issues: <https://github.com/Enophia-Studio/orka>. Made by Enophia Software, open source under the MIT License.

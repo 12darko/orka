@@ -20,7 +20,7 @@
   "command.selectWorkspaceFolder": "Select Workspace Folder",
   "view.chat": "Agent",
   "config.title": "Orka",
-  "config.provider": "Provider of the main agent: claude, openai, gemini, claude-code, or custom:<id> for a provider added in Settings > Providers.",
+  "config.provider": "Provider of the main agent: claude, openai, gemini, claude-code, custom:<id> for a provider added in Settings > Providers, or agent:<id> (gemini, codex, copilot, cursor, custom:<name>) to make an agent CLI you installed the main agent (turn it on in orka.agentClis.enabled).",
   "config.claude.model": "Claude model version, e.g. claude-opus-5-5 (Opus 5.5), claude-sonnet-5-5, claude-haiku-4-5. Pick it in Settings > Providers to see every version.",
   "config.claude.effort": "Claude effort level: how much the model thinks per turn (trades quality against latency and cost).",
   "config.claude.refusalFallback": "If a Claude safety classifier declines a request, let the API retry it on Anthropic's recommended fallback model instead of stopping (server-side fallbacks, beta).",
@@ -102,5 +102,11 @@
   "command.handoffFreebuff": "Continue in Freebuff (free terminal agent)",
   "config.memory.learn": "After a task that changed code, ask the agent for up to 3 lasting lessons about the project (working commands, pitfalls, conventions) and add the new ones to .project-ai/lessons.md. Only in folders that have a .project-ai/ folder (Orka: Initialize Project Memory).",
   "config.updates.check": "Once a day, look on GitHub for a newer Orka release and say so (nothing is downloaded or installed). GitHub sees your IP address and Orka's version, nothing about your project.",
-  "config.subagents.parallelWorkers": "Workers called together run side by side, each in its own copy of the project (without dependency folders, so they edit but do not build); their changes are merged into the project afterwards and overlapping edits are reported to the main agent. Needs git and orka.trackCommandChanges. Off: workers run one at a time in the project."
+  "config.subagents.parallelWorkers": "Workers called together run side by side, each in its own copy of the project (without dependency folders, so they edit but do not build); their changes are merged into the project afterwards and overlapping edits are reported to the main agent. Needs git and orka.trackCommandChanges. Off: workers run one at a time in the project.",
+  "config.agentClis.enabled": "Agent CLIs you turned on for agent mode: `gemini`, `codex`, `copilot`, `cursor`, or `custom:<name>` for an agent in `#orka.agentClis.custom#`. Only these can be the main agent (`agent:<id>` in `#orka.provider#`). Orka runs the program you installed and signed in to with its own login, and never reads that sign-in. Only your user settings can turn an agent on. See docs/EXTERNAL_AGENTS.md.",
+  "config.agentClis.paths": "The executable of an agent CLI, by agent id, when it is not on PATH, e.g. `{ \"gemini\": \"C:\\\\tools\\\\gemini.cmd\" }`. A machine setting: a repository's settings cannot change it.",
+  "config.agentClis.custom": "ACP agents you add yourself, on your own responsibility: a name and the exact command line that starts the agent's ACP server on stdio, e.g. `{ \"name\": \"My agent\", \"command\": \"my-agent\", \"args\": [\"--acp\"] }`. Its id is `custom:` and the name in lowercase with dashes (`custom:my-agent`). Orka runs exactly this command and never downloads anything; make sure your use follows that agent's terms. A machine setting: a repository's settings cannot change it.",
+  "config.agentClis.custom.name": "Shown in Orka; it also gives the agent's id (custom:<name>).",
+  "config.agentClis.custom.command": "The program to start: a name on PATH or a full path.",
+  "config.agentClis.custom.args": "Arguments that start the agent's ACP server on stdio, e.g. [\"--acp\"]."
 }

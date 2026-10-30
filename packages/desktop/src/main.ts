@@ -1,5 +1,5 @@
 import { AppController, readSettings } from '@orka/app';
-import { t } from '@orka/core';
+import { hardenProgramLookup, t } from '@orka/core';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
@@ -161,6 +161,8 @@ function readJson(file: string): unknown {
 }
 
 if (require.main === module) {
+  // Orka's own process: nothing it or its children start by bare name comes from the current folder.
+  hardenProgramLookup();
   const argv = process.argv.slice(2);
   main(argv).then(
     (code) => process.exit(code),

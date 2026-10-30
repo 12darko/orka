@@ -1,7 +1,7 @@
-import { applyEvent, emptySession, FileTaskStore, VERSION } from '@orka/core';
+import { applyEvent, customAgentEntry, emptySession, FileTaskStore, VERSION } from '@orka/core';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { AppController } from '../src/AppController';
@@ -56,6 +56,14 @@ async function saveTask(shell: FakeShell, folder: string, id: string, title: str
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+async function until(check: () => boolean, what: string, ms = 5000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
 
 describe('desktop session list', () => {
   it('lists the tasks of every recent folder, with the task open now', async () => {
@@ -123,6 +131,174 @@ describe('desktop session list', () => {
   });
 });
 
+describe('session groups', () => {
+  it('creates, fills, renames and removes groups, and hides sessions', async () => {
+    const { shell, controller } = await start('desktop');
+    await saveTask(shell, folderB, 'task-b1', 'Fix the beta build');
+    // A name is asked in a dialog: the fake shell answers none, so nothing is created.
+    await controller.handleMessage({ type: 'organizeSessions', op: 'createGroup', taskId: 'task-b1' });
+    assert.deepEqual(shell.globalState.get('orka.sessionOrganizer'), undefined);
+
+    shell.input = async () => 'Release work';
+    await controller.handleMessage({ type: 'organizeSessions', op: 'createGroup', taskId: 'task-b1' });
+    let organizer = shell.last('sessions')!.organizer;
+    assert.equal(organizer.groups.length, 1);
+    const id = organizer.groups[0].id;
+    assert.deepEqual([organizer.groups[0].name, organizer.assigned['task-b1']], ['Release work', id]);
+
+    shell.input = async () => '  Shipping  ';
+    await controller.handleMessage({ type: 'organizeSessions', op: 'renameGroup', groupId: id });
+    await controller.handleMessage({ type: 'organizeSessions', op: 'hide', taskId: 'task-b1', hidden: true });
+    organizer = shell.last('sessions')!.organizer;
+    assert.equal(organizer.groups[0].name, 'Shipping');
+    assert.deepEqual(organizer.hidden, ['task-b1']);
+
+    // Unknown groups and malformed ids from the UI change nothing.
+    await controller.handleMessage({ type: 'organizeSessions', op: 'moveToGroup', taskId: 'task-b1', groupId: 'g-nope' });
+    await controller.handleMessage({ type: 'organizeSessions', op: 'hide', taskId: '../etc', hidden: true });
+    organizer = shell.last('sessions')!.organizer;
+    assert.equal(organizer.assigned['task-b1'], id, 'still in its group');
+    assert.deepEqual(organizer.hidden, ['task-b1']);
+
+    await controller.handleMessage({ type: 'organizeSessions', op: 'moveToGroup', taskId: 'task-b1' });
+    assert.equal(shell.last('sessions')!.organizer.assigned['task-b1'], undefined, 'taken out of the group');
+    await controller.handleMessage({ type: 'organizeSessions', op: 'moveToGroup', taskId: 'task-b1', groupId: id });
+    await controller.handleMessage({ type: 'organizeSessions', op: 'deleteGroup', groupId: id });
+    organizer = shell.last('sessions')!.organizer;
+    assert.deepEqual([organizer.groups, organizer.assigned], [[], {}], 'its sessions go back to their folders');
+
+    // Deleting the session clears it from the hidden list.
+    shell.answer = 'Delete';
+    await controller.handleMessage({ type: 'deleteTask', id: 'task-b1', folder: folderB });
+    assert.deepEqual(shell.last('sessions')!.organizer.hidden, []);
+  });
+});
+
+describe('agent CLIs', () => {
+  // The core's fake ACP agent, run with this Node as a custom agent.
+  const fakeAgent = path.resolve(__dirname, '..', '..', '..', 'core', 'test', 'fixtures', 'fake-acp.mjs');
+  const agentSettings = {
+    provider: 'agent:custom:fake',
+    'agentClis.enabled': ['custom:fake'],
+    'agentClis.custom': [{ name: 'Fake', command: process.execPath, args: [fakeAgent] }],
+    'supervisor.enabled': false,
+  };
+
+  afterEach(() => {
+    delete process.env.FAKE_ACP_SCRIPT;
+  });
+
+  it('runs a task with an agent CLI as the main agent, and its own file writes join Changes', async () => {
+    process.env.FAKE_ACP_SCRIPT = JSON.stringify([[{ chunk: 'Hello from the agent.' }, { directWrite: { path: 'agent.txt', content: 'made by the agent\n' } }, { stop: 'end_turn' }]]);
+    const { shell, controller } = await start('desktop', agentSettings);
+    const main = shell.last('init')!.config.main;
+    assert.equal(main.effective.provider, 'agent:custom:fake');
+    await controller.send('Say hello and write a file');
+    const events = shell.posted.flatMap((m) => (m.type === 'event' ? [m.event] : []));
+    assert.ok(
+      events.some((e) => e.type === 'assistant_end' && e.text.includes('Hello from the agent.')),
+      'the reply is shown',
+    );
+    // The change list is published once its line counts are read, just after the run.
+    await until(
+      () => shell.posted.some((m) => m.type === 'event' && m.event.type === 'changes' && m.event.changes.some((c) => c.relPath === 'agent.txt')),
+      'the file the agent wrote itself in Changes',
+    );
+    assert.equal(readFileSync(path.join(folderA, 'agent.txt'), 'utf8'), 'made by the agent\n');
+  });
+
+  it('offers agent CLIs to the main agent only', async () => {
+    const { shell, controller } = await start('desktop', { ...agentSettings, provider: 'claude' });
+    await controller.handleMessage({ type: 'setAgent', agent: 'supervisor', provider: 'agent:custom:fake', model: '' });
+    assert.equal(shell.settings.isSet('supervisor.provider'), false);
+    await controller.handleMessage({ type: 'setAgent', agent: 'main', provider: 'agent:custom:fake', model: '' });
+    assert.equal(shell.settings.get('provider', ''), 'agent:custom:fake');
+    // A provider ref for an agent that is not turned on is never used.
+    await shell.settings.update('agentClis.enabled', []);
+    await tick();
+    assert.notEqual(shell.last('config')!.config.main.effective.provider, 'agent:custom:fake');
+  });
+
+  it('a new task during a request stops it, keeps it in its own task, and starts empty', async () => {
+    process.env.FAKE_ACP_SCRIPT = JSON.stringify([[{ chunk: 'Working on it.' }, { hang: true, afterCancel: ' Stopping now.' }]]);
+    const { shell, controller } = await start('desktop', agentSettings);
+    const sent = controller.send('First request');
+    await until(() => shell.posted.some((m) => m.type === 'event' && m.event.type === 'assistant_delta'), 'the agent to start answering');
+    // Two clicks: the second one waits for the first instead of starting yet another task.
+    await Promise.all([controller.newTask(), controller.newTask()]);
+    await sent;
+    const store = new FileTaskStore(shell.storage(folderA).tasks);
+    const tasks = await store.list();
+    assert.equal(tasks.length, 1, 'the stopped request was saved as its own task');
+    assert.match(tasks[0].title, /First request/);
+    // The turn ended before the task was saved, so its answer (also what came after the stop) is in it.
+    const saved = JSON.stringify((await store.load(tasks[0].id))?.messages);
+    assert.match(saved, /Working on it\. Stopping now\./);
+    const events = shell.posted.flatMap((m) => (m.type === 'event' ? [m.event] : []));
+    const resets = events.flatMap((e, i) => (e.type === 'reset' ? [i] : []));
+    assert.equal(resets.length, 1, 'one new task');
+    assert.ok(!events.slice(resets[0]).some((e) => e.type === 'assistant_delta' || e.type === 'assistant_end'), 'nothing of the old turn reaches the new task');
+  });
+
+  it('opens the sign-in by its full path in the home folder, and shows it', async () => {
+    const { shell, controller } = await start('vscode', { 'agentClis.paths': { gemini: process.execPath } });
+    await controller.handleMessage({ type: 'loginAgentCli', id: 'gemini' });
+    assert.equal(shell.terminals.length, 1);
+    const [terminal] = shell.terminals;
+    assert.equal(terminal.cwd, homedir(), 'never in the open project, where a planted program could stand in');
+    assert.deepEqual(terminal.command, { file: process.execPath, args: [] }, 'the program the user set, not "gemini" from PATH');
+    assert.equal(terminal.shown, true);
+  });
+
+  it('says which program is missing when a sign-in needs another one', async () => {
+    const saved = { PATH: process.env.PATH, Path: process.env.Path };
+    process.env.PATH = path.join(home, 'empty-bin');
+    if (process.platform === 'win32') process.env.Path = process.env.PATH;
+    try {
+      const { shell, controller } = await start('desktop');
+      await controller.handleMessage({ type: 'loginAgentCli', id: 'codex' });
+      assert.equal(shell.terminals.length, 0);
+      const notice = shell.posted.flatMap((m) => (m.type === 'event' && m.event.type === 'notice' ? [m.event] : [])).at(-1);
+      assert.match(notice?.message ?? '', /codex was not found.*npm install -g @openai\/codex/);
+    } finally {
+      process.env.PATH = saved.PATH;
+      if (process.platform === 'win32') process.env.Path = saved.Path;
+    }
+  });
+
+  it('keeps a custom agent with a long name usable', async () => {
+    const name = 'Experimental in-house ACP agent for the monorepo';
+    const id = customAgentEntry({ name, command: process.execPath }).id;
+    assert.ok(id.length <= 'custom:'.length + 40, id);
+    const { shell } = await start('desktop', {
+      provider: `agent:${id}`,
+      'agentClis.enabled': [id],
+      'agentClis.custom': [{ name, command: process.execPath, args: [fakeAgent] }],
+    });
+    const config = shell.last('init')!.config;
+    assert.equal(config.agentClis.find((a) => a.id === id)?.enabled, true);
+    assert.equal(config.main.effective.provider, `agent:${id}`);
+  });
+
+  it('runs without the Supervisor, and says so once, when no model provider works next to the agent', async () => {
+    const keys = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY'];
+    const saved = keys.map((k) => process.env[k]);
+    for (const k of keys) delete process.env[k];
+    try {
+      process.env.FAKE_ACP_SCRIPT = JSON.stringify([[{ chunk: 'One.' }, { stop: 'end_turn' }], [{ chunk: 'Two.' }, { stop: 'end_turn' }]]);
+      const { shell, controller } = await start('desktop', { ...agentSettings, 'supervisor.enabled': true });
+      await controller.send('First');
+      await controller.send('Second');
+      const events = shell.posted.flatMap((m) => (m.type === 'event' ? [m.event] : []));
+      assert.equal(events.filter((e) => e.type === 'notice' && e.message.startsWith('No Supervisor')).length, 1);
+      assert.ok(!JSON.stringify(events).includes('No API key'), 'the Supervisor did not try a provider without a key');
+      assert.ok(events.some((e) => e.type === 'assistant_end' && e.text.includes('Two.')));
+    } finally {
+      keys.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i])));
+    }
+  });
+});
+
 describe('desktop appearance settings', () => {
   it('are offered and saved only in the desktop app', async () => {
     const vscode = await start('vscode');
@@ -167,7 +343,7 @@ describe('Orka update check', () => {
     const notice = shell.asked.find((a) => a.text.startsWith('Orka 99.0.0 is available'));
     assert.ok(notice, 'the user was told');
     assert.deepEqual(notice.actions, ['Download']);
-    const url = 'https://github.com/12darko/orka/releases/tag/v99.0.0';
+    const url = 'https://github.com/Enophia-Studio/orka/releases/tag/v99.0.0';
     assert.deepEqual(shell.last('config')?.config.app.update, { version: '99.0.0', url });
 
     // Within a day nothing is asked again; a check on request is, without telling twice.

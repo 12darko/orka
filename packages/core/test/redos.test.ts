@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { cmdArgument } from '../src/host/commands';
 import { parseLessons } from '../src/memory/ProjectMemory';
 import { classifyCommand } from '../src/permissions/commandRisk';
 import { parseReview } from '../src/supervisor/Supervisor';
@@ -60,5 +61,22 @@ describe('Text processing stays fast on hostile input', () => {
     fast('lesson lines full of spaces', () => parseLessons(`* ${' '.repeat(200_000)}x`));
     fast('long command lines', () => classifyCommand(`node ${'a '.repeat(100_000)}-e "console.log(1)"`));
     fast('open( without a closing parenthesis', () => classifyCommand(`python -c "${'open('.repeat(50_000)}"`));
+    fast('long runs of digits around redirections', () => classifyCommand(`ls ${'9'.repeat(200_000)}`));
+    fast('percent signs and colons', () => classifyCommand(`echo %:${':!'.repeat(100_000)}`));
+    fast('backslashes in a batch argument', () => cmdArgument(`${'\\'.repeat(200_000)}x`));
+  });
+
+  it('keeps the meaning of the rewritten checks', () => {
+    // cmd's substring forms are never read-only; plain percent variables are no substring.
+    assert.notEqual(classifyCommand('echo %PATH:~0,1%').risk, 'safe');
+    assert.notEqual(classifyCommand('echo %PATH:a=b%').risk, 'safe');
+    assert.equal(classifyCommand('ls 2>&1').risk, 'safe');
+    assert.notEqual(classifyCommand('ls & whoami').risk, 'safe');
+    // Batch arguments come out exactly as the earlier regex version (cross-spawn's rules) made them.
+    const meta = /([()\][%!^"`<>&|;, *?])/g;
+    const before = (arg: string) => `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`.replace(meta, '^$1').replace(meta, '^$1');
+    for (const arg of ['plain', 'two words', 'a"b', 'a\\"b', 'a\\\\"b', 'dir\\', 'dir\\\\', '\\', '"', '', 'C:\\x y\\', 'x\\y', '%PATH%&calc', '\\\\server\\share\\"q"\\']) {
+      assert.equal(cmdArgument(arg), before(arg), arg);
+    }
   });
 });

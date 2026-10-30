@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
+import { programPath } from '../host/commands';
 import { IGNORED_DIRS } from '../tools/workspace';
 
 export interface CommandChange {
@@ -11,6 +12,15 @@ export interface CommandChange {
 }
 
 const SNAPSHOT_TIMEOUT_MS = 60_000;
+/** git's mode for a symbolic link: its blob is the path it points to. */
+const LINK_MODE = '120000';
+
+interface TreeEntry {
+  mode: string;
+  /** blob (file or link), tree (folder) or commit (embedded repository). */
+  type: string;
+  object: string;
+}
 
 /**
  * Snapshots of the workspace in a private git repository (its own git dir, the workspace as work
@@ -64,6 +74,85 @@ export class ShadowGit {
   }
 
   /**
+   * A file's content in a snapshot as the working tree had it (git's filters applied: line
+   * endings, Git LFS), or null when the snapshot has no such file; undefined when that cannot be
+   * said (binary, a link, git failed). Unlike fileAt, a failure is never "no file".
+   */
+  async contentAt(snapshot: string, relPath: string): Promise<string | null | undefined> {
+    const entries = await this.entries(snapshot, [relPath]);
+    if (!entries) return undefined;
+    const entry = entries.get(relPath);
+    if (!entry || entry.type === 'tree') return null;
+    return entry.type === 'blob' && entry.mode !== LINK_MODE ? this.workingContent(snapshot, relPath) : undefined;
+  }
+
+  /**
+   * A file's original for the change tracker, before it is written: its content at the snapshot,
+   * or null when it did not exist then. Undefined means the file on disk is the original: it is
+   * unchanged since (its exact bytes), a link (git keeps only where it points), or only the disk
+   * can say (ignored, inside an embedded repository, binary, git failed). A file the snapshot
+   * lacks counts as new only when the next snapshot would take it as one.
+   */
+  async originalAt(snapshot: string, relPath: string): Promise<string | null | undefined> {
+    const parts = relPath.split('/');
+    const ignoreFiles = parts.map((_, i) => [...parts.slice(0, i), '.gitignore'].join('/'));
+    const entries = await this.entries(snapshot, [relPath, ...ignoreFiles]);
+    if (!entries) return undefined;
+    // Inside an embedded repository (a gitlink): the snapshots do not look in there.
+    if ([...entries].some(([p, e]) => e.type === 'commit' && relPath.startsWith(`${p}/`))) return undefined;
+    const entry = entries.get(relPath);
+    if (entry && entry.type !== 'tree') {
+      if (entry.type !== 'blob' || entry.mode === LINK_MODE) return undefined;
+      const [now] = (await this.hashes([relPath])) ?? [];
+      return now === entry.object ? undefined : this.workingContent(snapshot, relPath);
+    }
+    // A file ignored at the snapshot would pass for a new one once an ignore rule on its way is
+    // gone, so those ignore files must be as they were (a missing one fails hash-object).
+    const kept = ignoreFiles.filter((f) => entries.has(f));
+    const hashes = kept.length ? await this.hashes(kept) : [];
+    if (!hashes || kept.some((f, i) => entries.get(f)!.object !== hashes[i])) return undefined;
+    const others = await this.git(['--literal-pathspecs', 'ls-files', '-z', '--others', '--exclude-standard', '--', relPath]).catch(() => undefined);
+    return others?.split('\0').includes(relPath) ? null : undefined;
+  }
+
+  /** Tree entries of a snapshot at these paths (taken literally); undefined when git failed. */
+  private async entries(snapshot: string, paths: string[]): Promise<Map<string, TreeEntry> | undefined> {
+    const out = await this.git(['--literal-pathspecs', 'ls-tree', '-z', snapshot, '--', ...paths]).catch(() => undefined);
+    if (out === undefined) return undefined;
+    const entries = new Map<string, TreeEntry>();
+    for (const record of out.split('\0')) {
+      const match = /^(\d+) (\w+) ([0-9a-f]+)\t(.+)$/s.exec(record);
+      if (match) entries.set(match[4], { mode: match[1], type: match[2], object: match[3] });
+    }
+    return entries;
+  }
+
+  /** Blob ids the files on disk would get in a snapshot (clean filters applied); undefined when git failed. */
+  private async hashes(relPaths: string[]): Promise<string[] | undefined> {
+    const out = await this.git(['hash-object', '--', ...relPaths]).catch(() => undefined);
+    return out?.trim().split(/\r?\n/);
+  }
+
+  /**
+   * A file of a snapshot as a checkout would write it (line endings, smudge filters). Git LFS
+   * never downloads here: the object the snapshot took is read from the snapshots' own store.
+   */
+  private async workingContent(snapshot: string, relPath: string): Promise<string | undefined> {
+    const noDownload = { workTree: this.root, env: { GIT_LFS_SKIP_SMUDGE: '1' } };
+    const filtered = await this.gitBuffer(['cat-file', '--filters', `${snapshot}:${relPath}`], 30_000, noDownload).catch(() => undefined);
+    const pointer = filtered && lfsPointer(filtered);
+    const data = pointer ? await this.lfsObject(pointer) : filtered;
+    if (!data || data.subarray(0, 8000).includes(0)) return undefined;
+    return data.toString('utf8');
+  }
+
+  private async lfsObject(pointer: { oid: string; size: number }): Promise<Buffer | undefined> {
+    const file = path.join(this.gitDir, 'lfs', 'objects', pointer.oid.slice(0, 2), pointer.oid.slice(2, 4), pointer.oid);
+    const data = await fs.readFile(file).catch(() => undefined);
+    return data?.length === pointer.size ? data : undefined;
+  }
+
+  /**
    * Write a snapshot's files into the empty folder `dir`. `index` is a git index file of the
    * copy's own, so the workspace's snapshots are not disturbed.
    */
@@ -111,12 +200,25 @@ export class ShadowGit {
       ...args,
     ];
     const env = copy ? { ...process.env, ...copy.env } : process.env;
+    // By its full path: started by name in the workspace, Windows would run a git.exe it ships.
+    const git = programPath('git');
+    if (!git) return Promise.reject(new Error('git was not found on PATH'));
     return new Promise((resolve, reject) =>
-      execFile('git', full, { cwd: workTree, env, timeout, maxBuffer: 64 * 1024 * 1024, windowsHide: true, encoding: 'buffer' }, (error, stdout, stderr) =>
+      execFile(git, full, { cwd: workTree, env, timeout, maxBuffer: 64 * 1024 * 1024, windowsHide: true, encoding: 'buffer' }, (error, stdout, stderr) =>
         error ? reject(new Error(`${error.message}\n${stderr.toString('utf8')}`)) : resolve(stdout),
       ),
     );
   }
+}
+
+/** The object a Git LFS pointer file stands for. */
+function lfsPointer(data: Buffer): { oid: string; size: number } | undefined {
+  if (data.length > 1024) return undefined;
+  const text = data.toString('utf8');
+  if (!text.startsWith('version https://git-lfs.github.com/spec/v1')) return undefined;
+  const oid = /^oid sha256:([0-9a-f]{64})\r?$/m.exec(text)?.[1];
+  const size = /^size (\d+)\r?$/m.exec(text)?.[1];
+  return oid && size ? { oid, size: Number(size) } : undefined;
 }
 
 function parseNameStatus(out: string): CommandChange[] {
@@ -133,12 +235,14 @@ function parseNameStatus(out: string): CommandChange[] {
  * false when the changes overlap.
  */
 export async function mergeText(current: string, base: string, theirs: string): Promise<{ clean: boolean; text: string }> {
+  const git = programPath('git');
+  if (!git) return { clean: false, text: '' };
   const dir = await fs.mkdtemp(path.join(tmpdir(), 'orka-merge-'));
   try {
     const files = ['current', 'base', 'theirs'].map((name) => path.join(dir, name));
     await Promise.all([current, base, theirs].map((text, i) => fs.writeFile(files[i], text, 'utf8')));
     return await new Promise((resolve) =>
-      execFile('git', ['merge-file', '-p', ...files], { cwd: dir, windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' }, (error, stdout) =>
+      execFile(git, ['merge-file', '-p', ...files], { cwd: dir, windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' }, (error, stdout) =>
         // The exit code is the number of conflicts (negative on errors).
         resolve({ clean: !error, text: stdout }),
       ),
