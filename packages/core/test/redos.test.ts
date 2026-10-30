@@ -3,6 +3,11 @@ import { describe, it } from 'node:test';
 import { cmdArgument } from '../src/host/commands';
 import { parseLessons } from '../src/memory/ProjectMemory';
 import { classifyCommand } from '../src/permissions/commandRisk';
+import { parseFeed } from '../src/radar/feeds';
+import { escapeMarkdown } from '../src/radar/report';
+import { unsafePatternReason } from '../src/radar/sources';
+import type { RadarSource } from '../src/radar/types';
+import { cleanModelText, markupReason, parseJsonReply, sharesVerbatim } from '../src/radar/validate';
 import { parseReview } from '../src/supervisor/Supervisor';
 import { stripAnsi } from '../src/tools/TerminalTools';
 import { htmlToText } from '../src/tools/WebTools';
@@ -78,5 +83,44 @@ describe('Text processing stays fast on hostile input', () => {
     for (const arg of ['plain', 'two words', 'a"b', 'a\\"b', 'a\\\\"b', 'dir\\', 'dir\\\\', '\\', '"', '', 'C:\\x y\\', 'x\\y', '%PATH%&calc', '\\\\server\\share\\"q"\\']) {
       assert.equal(cmdArgument(arg), before(arg), arg);
     }
+  });
+
+  it('radar feeds, model replies and the report', () => {
+    const atom: RadarSource = {
+      id: 'feed',
+      vendor: 'Example',
+      product: 'Feed',
+      kind: 'atom',
+      url: 'https://example.com/feed.atom',
+      allowHosts: ['example.com'],
+      stable: '.',
+      minIntervalHours: 6,
+      maxBytes: 16_000_000,
+      enabled: true,
+    };
+    const md: RadarSource = { ...atom, kind: 'markdown', stable: undefined };
+    const entry = '<entry><id>a</id><title>b</title><content type="html">&lt;p&gt;x&lt;/p&gt;</content></entry>';
+    fast('unclosed entries', () => parseFeed(atom, '<entry>'.repeat(100_000)));
+    fast('unclosed CDATA', () => parseFeed(atom, `<entry><content>${'<![CDATA['.repeat(100_000)}`));
+    fast('CDATA full of end tags', () => parseFeed(atom, `<entry><id>a</id><title>b</title><content><![CDATA[${'</entry>'.repeat(100_000)}]]></content></entry>`));
+    fast('unterminated attribute quotes', () => parseFeed(atom, `<entry><link href="${'a'.repeat(500_000)}`));
+    fast('attribute soup', () => parseFeed(atom, `<entry><id>a</id><title>b</title><link ${'type '.repeat(100_000)}/></entry>`));
+    fast('deep nesting', () => parseFeed(atom, `<entry><id>a</id><title>b</title>${'<div>'.repeat(200_000)}</entry>`));
+    fast('lone angle brackets', () => parseFeed(atom, '<'.repeat(500_000)));
+    fast('many entries', () => parseFeed(atom, `<feed>${entry.repeat(50_000)}</feed>`));
+    fast('broken entities', () => parseFeed(atom, `<entry><id>a</id><title>${'&#'.repeat(200_000)}</title><content>${'&amp;'.repeat(200_000)}</content></entry>`));
+    fast('a 10 MB entry', () => parseFeed(atom, `<entry><id>a</id><title>b</title><content type="html">${'&lt;p&gt;word '.repeat(800_000)}</content></entry>`));
+    fast('version headings', () => parseFeed(md, '## 1.1.1\n'.repeat(100_000)));
+    fast('a heading of spaces', () => parseFeed(md, `##${' '.repeat(500_000)}1.0.0`));
+    fast('a section of spaces', () => parseFeed(md, `## 1.0.0\n${' '.repeat(2_000_000)}x\n`));
+    fast('a section of blank lines', () => parseFeed(md, `## 1.0.0\n${'\n'.repeat(2_000_000)}x`));
+    fast('model text with brackets and tags', () => cleanModelText(`${'[a'.repeat(5_000)}${'](x'.repeat(5_000)}${'<a'.repeat(5_000)}`));
+    fast('model text with schemes', () => cleanModelText('http:'.repeat(4_000)));
+    fast('markup check', () => markupReason(`${'<a'.repeat(100_000)}${'www'.repeat(50_000)}`));
+    fast('report escaping', () => escapeMarkdown('\\*_[]()#'.repeat(2_500)));
+    fast('verbatim guard', () => sharesVerbatim('word '.repeat(5_000), 'word '.repeat(10_000)));
+    fast('JSON replies', () => parseJsonReply('{'.repeat(150_000)));
+    fast('pattern check', () => unsafePatternReason('(('.repeat(100)));
+    assert.equal(parseFeed(atom, `<feed>${entry.repeat(50_000)}</feed>`).length, 1, 'identical entries count once');
   });
 });

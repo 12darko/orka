@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Example Editor Changelog</title>
+    <link>https://editor.example.com/changelog</link>
+    <atom:link href="https://editor.example.com/changelog/rss.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>2.1: Background agents &amp; plan mode</title>
+      <link>https://editor.example.com/changelog/2-1</link>
+      <guid isPermaLink="true">https://editor.example.com/changelog/2-1</guid>
+      <pubDate>Tue, 27 Oct 2026 16:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Agents can now run in the <b>background</b> while you keep editing.</p><ul><li>Plan mode asks before it edits anything.</li></ul><p>A literal </item> inside CDATA does not end the item.</p>]]></description>
+    </item>
+    <item>
+      <title>2.0: Faster completions</title>
+      <link>https://tracker.example.net/redirect?to=changelog</link>
+      <guid isPermaLink="false">changelog-2-0</guid>
+      <pubDate>Mon, 05 Oct 2026 09:00:00 GMT</pubDate>
+      <description>&lt;p&gt;Completions are 30% faster.&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>1.9: Team pricing</title>
+      <link>https://editor.example.com/changelog/1-9</link>
+      <guid isPermaLink="true">https://editor.example.com/changelog/1-9</guid>
+      <pubDate>Mon, 01 Jun 2026 09:00:00 GMT</pubDate>
+      <content:encoded><![CDATA[<p>New team plans.</p>]]></content:encoded>
+      <description>Short teaser that content:encoded replaces.</description>
+    </item>
+  </channel>
+</rss>
