@@ -1,6 +1,6 @@
 {
   "name": "@orka/app",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "Orka's chat UI and the controller behind it, shared by the VS Code extension and the desktop app.",
   "license": "MIT",
@@ -18,8 +18,9 @@
   "types": "./src/index.ts",
   "scripts": {
     "build": "node esbuild.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p webview/tsconfig.json --noEmit",
-    "preview": "node esbuild.mjs && node scripts/serve-preview.mjs"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p webview/tsconfig.json --noEmit && tsc -p test/tsconfig.json",
+    "preview": "node esbuild.mjs && node scripts/serve-preview.mjs",
+    "test": "node test/run.mjs"
   },
   "dependencies": {
     "@orka/core": "*"

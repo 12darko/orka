@@ -10,7 +10,7 @@ rmSync('dist', { recursive: true, force: true });
 mkdirSync('dist/skills', { recursive: true });
 // Built-in skills and the window's theme ship next to the app.
 cpSync('../core/skills', 'dist/skills', { recursive: true });
-copyFileSync('theme.css', 'dist/theme.css');
+copyFileSync('../app/webview/desktop-theme.css', 'dist/theme.css');
 copyFileSync('../vscode-extension/media/orka-128.png', 'dist/icon.png');
 
 const results = await Promise.all([

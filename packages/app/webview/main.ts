@@ -2,27 +2,14 @@ import type { AgentEvent, AgentPhase, AgentUsage, FileChange, ModelInfo, Plan, S
 import { getLocale, setLocale, t, tn } from '@orka/core/src/i18n';
 import { applyEvent, emptySession } from '@orka/core/src/ui/transcript';
 import { estimateCost } from '@orka/core/src/usage/pricing';
-import { marked } from 'marked';
 import orkaLogo from '../media/orka-logo.svg';
-import type {
-  AgentView,
-  ConfigView,
-  DialogView,
-  FromWebview,
-  HunkView,
-  ImageAttachment,
-  McpServerView,
-  ProviderView,
-  SettingsTab,
-  SettingsView,
-  SkillView,
-  ToWebview,
-} from '../src/protocol';
-
-declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getState(): any; setState(state: unknown): void };
-
-const vscode = acquireVsCodeApi();
-const post = (message: FromWebview) => vscode.postMessage(message);
+import type { AgentView, ConfigView, HunkView, ImageAttachment, McpServerView, ProviderView, SessionGroup, SettingsTab, SettingsView, SkillView, ToWebview } from '../src/protocol';
+import { post, saveUiState, uiState } from './core/bridge';
+import { attr, escapeHtml, icon, renderMarkdown } from './core/dom';
+import { ago, applyWidths, fmt } from './core/format';
+import { answerDialog, closeDialog, modalOpen, showDialog } from './features/dialogs';
+import { appSkeleton, layout } from './ide/layout';
+import { sessionListHtml, sidebarFrame, themeSwitchHtml } from './ide/sidebar';
 
 let session: SessionView = emptySession();
 let config: ConfigView | undefined;
@@ -34,6 +21,13 @@ const ui: {
   tab: SettingsTab;
   /** Changed files whose hunks are shown, with the hunks last received. */
   hunks: Map<string, HunkView[] | undefined>;
+  /** Desktop IDE layout: closed side panels, and the session list with its filter. */
+  sidebarClosed: boolean;
+  asideClosed: boolean;
+  sessions: SessionGroup[];
+  sessionQuery: string;
+  /** The task shown, as the app reported it with the session. */
+  taskId?: string;
 } = {
   planCollapsed: false,
   agentsOpen: false,
@@ -41,74 +35,13 @@ const ui: {
   view: 'chat',
   tab: 'agents',
   hunks: new Map(),
+  sidebarClosed: !!uiState().sidebarClosed,
+  asideClosed: !!uiState().asideClosed,
+  sessions: [],
+  sessionQuery: '',
 };
-
-// ------------------------------------------------------------------ markdown
-
-marked.use({
-  gfm: true,
-  breaks: false,
-  renderer: {
-    // Never render raw HTML coming from the model.
-    html: (token: { text: string }) => escapeHtml(token.text),
-  },
-});
-
-function renderMarkdown(text: string): string {
-  try {
-    return marked.parse(text, { async: false }) as string;
-  } catch {
-    return `<p>${escapeHtml(text)}</p>`;
-  }
-}
-
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-}
-
-const attr = escapeHtml;
 
 // ------------------------------------------------------------------ icons
-
-const ICON: Record<string, string> = {
-  read: '<path d="M4 2.5h5.5L12 5v8.5H4z"/><path d="M9.5 2.5V5H12"/>',
-  search: '<circle cx="7" cy="7" r="4"/><path d="M10 10l3.5 3.5"/>',
-  edit: '<path d="M3 13l.6-2.6L10.8 3.2l2 2-7.2 7.2z"/><path d="M9.6 4.4l2 2"/>',
-  delete: '<path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.6 9h4.8l.6-9"/>',
-  command: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M4.5 6.5l2 1.5-2 1.5M8 10h3"/>',
-  git: '<circle cx="5" cy="4" r="1.5"/><circle cx="5" cy="12" r="1.5"/><circle cx="11" cy="6" r="1.5"/><path d="M5 5.5v5M11 7.5c0 2-2 2.5-5.5 3.5"/>',
-  plan: '<path d="M6.5 4.5h7M6.5 8h7M6.5 11.5h7"/><path d="M2.5 4.5l1 1 1.5-2M2.5 8h2M2.5 11.5h2"/>',
-  agent: '<circle cx="8" cy="4" r="1.8"/><circle cx="3.5" cy="12" r="1.8"/><circle cx="12.5" cy="12" r="1.8"/><path d="M8 5.8v2.4M8 8.2l-3.6 2.4M8 8.2l3.6 2.4"/>',
-  eye: '<path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
-  check: '<path d="M3.5 8.5l3 3 6-7"/>',
-  x: '<path d="M4 4l8 8M12 4l-8 8"/>',
-  ban: '<circle cx="8" cy="8" r="5.5"/><path d="M4.2 11.8l7.6-7.6"/>',
-  dash: '<path d="M4 8h8"/>',
-  warn: '<path d="M8 2.5l6 11H2z"/><path d="M8 7v3M8 11.8v.2"/>',
-  info: '<circle cx="8" cy="8" r="5.5"/><path d="M8 7.5v3.5M8 5v.2"/>',
-  shield: '<path d="M8 2l5 2v4c0 3-2.2 5.2-5 6-2.8-.8-5-3-5-6V4z"/>',
-  plus: '<path d="M8 3v10M3 8h10"/>',
-  stop: '<rect x="4" y="4" width="8" height="8" rx="1"/>',
-  send: '<path d="M2.5 8L13.5 3l-3.5 10.5-2-4.5z"/><path d="M8 9l5.5-6"/>',
-  undo: '<path d="M5 6.5H10a3 3 0 010 6H7"/><path d="M7.5 4L5 6.5 7.5 9"/>',
-  arrow: '<path d="M2 8h9M8 4l4 4-4 4"/>',
-  back: '<path d="M10 3L5 8l5 5"/>',
-  key: '<circle cx="5.5" cy="10.5" r="3"/><path d="M7.7 8.3L13 3M11 5l1.5 1.5"/>',
-  gear: '<circle cx="8" cy="8" r="2"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2M3.8 3.8l1.4 1.4M10.8 10.8l1.4 1.4M3.8 12.2l1.4-1.4M10.8 5.2l1.4-1.4"/>',
-  chevron: '<path d="M4.5 6.5L8 10l3.5-3.5"/>',
-  history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.5 2.5v2.2h2.2"/><path d="M8 5v3.2l2.2 1.4"/>',
-  skill: '<path d="M2.5 3.5h4A1.5 1.5 0 018 5v8a1.5 1.5 0 00-1.5-1.5h-4z"/><path d="M13.5 3.5h-4A1.5 1.5 0 008 5v8a1.5 1.5 0 011.5-1.5h4z"/>',
-  folder: '<path d="M2 4.5V12a1 1 0 001 1h10a1 1 0 001-1V6a1 1 0 00-1-1H8L6.5 3.5H3a1 1 0 00-1 1z"/>',
-  refresh: '<path d="M13 8a5 5 0 11-1.5-3.6"/><path d="M13 2.5v2.5h-2.5"/>',
-  plug: '<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2.5a3.5 3.5 0 01-7 0z"/><path d="M8 11.5v2"/>',
-  image: '<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><circle cx="6" cy="6.5" r="1.2"/><path d="M3 12l3.5-3.5 2.5 2.5 2-2 2.5 2.5"/>',
-  handoff: '<path d="M9.5 2.5h4v4M13.5 2.5L7.5 8.5"/><path d="M12 9.5v3.5a.5.5 0 01-.5.5h-8a.5.5 0 01-.5-.5v-8a.5.5 0 01.5-.5H7"/>',
-  globe: '<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.6 1.6 2.3 3.4 2.3 5.5S9.6 11.9 8 13.5M8 2.5C6.4 4.1 5.7 5.9 5.7 8s.7 3.9 2.3 5.5"/>',
-};
-
-function icon(name: string, cls = ''): string {
-  return `<svg class="icon ${cls}" viewBox="0 0 16 16" aria-hidden="true">${ICON[name] ?? ''}</svg>`;
-}
 
 function toolIcon(call: ToolCallView): string {
   if (call.name === 'run_subagent') return 'agent';
@@ -126,25 +59,7 @@ function toolIcon(call: ToolCallView): string {
 // ------------------------------------------------------------------ layout
 
 const app = document.getElementById('app')!;
-app.innerHTML = `
-  <header class="topbar" id="topbar"></header>
-  <section class="panel agents-panel" id="agents-panel" hidden></section>
-  <section class="panel" id="plan-panel" hidden></section>
-  <section class="panel" id="changes-panel" hidden></section>
-  <main class="transcript" id="transcript"></main>
-  <section class="panel usage-panel" id="usage-panel" hidden></section>
-  <section class="settings" id="settings-view" hidden></section>
-  <section class="settings history" id="history-view" hidden></section>
-  <footer class="composer" id="composer">
-    <div class="suggest" id="suggest" role="listbox" hidden></div>
-    <div class="chips" id="chips" hidden></div>
-    <textarea id="input" rows="3"></textarea>
-    <div class="composer-row">
-      <button class="meta" id="meta" data-action="toggle-usage"></button>
-      <button class="btn primary" id="send"></button>
-    </div>
-  </footer>
-`;
+app.innerHTML = appSkeleton();
 
 const el = {
   topbar: document.getElementById('topbar')!,
@@ -161,9 +76,18 @@ const el = {
   input: document.getElementById('input') as HTMLTextAreaElement,
   send: document.getElementById('send') as HTMLButtonElement,
   meta: document.getElementById('meta')!,
+  /** Only in the IDE layout. */
+  sidebar: document.getElementById('sidebar'),
+  aside: document.getElementById('aside'),
+  mainCol: document.getElementById('main-col'),
+  composerMode: document.getElementById('composer-mode'),
+  composerAgent: document.getElementById('composer-agent'),
+  composerMenu: document.getElementById('composer-menu'),
+  starters: document.getElementById('starters'),
+  imageInput: document.getElementById('image-input') as HTMLInputElement | null,
 };
 
-el.input.value = vscode.getState()?.draft ?? '';
+el.input.value = uiState().draft ?? '';
 
 /** Texts of the static layout, re-applied when the language changes. */
 function renderStatic(): void {
@@ -171,6 +95,220 @@ function renderStatic(): void {
   el.input.placeholder = t('Describe a task…  / commands and skills, @ files, paste or drop images');
   el.suggest.setAttribute('aria-label', t('Suggestions'));
   el.meta.title = t('Token usage per agent');
+  // Built again only for another language: a full render must not take the search box from under the cursor.
+  if (el.sidebar && el.sidebar.dataset.locale !== getLocale()) {
+    el.sidebar.innerHTML = sidebarFrame(LOGO);
+    el.sidebar.dataset.locale = getLocale();
+    (document.getElementById('side-search') as HTMLInputElement).value = ui.sessionQuery;
+  }
+  const add = el.composer.querySelector<HTMLElement>('.composer-add');
+  if (add) {
+    add.innerHTML = icon('plus');
+    add.setAttribute('aria-label', t('Add files, images or a skill'));
+    add.title = t('Add files, images or a skill');
+  }
+  const toBottom = document.getElementById('to-bottom');
+  if (toBottom) {
+    toBottom.setAttribute('aria-label', t('Jump to the newest'));
+    toBottom.title = t('Jump to the newest');
+  }
+}
+
+// ------------------------------------------------------------------ IDE layout (desktop)
+
+const LOGO = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(orkaLogo)}`;
+
+/** The open task's first request, shortened like the titles in the history. */
+function sessionTitle(): string {
+  const first = session.items.find((i) => i.kind === 'user');
+  const text = first && first.kind === 'user' ? first.text.replace(/\s+/g, ' ').trim() : '';
+  return text.length > 90 ? `${text.slice(0, 87)}…` : text;
+}
+
+function renderSidebar(): void {
+  if (!el.sidebar) return;
+  // Closed, it is a narrow rail of icons.
+  el.sidebar.classList.toggle('collapsed', ui.sidebarClosed);
+  const list = document.getElementById('side-list');
+  if (list) {
+    list.innerHTML = sessionListHtml({
+      groups: ui.sessions,
+      folder: config?.folder,
+      taskId: ui.taskId,
+      draftTitle: sessionTitle(),
+      running: session.running,
+      query: ui.sessionQuery,
+    });
+  }
+  const themes = document.getElementById('theme-switch');
+  if (themes) themes.innerHTML = config?.ui ? themeSwitchHtml(config.ui.theme) : '';
+}
+
+/** The plan and the changes have their own panel on the right; it shows while there is either. */
+function asideContent(): boolean {
+  return !!session.plan?.steps.length || session.changes.length > 0;
+}
+
+let asideHadContent = false;
+
+function updateAside(): void {
+  if (!el.aside) return;
+  el.aside.hidden = ui.view !== 'chat' || ui.asideClosed || !asideContent();
+  // The top bar offers to show or hide it once there is something in it.
+  if (asideContent() !== asideHadContent) {
+    asideHadContent = asideContent();
+    renderTopbar();
+  }
+}
+
+function toggleSidebar(): void {
+  ui.sidebarClosed = !ui.sidebarClosed;
+  saveUiState({ sidebarClosed: ui.sidebarClosed });
+  renderSidebar();
+}
+
+/** Ctrl+K or the rail's search button: the session list, with the cursor in its search box. */
+function searchSessions(): void {
+  if (ui.sidebarClosed) toggleSidebar();
+  const search = document.getElementById('side-search') as HTMLInputElement | null;
+  search?.focus();
+  search?.select();
+}
+
+/** The "to the newest" button shows while the conversation is scrolled up. */
+function updateToBottom(): void {
+  const button = document.getElementById('to-bottom');
+  if (button) button.hidden = ui.view !== 'chat' || !session.items.length || nearBottom();
+}
+
+function toggleAside(): void {
+  ui.asideClosed = !ui.asideClosed;
+  saveUiState({ asideClosed: ui.asideClosed });
+  updateAside();
+  renderTopbar();
+}
+
+/** IDE layout: the permission mode and the main agent's model sit in the message box. */
+function renderComposerTools(): void {
+  if (!el.composerMode || !el.composerAgent) return;
+  const main = config?.main.effective;
+  const warn = main && !providerView(main.provider)?.ready;
+  el.composerMode.innerHTML = modeSelect();
+  el.composerAgent.innerHTML = main
+    ? `<button class="agent-btn${ui.agentsOpen ? ' open' : ''}${warn ? ' warn' : ''}" data-action="toggle-agents" aria-expanded="${ui.agentsOpen}" title="${attr(t('Agents: providers and models'))}">${icon('agent')}<span>${escapeHtml(shortModel(main.provider, main.model))}</span>${icon('chevron', 'chev')}</button>`
+    : '';
+}
+
+/** The + menu of the message box: attach a file, add an image, use a skill. */
+function renderComposerMenu(open: boolean): void {
+  if (!el.composerMenu) return;
+  el.composerMenu.hidden = !open;
+  el.composer.querySelector('.composer-add')?.setAttribute('aria-expanded', String(open));
+  if (!open) return;
+  const item = (action: string, glyph: string, label: string, hint: string) =>
+    `<button class="menu-item" role="menuitem" data-action="${action}">${icon(glyph)}<span>${escapeHtml(label)}</span><span class="menu-hint">${escapeHtml(hint)}</span></button>`;
+  el.composerMenu.innerHTML =
+    item('attach-file', 'read', t('Attach a file'), '@') + item('attach-image', 'image', t('Add an image'), t('or paste')) + item('insert-command', 'skill', t('Use a skill or command'), '/');
+  el.composerMenu.querySelector<HTMLElement>('.menu-item')?.focus();
+}
+
+/** Put text at the cursor in the message box (and show what it suggests). */
+function insertAtCursor(text: string): void {
+  const { selectionStart: start, selectionEnd: end, value } = el.input;
+  const before = value.slice(0, start);
+  const spaced = text === '@' && before && !/\s$/.test(before) ? ` ${text}` : text;
+  el.input.value = before + spaced + value.slice(end);
+  el.input.selectionStart = el.input.selectionEnd = start + spaced.length;
+  el.input.focus();
+  saveUiState({ draft: el.input.value });
+  autoGrow();
+  updateSuggestions();
+}
+
+/** A new session: the greeting and the message box in the middle, with suggestions under it. */
+function renderStarters(): void {
+  if (!el.mainCol || !el.starters) return;
+  const fresh = ui.view === 'chat' && !session.items.length && !!config?.workspaceOpen;
+  el.mainCol.classList.toggle('is-empty', ui.view === 'chat' && !session.items.length);
+  el.starters.hidden = !fresh;
+  if (!fresh) return;
+  el.starters.innerHTML = starterPrompts()
+    .map((text) => `<button class="starter" data-action="example" data-text="${attr(text)}">${escapeHtml(text)}</button>`)
+    .join('');
+}
+
+function starterPrompts(): string[] {
+  return [
+    t('Explain the architecture of this project and where the main entry points are.'),
+    t('Find the cause of the failing tests and fix it.'),
+    t('Add input validation to the signup form and cover it with tests.'),
+  ];
+}
+
+if (el.imageInput) {
+  el.imageInput.addEventListener('change', () => {
+    const files = [...(el.imageInput!.files ?? [])];
+    el.imageInput!.value = '';
+    if (files.length) void addImages(files);
+  });
+}
+
+/** The desktop app's theme setting; the layout is chosen as the page loads, so a change reloads it once. */
+function applyAppearance(): void {
+  if (!config?.ui) return;
+  document.documentElement.dataset.theme = config.ui.theme;
+  if ((config.ui.layout === 'ide') !== (layout === 'ide')) reloadFor(config.ui.layout);
+}
+
+/**
+ * Reload for a layout, unless this page already reloaded for that same layout moments ago and
+ * still did not get it (then the page and the setting disagree, and reloading again would loop).
+ */
+function reloadFor(target: string): void {
+  try {
+    const last: unknown = JSON.parse(sessionStorage.getItem('orka.reload') ?? 'null');
+    const previous = last && typeof last === 'object' ? (last as { target?: unknown; at?: unknown }) : {};
+    if (previous.target === target && Date.now() - Number(previous.at) < 10_000) return;
+    sessionStorage.setItem('orka.reload', JSON.stringify({ target, at: Date.now() }));
+  } catch {
+    return;
+  }
+  location.reload();
+}
+
+if (layout === 'ide') {
+  document.addEventListener('keydown', (e) => {
+    // An Escape that closed a dialog is used up.
+    if (e.key === 'Escape' && !e.defaultPrevented && !modalOpen()) {
+      if (el.composerMenu && !el.composerMenu.hidden) {
+        renderComposerMenu(false);
+        el.input.focus();
+      } else if (ui.agentsOpen) {
+        ui.agentsOpen = false;
+        renderAgentsPanel();
+      }
+      return;
+    }
+    if (modalOpen() || !(e.ctrlKey || e.metaKey) || e.shiftKey) return;
+    // Physical keys: Ctrl+Alt is AltGr on many keyboards, which changes e.key.
+    if (e.code === 'KeyB') {
+      e.preventDefault();
+      if (e.altKey) toggleAside();
+      else toggleSidebar();
+    } else if (e.code === 'KeyK' && !e.altKey) {
+      e.preventDefault();
+      searchSessions();
+    } else if (e.code === 'KeyN' && e.altKey) {
+      e.preventDefault();
+      post({ type: 'newTask' });
+    }
+  });
+  document.addEventListener('input', (e) => {
+    const target = e.target as HTMLElement;
+    if (target.id !== 'side-search') return;
+    ui.sessionQuery = (target as HTMLInputElement).value;
+    renderSidebar();
+  });
 }
 
 // ------------------------------------------------------------------ composer: commands, skills, @files
@@ -464,7 +602,7 @@ function submit(): void {
   el.input.value = '';
   composer.suggest = undefined;
   renderSuggest();
-  vscode.setState({ draft: '' });
+  saveUiState({ draft: '' });
   autoGrow();
 }
 
@@ -495,7 +633,7 @@ el.input.addEventListener('keydown', (e) => {
   }
 });
 el.input.addEventListener('input', () => {
-  vscode.setState({ draft: el.input.value });
+  saveUiState({ draft: el.input.value });
   autoGrow();
   updateSuggestions();
 });
@@ -516,8 +654,17 @@ function autoGrow(): void {
 // ------------------------------------------------------------------ interaction
 
 document.addEventListener('click', (e) => {
-  const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+  // IDE layout: the + menu and the agents panel open over the message box and close on a click elsewhere.
+  const clicked = e.target as HTMLElement;
+  if (el.composerMenu && !el.composerMenu.hidden && !clicked.closest('#composer-menu, .composer-add')) renderComposerMenu(false);
+  if (layout === 'ide' && ui.agentsOpen && clicked.isConnected && !clicked.closest('#agents-panel, .agent-btn, .modal-backdrop, .dialogs')) {
+    ui.agentsOpen = false;
+    renderAgentsPanel();
+  }
+  const target = clicked.closest<HTMLElement>('[data-action]');
   if (!target || target.tagName === 'SELECT' || (target.tagName === 'INPUT' && (target as HTMLInputElement).type !== 'button')) return;
+  // A button in a tool line (e.g. "diff") does its own thing without opening the line.
+  if (target.closest('summary')) e.preventDefault();
   const { action, id, path, provider, name } = target.dataset;
   switch (action) {
     case 'approve':
@@ -633,6 +780,26 @@ document.addEventListener('click', (e) => {
     case 'toggle-usage':
       ui.usageOpen = !ui.usageOpen;
       renderUsage();
+      if (layout === 'ide') renderTopbar();
+      break;
+    case 'composer-menu':
+      renderComposerMenu(!!el.composerMenu?.hidden);
+      break;
+    case 'attach-file':
+      renderComposerMenu(false);
+      insertAtCursor('@');
+      break;
+    case 'attach-image':
+      renderComposerMenu(false);
+      el.imageInput?.click();
+      break;
+    case 'insert-command':
+      renderComposerMenu(false);
+      // A command or skill starts the message.
+      if (!el.input.value.trim()) {
+        el.input.value = '';
+        insertAtCursor('/');
+      } else el.input.focus();
       break;
     case 'open-settings':
       ui.view = 'settings';
@@ -649,6 +816,50 @@ document.addEventListener('click', (e) => {
       ui.tab = target.dataset.tab as SettingsTab;
       if (ui.tab === 'skills') post({ type: 'reloadSkills' });
       renderSettings();
+      break;
+    case 'toggle-sidebar':
+      toggleSidebar();
+      break;
+    case 'toggle-aside':
+      toggleAside();
+      break;
+    case 'search-sessions':
+      searchSessions();
+      break;
+    case 'to-bottom':
+      el.transcript.scrollTo({ top: el.transcript.scrollHeight, behavior: 'smooth' });
+      break;
+    case 'copy-message': {
+      const item = session.items.find((i) => i.id === id);
+      if (item?.kind !== 'assistant') break;
+      void navigator.clipboard.writeText(item.text);
+      target.innerHTML = icon('check');
+      target.setAttribute('aria-label', t('Copied'));
+      setTimeout(() => {
+        target.innerHTML = icon('copy');
+        target.setAttribute('aria-label', t('Copy'));
+      }, 1200);
+      break;
+    }
+    case 'new-session':
+      post({ type: 'newTask', folder: target.dataset.folder || undefined });
+      ui.view = 'chat';
+      renderView();
+      break;
+    case 'open-session':
+      post({ type: 'openTask', id: id!, folder: target.dataset.folder || undefined });
+      ui.view = 'chat';
+      renderView();
+      break;
+    case 'delete-session':
+      post({ type: 'deleteTask', id: id!, folder: target.dataset.folder || undefined });
+      break;
+    case 'check-app-update':
+      target.setAttribute('disabled', '');
+      post({ type: 'checkAppUpdate' });
+      break;
+    case 'open-release':
+      post({ type: 'openRelease' });
       break;
     case 'new-task':
       post({ type: 'newTask' });
@@ -851,14 +1062,6 @@ function openHistory(): void {
   renderView();
 }
 
-function ago(iso: string): string {
-  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
-  if (s < 60) return t('just now');
-  if (s < 3600) return t('{n} min ago', { n: Math.floor(s / 60) });
-  if (s < 86400) return t('{n} h ago', { n: Math.floor(s / 3600) });
-  return t('{n} d ago', { n: Math.floor(s / 86400) });
-}
-
 function renderHistory(): void {
   el.history.hidden = ui.view !== 'history';
   if (el.history.hidden) return;
@@ -886,38 +1089,74 @@ function renderTopbar(): void {
     el.topbar.innerHTML = `
       <button class="icon-btn" data-action="close-settings" aria-label="${attr(t('Back to chat'))}" title="${attr(t('Back to chat'))}">${icon('back')}</button>
       <strong class="topbar-title">${escapeHtml(t('Settings'))}</strong>
-      <button class="link" data-action="vscode-settings">${escapeHtml(t('Open in VS Code settings'))}</button>`;
+      ${config?.canOpenFolder ? '' : `<button class="link" data-action="vscode-settings">${escapeHtml(t('Open in VS Code settings'))}</button>`}`;
     return;
   }
   const running = session.running;
   const phase = running ? (session.phase === 'idle' ? 'thinking' : session.phase) : 'idle';
+  const folderName = config?.folder?.split(/[\\/]/).filter(Boolean).pop();
+  const folderButton =
+    config?.canOpenFolder && folderName
+      ? `<button class="folder-btn" data-action="open-folder" title="${attr(`${config.folder} - ${t('Open folder…')}`)}">${icon('folder')}<span>${escapeHtml(folderName)}</span></button>`
+      : '';
+  if (layout === 'ide') {
+    el.topbar.innerHTML = ideTopbar(phase, folderButton);
+    return;
+  }
   const main = config?.main.effective;
   const warn = main && !providerView(main.provider)?.ready;
-  const folderName = config?.folder?.split(/[\\/]/).filter(Boolean).pop();
   el.topbar.innerHTML = `
     <div class="phase" data-phase="${attr(phase)}"><span class="dot"></span><span class="phase-label">${escapeHtml(phaseLabel(phase))}</span></div>
-    ${
-      config?.canOpenFolder && folderName
-        ? `<button class="folder-btn" data-action="open-folder" title="${attr(`${config.folder} - ${t('Open folder…')}`)}">${icon('folder')}<span>${escapeHtml(folderName)}</span></button>`
-        : ''
-    }
+    ${folderButton}
     ${
       main
         ? `<button class="agent-btn${ui.agentsOpen ? ' open' : ''}${warn ? ' warn' : ''}" data-action="toggle-agents" title="${attr(t('Agents: providers and models'))}">${icon('agent')}<span>${escapeHtml(shortModel(main.provider, main.model))}</span>${icon('chevron', 'chev')}</button>`
         : ''
     }
-    <select id="mode" title="${attr(t('Permission mode'))}">
-      ${(['ask', 'balanced', 'autonomous'] as const)
-        .map((m) => `<option value="${m}"${config?.mode === m ? ' selected' : ''}>${escapeHtml(modeLabel(m))}</option>`)
-        .join('')}
-    </select>
+    ${modeSelect()}
     <button class="icon-btn" data-action="new-task" aria-label="${attr(t('New task'))}" title="${attr(t('New task'))}">${icon('plus')}</button>
     <button class="icon-btn" data-action="open-history" aria-label="${attr(t('History'))}" title="${attr(t('Earlier tasks'))}">${icon('history')}</button>
     <button class="icon-btn" data-action="open-settings" aria-label="${attr(t('Settings'))}" title="${attr(t('Settings'))}">${icon('gear')}</button>`;
 }
 
+function modeSelect(): string {
+  return `<select id="mode" title="${attr(t('Permission mode'))}" aria-label="${attr(t('Permission mode'))}">
+      ${(['ask', 'balanced', 'autonomous'] as const)
+        .map((m) => `<option value="${m}"${config?.mode === m ? ' selected' : ''}>${escapeHtml(modeLabel(m))}</option>`)
+        .join('')}
+    </select>`;
+}
+
+/**
+ * IDE layout: a quiet title bar. The session's title (with what the agent is doing while it
+ * works), the folder, the tokens used so far, and the switch for the plan-and-changes panel.
+ * New task, history and settings live in the session list; model and mode in the message box.
+ */
+function ideTopbar(phase: AgentPhase, folderButton: string): string {
+  const title = sessionTitle() || t('New session');
+  const u = session.usage;
+  const tokens = u ? totalTokens(u) : 0;
+  const usage = tokens
+    ? `<button class="usage-btn${ui.usageOpen ? ' open' : ''}" data-action="toggle-usage" title="${attr(t('Token usage per agent'))}">${escapeHtml(t('{n} tokens', { n: fmt(tokens) }))}</button>`
+    : '';
+  const asideLabel = ui.asideClosed ? t('Show plan and changes') : t('Hide plan and changes');
+  const aside = asideContent()
+    ? `<button class="icon-btn aside-btn${ui.asideClosed ? '' : ' on'}" data-action="toggle-aside" aria-label="${attr(asideLabel)}" title="${attr(`${asideLabel} (Ctrl+Alt+B)`)}">${icon('aside')}${
+        session.changes.length ? `<span class="count">${Number(session.changes.length) || 0}</span>` : ''
+      }</button>`
+    : '';
+  return `<div class="phase session-head" data-phase="${attr(phase)}"><span class="dot"></span><span class="session-title" title="${attr(title)}">${escapeHtml(title)}</span>${
+    session.running ? `<span class="phase-label">${escapeHtml(phaseLabel(phase))}</span>` : ''
+  }</div>${folderButton}${usage}${aside}`;
+}
+
 function renderMeta(): void {
-  el.send.innerHTML = session.running ? `${icon('stop')}<span>${escapeHtml(t('Stop'))}</span>` : `${icon('send')}<span>${escapeHtml(t('Send'))}</span>`;
+  const label = session.running ? t('Stop') : t('Send');
+  // IDE layout: a round button with just the icon.
+  const glyph = session.running ? 'stop' : layout === 'ide' ? 'arrowUp' : 'send';
+  el.send.innerHTML = `${icon(glyph)}<span>${escapeHtml(label)}</span>`;
+  el.send.setAttribute('aria-label', label);
+  el.send.title = layout === 'ide' ? `${label}${session.running ? '' : ' (Enter)'}` : '';
   el.send.classList.toggle('danger', session.running);
   el.send.disabled = !config?.workspaceOpen;
   const u = session.usage;
@@ -934,6 +1173,7 @@ function renderMeta(): void {
 function renderChrome(): void {
   renderTopbar();
   renderMeta();
+  renderComposerTools();
 }
 
 // ------------------------------------------------------------------ usage
@@ -995,7 +1235,7 @@ function renderUsage(): void {
         <div class="usage-row-head"><strong>${escapeHtml(agentLabel(e.agent))}</strong>
           <span class="muted ellipsis" title="${attr(`${provider} · ${e.model}`)}">${escapeHtml(provider)} · ${escapeHtml(e.model)}</span>
           <span class="spacer"></span><span class="usage-cost">${escapeHtml(costText(e))}</span></div>
-        <div class="usage-bar" aria-hidden="true"><span style="width:${share}%"></span></div>
+        <div class="usage-bar" aria-hidden="true"><span data-width="${share}"></span></div>
         <div class="usage-nums muted">${tn('{n} call', '{n} calls', e.calls)} · ${usageSummary(e.usage)}</div>
       </div>`;
     })
@@ -1008,12 +1248,7 @@ function renderUsage(): void {
     <p class="footnote">${escapeHtml(
       t('Costs are estimates from list prices for Claude API models and from your own price table (setting orka.pricing). Claude Code runs on your subscription.'),
     )}</p>`;
-}
-
-function fmt(value: number): string {
-  // Token counts come from providers and go into HTML: only ever print a number.
-  const n = Number(value) || 0;
-  return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  applyWidths(el.usage);
 }
 
 // ------------------------------------------------------------------ agents (panel + settings tab)
@@ -1220,6 +1455,7 @@ function externalAgentsCard(): string {
 
 function renderAgentsPanel(): void {
   renderTopbar();
+  renderComposerTools();
   el.agents.hidden = ui.view !== 'chat' || !ui.agentsOpen || !config;
   if (el.agents.hidden) return;
   el.agents.innerHTML = `
@@ -1585,6 +1821,8 @@ function controlTab(s: SettingsView): string {
         t('Learn from tasks'),
       )}<br><span class="muted">${escapeHtml(t('After a task that changed code, up to 3 lasting lessons (working commands, pitfalls, conventions) are added to .project-ai/lessons.md.'))}</span></span></label>
     </div>
+    ${config?.ui ? appearanceCard(config.ui) : ''}
+    ${config ? aboutCard(config.app) : ''}
     <div class="card">
       <div class="row"><span class="grow"><strong>${escapeHtml(t('Language'))}</strong><br><span class="muted small">${escapeHtml(
         t('Auto follows the machine: VS Code’s display language, otherwise the system language.'),
@@ -1598,6 +1836,61 @@ function controlTab(s: SettingsView): string {
         s.language,
         t('Language'),
       )}</div>
+    </div>`;
+}
+
+/** Desktop: the window's theme and layout. */
+function appearanceCard(appearance: NonNullable<ConfigView['ui']>): string {
+  return `<div class="card">
+      <div class="card-head"><strong>${escapeHtml(t('Appearance'))}</strong></div>
+      <div class="row"><span class="grow">${escapeHtml(t('Theme'))}</span>${select(
+        'desktop.theme',
+        [
+          ['system', t('Follow the system')],
+          ['light', t('Light')],
+          ['dark', t('Dark')],
+        ],
+        appearance.theme,
+        t('Theme'),
+      )}</div>
+      <div class="row"><span class="grow">${escapeHtml(t('Layout'))}<br><span class="muted small">${escapeHtml(
+        t('Sessions on the left and the plan and changes on the right, or everything in one column.'),
+      )}</span></span>${select(
+        'desktop.layout',
+        [
+          ['ide', t('Sessions and panels')],
+          ['classic', t('Single column')],
+        ],
+        appearance.layout,
+        t('Layout'),
+      )}</div>
+    </div>`;
+}
+
+/** Orka's version and the daily check for a newer release. */
+function aboutCard(app: ConfigView['app']): string {
+  const status = app.checking
+    ? t('Checking…')
+    : app.update
+      ? t('Orka {version} is available.', { version: app.update.version })
+      : app.error
+        ? t('Could not check for a new Orka version: {error}', { error: app.error })
+        : app.checkedAt
+          ? t('Up to date (checked {when}).', { when: ago(new Date(app.checkedAt).toISOString()) })
+          : '';
+  return `<div class="card">
+      <div class="card-head"><strong>Orka</strong><span class="muted">${escapeHtml(t('version {version}', { version: app.version }))}</span><span class="spacer"></span>
+        <button class="btn small" data-action="check-app-update"${app.checking ? ' disabled' : ''}>${icon('refresh')}${escapeHtml(t('Check now'))}</button></div>
+      ${
+        status
+          ? `<div class="hint${app.update ? ' ok' : !app.checking && app.error ? ' warn' : ''}"><span>${escapeHtml(status)}</span>${
+              app.update ? `<button class="link" data-action="open-release">${escapeHtml(t('Download'))}</button>` : ''
+            }</div>`
+          : ''
+      }
+      <label class="check"><input type="checkbox" data-setting="updates.check"${app.checkUpdates ? ' checked' : ''}><span>${escapeHtml(t('Check for new versions'))}<br><span class="muted">${escapeHtml(
+        t('Once a day Orka asks GitHub for its newest release. GitHub sees your IP address and Orka\'s version, nothing about your project.'),
+      )}</span></span></label>
     </div>`;
 }
 
@@ -1638,6 +1931,8 @@ function renderView(): void {
     renderPlan();
     renderChanges();
   }
+  updateAside();
+  renderStarters();
 }
 
 // ------------------------------------------------------------------ plan & changes
@@ -1645,6 +1940,7 @@ function renderView(): void {
 function renderPlan(): void {
   const plan: Plan | undefined = session.plan;
   el.plan.hidden = ui.view !== 'chat' || !plan?.steps.length;
+  updateAside();
   if (el.plan.hidden || !plan) return;
   const done = plan.steps.filter((s) => s.status === 'completed').length;
   const pct = Math.round((100 * done) / plan.steps.length);
@@ -1653,7 +1949,7 @@ function renderPlan(): void {
   el.plan.innerHTML = `
     <div class="panel-head clickable" data-action="toggle-plan">
       <strong>${escapeHtml(t('Plan'))}</strong><span class="muted">${escapeHtml(t('{done} of {total} done', { done, total: plan.steps.length }))}</span><span class="spacer"></span>
-      <span class="progress" aria-label="${attr(t('{n}% done', { n: pct }))}"><span style="width:${pct}%"></span></span>
+      <span class="progress" aria-label="${attr(t('{n}% done', { n: pct }))}"><span data-width="${pct}"></span></span>
       <span class="chevron ${ui.planCollapsed ? 'collapsed' : ''}"></span>
     </div>
     ${
@@ -1662,6 +1958,7 @@ function renderPlan(): void {
         : `${plan.explanation ? `<p class="plan-explanation">${escapeHtml(plan.explanation)}</p>` : ''}
     <ol class="steps">${plan.steps.map((s) => `<li data-status="${attr(s.status)}">${mark(s)}<span>${escapeHtml(s.title)}</span></li>`).join('')}</ol>`
     }`;
+  applyWidths(el.plan);
 }
 
 function hunksHtml(change: FileChange): string {
@@ -1685,6 +1982,7 @@ function hunksHtml(change: FileChange): string {
 function renderChanges(): void {
   const changes: FileChange[] = session.changes;
   el.changes.hidden = ui.view !== 'chat' || !changes.length;
+  updateAside();
   if (el.changes.hidden) return;
   const badge = { added: 'A', modified: 'M', deleted: 'D' } as const;
   el.changes.innerHTML = `
@@ -1746,18 +2044,15 @@ function renderEmptyState(): string {
           : ''
       }</div>`;
   }
-  const examples = [
-    t('Explain the architecture of this project and where the main entry points are.'),
-    t('Find the cause of the failing tests and fix it.'),
-    t('Add input validation to the signup form and cover it with tests.'),
-  ];
+  // IDE layout: the examples are offered under the message box instead (renderStarters).
+  const examples = layout === 'ide' ? [] : starterPrompts();
   const main = providerView(config.main.effective.provider);
   const sup = config.settings.supervisor.enabled ? shortModel(config.supervisor.effective.provider, config.supervisor.effective.model) : '';
   const skills = config.skillsEnabled ? config.skills.filter((s) => s.enabled).length : 0;
   return `<div class="empty">
     ${logoImg()}
     <h2>${escapeHtml(t('What should we build?'))}</h2>
-    <p>${escapeHtml(t('Describe a task. The agent studies your project, plans, edits files, runs builds and tests, and reports back.'))}${
+    <p class="empty-intro">${escapeHtml(t('Describe a task. The agent studies your project, plans, edits files, runs builds and tests, and reports back.'))}${
       sup ? ` ${escapeHtml(t('A supervisor ({model}) watches its work and corrects it when needed.', { model: sup }))}` : ''
     }${skills ? ` ${escapeHtml(tn('{n} skill is ready (type /).', '{n} skills are ready (type /).', skills))}` : ''}</p>
     ${
@@ -1765,7 +2060,7 @@ function renderEmptyState(): string {
         ? `<div class="callout">${icon('key')}<span>${escapeHtml(t('Add an API key for {provider}, or pick another provider for the main agent.', { provider: main.label }))}</span><button class="btn primary" data-action="set-key" data-provider="${attr(main.kind)}">${escapeHtml(t('Add key'))}</button></div>`
         : ''
     }
-    <div class="examples">${examples.map((text) => `<button class="example" data-action="example" data-text="${attr(text)}">${escapeHtml(text)}</button>`).join('')}</div>
+    ${examples.length ? `<div class="examples">${examples.map((text) => `<button class="example" data-action="example" data-text="${attr(text)}">${escapeHtml(text)}</button>`).join('')}</div>` : ''}
   </div>`;
 }
 
@@ -1797,7 +2092,12 @@ function itemHtml(item: TranscriptItem, nested: boolean): string {
         : item.streaming && !item.reasoning
           ? '<div class="typing"><span></span><span></span><span></span></div>'
           : '';
-      return `<div class="msg assistant${item.streaming ? ' streaming' : ''}" data-id="${attr(item.id)}">${reasoning}${body}</div>`;
+      // IDE layout: a finished reply can be copied as it was written (Markdown).
+      const actions =
+        layout === 'ide' && !item.streaming && item.text.trim()
+          ? `<div class="msg-actions"><button class="icon-btn" data-action="copy-message" data-id="${attr(item.id)}" aria-label="${attr(t('Copy'))}" title="${attr(t('Copy'))}">${icon('copy')}</button></div>`
+          : '';
+      return `<div class="msg assistant${item.streaming ? ' streaming' : ''}" data-id="${attr(item.id)}">${reasoning}${body}${actions}</div>`;
     }
     case 'tool':
       if (nested && item.call.status !== 'awaiting_approval' && item.call.name !== 'run_subagent') return timelineRow(item);
@@ -1907,15 +2207,22 @@ function renderTool(call: ToolCallView, liveOutput: string, sub?: SubagentView):
   if (call.name === 'run_subagent') return renderSubagent(call, sub);
   if (call.name === 'ask_supervisor') return renderSupervisorQuestion(call);
   const canDiff = call.path && (call.category === 'edit' || call.category === 'delete') && call.status === 'done';
-  const head = `<div class="tool-head">
+  const headParts = `
       ${icon(toolIcon(call))}
       <span class="tool-title mono" title="${attr(call.title)}">${escapeHtml(call.title)}</span>
       ${canDiff ? `<button class="link" data-action="diff" data-path="${attr(call.path!)}">diff</button>` : ''}
       ${call.risk === 'dangerous' ? `<span class="risk">${escapeHtml(t('RISKY'))}</span>` : ''}
-      <span class="tool-status" title="${attr(call.status)}">${STATUS_ICON[call.status] ?? ''}</span>
-    </div>`;
+      <span class="tool-status" title="${attr(call.status)}">${STATUS_ICON[call.status] ?? ''}</span>`;
+  const head = `<div class="tool-head">${headParts}</div>`;
   const shot = call.image?.startsWith('data:image/') ? `<img class="tool-shot" src="${attr(call.image)}" alt="${attr(t('Screenshot'))}">` : '';
   const showOutput = output && call.status !== 'awaiting_approval' && call.name !== 'update_plan';
+  // IDE layout: one quiet line that opens to show the result (a running command shows its output).
+  if (layout === 'ide' && call.status !== 'awaiting_approval') {
+    if (!showOutput) return head + shot;
+    return `<details class="tool-row"${call.status === 'running' && call.category === 'command' ? ' open' : ''}><summary class="tool-head">${headParts}</summary><pre class="mono">${escapeHtml(
+      tail(output, 6000),
+    )}</pre></details>${shot}`;
+  }
   const outputBlock = showOutput
     ? `<details class="tool-output"${call.status === 'running' && call.category === 'command' ? ' open' : ''}><summary>${escapeHtml(
         call.status === 'running' ? t('Output') : call.status === 'error' || call.status === 'denied' ? t('Details') : t('Result'),
@@ -2007,12 +2314,21 @@ function scrollToBottom(): void {
 function renderTranscript(): void {
   const stick = nearBottom();
   el.transcript.innerHTML = '';
+  renderStarters();
   if (!session.items.length) {
     el.transcript.innerHTML = renderEmptyState();
+    updateToBottom();
     return;
   }
   for (const item of session.items) el.transcript.appendChild(nodeFor(item));
   if (stick) scrollToBottom();
+  updateToBottom();
+}
+
+if (layout === 'ide') {
+  el.transcript.addEventListener('scroll', updateToBottom, { passive: true });
+  const toBottom = document.getElementById('to-bottom');
+  if (toBottom) toBottom.innerHTML = icon('arrowDown');
 }
 
 function renderAll(): void {
@@ -2020,6 +2336,7 @@ function renderAll(): void {
   renderChrome();
   renderView();
   renderTranscript();
+  renderSidebar();
 }
 
 /** Keep what the user typed/toggled (approval notes, open <details>) across a re-render. */
@@ -2065,7 +2382,10 @@ function flush(): void {
     return;
   }
   const stick = nearBottom();
-  if (el.transcript.querySelector('.empty') && session.items.length) el.transcript.innerHTML = '';
+  if (el.transcript.querySelector('.empty') && session.items.length) {
+    el.transcript.innerHTML = '';
+    renderStarters();
+  }
   for (const id of dirty) {
     const item = session.items.find((i) => i.id === id);
     if (!item) continue;
@@ -2087,6 +2407,7 @@ function flush(): void {
     }
   }
   dirty.clear();
+  updateToBottom();
   if (stick) scrollToBottom();
 }
 
@@ -2106,10 +2427,12 @@ function onEvent(event: AgentEvent): void {
     case 'run_started':
       renderTopbar();
       renderMeta();
+      if (event.type === 'run_started') renderSidebar();
       break;
     case 'usage':
       renderMeta();
       renderUsage();
+      if (layout === 'ide') renderTopbar();
       if (ui.agentsOpen && !el.agents.contains(document.activeElement)) renderAgentsPanel();
       break;
     case 'run_finished':
@@ -2117,133 +2440,16 @@ function onEvent(event: AgentEvent): void {
     case 'rewound':
       schedule();
       break;
+    case 'user_message':
+      // The first request names the session (header and session list).
+      if (changedId) schedule(changedId);
+      renderTopbar();
+      renderSidebar();
+      break;
     default:
       if (changedId) schedule(changedId);
   }
 }
-
-// ------------------------------------------------------------------ dialogs (desktop app)
-
-/** Questions the desktop app asks inside the UI (VS Code shows its own dialogs instead). */
-const dialogs = new Map<string, DialogView>();
-const dialogLayer = document.createElement('div');
-dialogLayer.className = 'dialogs';
-document.body.appendChild(dialogLayer);
-
-function showDialog(id: string, dialog: DialogView): void {
-  dialogs.set(id, dialog);
-  renderDialogs();
-  // A plain notice without choices goes away on its own.
-  if (dialog.kind === 'message' && !dialog.modal && !dialog.actions.length) setTimeout(() => answerDialog(id, undefined), 6000);
-}
-
-function answerDialog(id: string, value: string | number | undefined): void {
-  if (!dialogs.delete(id)) return;
-  post({ type: 'dialogResult', id, value });
-  renderDialogs();
-}
-
-function topModal(): string | undefined {
-  return [...dialogs].reverse().find(([, d]) => d.kind !== 'message' || d.modal)?.[0];
-}
-
-function renderDialogs(): void {
-  const toasts = [...dialogs].filter(([, d]) => d.kind === 'message' && !d.modal).slice(-3);
-  const modal = topModal();
-  dialogLayer.innerHTML = `${toasts.length ? `<div class="toasts">${toasts.map(([id, d]) => dialogHtml(id, d)).join('')}</div>` : ''}${
-    modal ? `<div class="modal-backdrop">${dialogHtml(modal, dialogs.get(modal)!)}</div>` : ''
-  }`;
-  const focus = dialogLayer.querySelector<HTMLElement>('.modal-backdrop .dialog-input, .modal-backdrop .dialog-filter, .modal-backdrop .btn.primary, .modal-backdrop .btn');
-  focus?.focus();
-  if (focus instanceof HTMLInputElement) focus.select();
-}
-
-function dialogHtml(id: string, d: DialogView): string {
-  const ref = `data-dialog="${attr(id)}"`;
-  const cancel = (label: string, cls = 'btn') => `<button class="${cls}" type="button" data-action="dialog-cancel" ${ref}>${escapeHtml(label)}</button>`;
-  const title = (text?: string) => (text ? `<strong class="dialog-title">${escapeHtml(text)}</strong>` : '');
-  switch (d.kind) {
-    case 'message': {
-      const actions = d.actions
-        .map((a, i) => `<button class="btn${i === 0 ? ' primary' : ''}" type="button" data-action="dialog-action" ${ref} data-value="${attr(a)}">${escapeHtml(a)}</button>`)
-        .join('');
-      const close = d.modal
-        ? cancel(d.actions.length ? t('Cancel') : t('OK'), d.actions.length ? 'btn' : 'btn primary')
-        : `<button class="icon-btn" type="button" data-action="dialog-cancel" ${ref} aria-label="${attr(t('Close'))}" title="${attr(t('Close'))}">${icon('x')}</button>`;
-      return `<div class="dialog ${d.modal ? 'modal' : 'toast'} ${attr(d.level)}" role="${d.modal ? 'alertdialog' : 'status'}" ${ref}>
-        <div class="dialog-body">${icon(d.level === 'info' ? 'info' : 'warn')}<span>${escapeHtml(d.text)}${d.detail ? `<br><span class="muted">${escapeHtml(d.detail)}</span>` : ''}</span></div>
-        <div class="dialog-actions">${actions}${close}</div></div>`;
-    }
-    case 'input':
-      return `<form class="dialog modal" role="dialog" ${ref} data-dialog-form>
-        ${title(d.title)}${d.prompt ? `<span class="muted">${escapeHtml(d.prompt)}</span>` : ''}
-        <input class="dialog-input" type="${d.password ? 'password' : 'text'}" value="${attr(d.value ?? '')}" placeholder="${attr(d.placeholder ?? '')}" autocomplete="off" spellcheck="false" aria-label="${attr(d.title ?? d.prompt ?? '')}">
-        ${d.error ? `<span class="dialog-error" role="alert">${escapeHtml(d.error)}</span>` : ''}
-        <div class="dialog-actions"><button class="btn primary" type="submit">${escapeHtml(t('OK'))}</button>${cancel(t('Cancel'))}</div>
-      </form>`;
-    case 'pick':
-      return `<div class="dialog modal pick" role="dialog" ${ref}>
-        ${title(d.title)}
-        <input class="dialog-filter" type="text" placeholder="${attr(t('Filter…'))}" aria-label="${attr(t('Filter…'))}" ${ref}>
-        <div class="pick-list">${d.items
-          .map((item, i) =>
-            item.separator
-              ? item.label
-                ? `<div class="pick-sep">${escapeHtml(item.label)}</div>`
-                : '<hr>'
-              : `<button class="pick-item${item.picked ? ' picked' : ''}" type="button" data-action="dialog-pick" ${ref} data-index="${i}" data-filter="${attr(`${item.label} ${item.description ?? ''}`.toLowerCase())}">
-                <span class="pick-label">${escapeHtml(item.label)}</span>${item.description ? `<span class="muted">${escapeHtml(item.description)}</span>` : ''}${
-                  item.detail ? `<span class="muted small">${escapeHtml(item.detail)}</span>` : ''
-                }</button>`,
-          )
-          .join('')}</div>
-        <div class="dialog-actions">${cancel(t('Cancel'))}</div>
-      </div>`;
-    case 'diff':
-      return `<div class="dialog modal diff" role="dialog" ${ref}>
-        ${title(d.title)}
-        <pre class="diff-view">${d.diff
-          .split('\n')
-          .map((line) => {
-            const cls = line.startsWith('+++') || line.startsWith('---') ? 'file' : line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : '';
-            return `<span class="${cls}">${escapeHtml(line)}</span>`;
-          })
-          .join('\n')}</pre>
-        <div class="dialog-actions">${cancel(t('Close'), 'btn primary')}</div>
-      </div>`;
-  }
-}
-
-document.addEventListener('submit', (e) => {
-  const form = (e.target as HTMLElement).closest<HTMLElement>('[data-dialog-form]');
-  if (!form) return;
-  e.preventDefault();
-  answerDialog(form.dataset.dialog!, form.querySelector<HTMLInputElement>('.dialog-input')?.value ?? '');
-});
-
-document.addEventListener('input', (e) => {
-  const target = e.target as HTMLElement;
-  if (!(target instanceof HTMLInputElement) || !target.classList.contains('dialog-filter')) return;
-  const query = target.value.trim().toLowerCase();
-  target
-    .closest('.dialog')
-    ?.querySelectorAll<HTMLElement>('.pick-item')
-    .forEach((item) => (item.hidden = !!query && !(item.dataset.filter ?? '').includes(query)));
-});
-
-document.addEventListener('keydown', (e) => {
-  const modal = topModal();
-  if (!modal) return;
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    answerDialog(modal, undefined);
-  } else if (e.key === 'Enter' && (e.target as HTMLElement).classList.contains('dialog-filter')) {
-    // Enter in a pick list's filter takes the first visible item.
-    e.preventDefault();
-    const first = dialogLayer.querySelector<HTMLElement>('.pick-item:not([hidden])');
-    if (first) answerDialog(modal, Number(first.dataset.index));
-  }
-});
 
 /**
  * Messages come from the app itself: the desktop bridge posts them to this page's own origin, VS
@@ -2263,7 +2469,7 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       showDialog(message.id, message.dialog);
       break;
     case 'closeDialog':
-      if (dialogs.delete(message.id)) renderDialogs();
+      closeDialog(message.id);
       break;
     case 'setInput':
       // Going back puts the message into the box again, to edit and resend.
@@ -2275,10 +2481,13 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       session = message.session;
       document.body.classList.toggle('busy', session.running);
       config = message.config;
+      ui.taskId = message.taskId;
       setLocale(config.locale);
+      applyAppearance();
       ui.hunks.clear();
       renderAll();
       scrollToBottom();
+      if (layout === 'ide') post({ type: 'listSessions' });
       break;
     case 'config': {
       // Don't clobber a settings field the user is typing into.
@@ -2287,16 +2496,23 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       const languageChanged = message.config.locale !== getLocale();
       config = message.config;
       setLocale(config.locale);
+      applyAppearance();
       if (languageChanged) {
         renderAll();
         break;
       }
       renderChrome();
       renderAgentsPanel();
+      renderSidebar();
       if (!(typing && el.settings.contains(active))) renderSettings();
       if (!session.items.length) renderTranscript();
       break;
     }
+    case 'sessions':
+      ui.sessions = message.groups;
+      ui.taskId = message.taskId;
+      renderSidebar();
+      break;
     case 'showAgents':
       ui.view = 'chat';
       ui.agentsOpen = true;

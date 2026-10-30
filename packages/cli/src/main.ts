@@ -41,6 +41,7 @@ import {
 import { HELP, HELP_TR, parseArgs, type CliArgs } from './args';
 import { CONFIG_FILE, defaultProvider, isProviderKind, loadConfig, ORKA_HOME, parseChoice, providerConfig, type AgentChoice, type OrkaConfig } from './config';
 import { Approver, colorDiff, formatTokens, question, Renderer, style, type Style } from './terminal';
+import { startUpdateCheck } from './updateNotice';
 
 declare const ORKA_VERSION: string;
 const VERSION = typeof ORKA_VERSION === 'string' ? ORKA_VERSION : '0.0.0-dev';
@@ -596,6 +597,9 @@ export async function main(argv: readonly string[], streams: CliIO = { stdin: pr
       const label = `${main.provider}${main.model ? ` (${main.model})` : ''}`;
       out(`${s.bold(s.cyan('Orka'))} ${s.dim(VERSION)}  ·  ${label}  ·  ${session.permissions.getMode()}${supervisor ? `  ·  ${t('Supervisor')}: ${supervisor.provider}${supervisor.model ? ` (${supervisor.model})` : ''}` : ''}\n`);
       out(s.dim(`${root}\n${t('/help for commands · @file attaches · Ctrl+C stops')}\n`));
+      // A newer release found by an earlier start's background check; today's check (if due) runs in the background.
+      const update = startUpdateCheck({ config, stdoutIsTTY: !!io.stdout.isTTY, print });
+      if (update) out(`${s.yellow(update)}\n`);
     }
     if (args.resume) {
       const task = await session.resume();

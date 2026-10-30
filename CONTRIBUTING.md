@@ -17,14 +17,14 @@ npm test
 - **VS Code extension:** open the folder in VS Code and press **F5** (*Run Extension*).
 - **Desktop app:** `npm run desktop`; `npm run desktop:exe` builds it as a single executable that needs no Node (`packages/desktop/dist/orka-desktop.exe`)
 - **CLI:** `node packages/cli/dist/orka.js`
-- **Chat UI in a browser** with a sample session: `npm run preview -w @orka/app`, then open <http://localhost:5178> (`?light`, `?empty`, `?tr`, `?nocc`, `?settings=providers`).
+- **Chat UI in a browser** with a sample session: `npm run preview -w @orka/app`, then open <http://localhost:5178> (`?light`, `?empty`, `?tr`, `?nocc`, `?settings=providers`; `?ide` shows the desktop app's window with its session list and theme).
 
 ## Project layout
 
 | Package | What lives there |
 |---|---|
 | `packages/core` (`@orka/core`) | Everything editor-agnostic: agent loop, supervisor, sub-agents, providers, tools, permissions, context, MCP, skills, i18n |
-| `packages/app` (`@orka/app`) | The chat UI (webview) and the `AppController` shared by the VS Code extension and the desktop app |
+| `packages/app` (`@orka/app`) | The chat UI (webview) and the `AppController` shared by the VS Code extension and the desktop app. In `webview/`: `core/` (bridge, HTML helpers), `features/`, `ide/` (the desktop app's session list and layout), `styles/tokens.css` (sizes), `ide.css` and `desktop-theme.css` (desktop only) |
 | `packages/vscode-extension` | The VS Code shell: settings, secret storage, diffs, inline review |
 | `packages/desktop` | The desktop shell: local server, OS key store, native dialogs |
 | `packages/cli` | The `orka` terminal app |
@@ -32,7 +32,7 @@ npm test
 ## Before you open a pull request
 
 1. `npm run typecheck` and `npm test` pass.
-2. New behaviour has a test. Core logic is tested in `packages/core/test`, the CLI and desktop app end to end in their own `test` folders.
+2. New behaviour has a test. Core logic is tested in `packages/core/test`, the controller and the UI's helpers in `packages/app/test` (with a fake shell), the CLI and desktop app end to end in their own `test` folders.
 3. Every user-facing string goes through `t()` and has a Turkish entry in `packages/core/src/i18n/tr.ts`; a test checks this. Technical terms (Agent, Supervisor, Provider, Skills, Token, MCP) stay in English in the Turkish UI.
 4. Anything that can change files or run commands goes through the permission system. Never add a path that skips approval.
 5. Keep the conversation append-only (system prompt and tool list stay fixed during a task) so prompt caching keeps working.

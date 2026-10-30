@@ -4,6 +4,7 @@ import {
   type ApprovalRequest,
   type ApprovalResponse,
   applyEvent,
+  checkAppUpdate,
   createProvider,
   DEFAULT_SUBAGENTS,
   describeModel,
@@ -19,6 +20,7 @@ import {
   inferModel,
   initProjectMemory,
   isChatModelId,
+  isNewerVersion,
   lineText,
   listModels,
   loadSkills,
@@ -41,6 +43,7 @@ import {
   PROVIDER_PRESETS,
   PROVIDERS,
   type ProviderKind,
+  releasePageUrl,
   resolveClaudeExecutable,
   type SessionView,
   setLocale,
@@ -55,6 +58,7 @@ import {
   tn,
   type Tool,
   userRequests,
+  VERSION,
 } from '@orka/core';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -63,6 +67,7 @@ import { homedir } from 'node:os';
 import * as path from 'node:path';
 import type {
   AgentView,
+  AppVersionView,
   ClaudeCodeStatus,
   ConfigView,
   ExternalAgentView,
@@ -71,6 +76,7 @@ import type {
   ImageAttachment,
   McpServerView,
   ProviderView,
+  SessionGroup,
   SettingsTab,
   SkillView,
 } from './protocol';
@@ -78,6 +84,7 @@ import {
   type AgentChoice,
   type AppSettings,
   type CustomProviderDef,
+  DESKTOP_SETTINGS,
   type Disposable,
   isCustomRef,
   MODEL_SETTING,
@@ -106,6 +113,23 @@ const HOOKS_TRUST_STATE = 'orka.hooksTrust';
 const MODEL_REFRESH_MS = 24 * 60 * 60 * 1000;
 const MAX_HUNKS = 40;
 const MAX_HUNK_LINES = 80;
+/** Tasks per folder in the desktop app's session list. */
+const MAX_SESSION_TASKS = 30;
+const APP_UPDATE_STATE = 'orka.appUpdate';
+/** How often a running app looks again whether the daily update check is due. */
+const APP_UPDATE_POLL_MS = 6 * 60 * 60 * 1000;
+
+/** The last answer about Orka releases, and the version the user was already told about. */
+interface AppUpdateState {
+  /** The last attempt, answered or not: the next background check waits a day after it. */
+  checkedAt?: number;
+  etag?: string;
+  latest?: string;
+  url?: string;
+  notified?: string;
+  /** Why the last attempt got no answer (cleared by the next answer). */
+  error?: string;
+}
 /** Global skills folder shared by the VS Code extension, the desktop app and the CLI. */
 export const USER_SKILLS_DIR = path.join(homedir(), '.orka', 'skills');
 
@@ -145,6 +169,8 @@ export class AppController implements Disposable {
   private handoff?: { session: Handoff; terminal: TerminalHandle };
   /** The workspace .mcp.json as last read (for the settings view). */
   private workspaceMcpCache: { servers: Record<string, McpServerConfig>; hash: string } = { servers: {}, hash: '' };
+  private appUpdateCheck?: Promise<void>;
+  private appUpdateTimer?: ReturnType<typeof setInterval>;
 
   constructor(private readonly shell: AppShell) {
     this.settings = readSettings(shell.settings);
@@ -170,6 +196,9 @@ export class AppController implements Disposable {
     this.recreateOrchestrator();
     void (this.settings.claudeCode.enabled ? this.checkClaudeCode() : Promise.resolve()).then(() => this.scheduledUpdates());
     void this.workspaceMcp().then(() => this.postConfig());
+    void this.checkAppUpdate();
+    this.appUpdateTimer = setInterval(() => void this.checkAppUpdate(), APP_UPDATE_POLL_MS);
+    this.appUpdateTimer.unref?.();
   }
 
   private updateSetting(key: string, value: unknown, options?: { preferGlobal?: boolean }): Promise<void> {
@@ -207,7 +236,7 @@ export class AppController implements Disposable {
         await this.rewind(message.id);
         break;
       case 'newTask':
-        await this.newTask();
+        await this.newTask(message.folder);
         break;
       case 'compact':
         await this.compact();
@@ -257,6 +286,14 @@ export class AppController implements Disposable {
       case 'checkForUpdates':
         await this.checkForUpdates();
         break;
+      case 'checkAppUpdate':
+        await this.checkAppUpdate(true);
+        break;
+      case 'openRelease': {
+        const update = this.appVersionView().update;
+        if (update) await this.shell.openExternal(update.url);
+        break;
+      }
       case 'pickClaudeExecutable':
         await this.pickClaudeExecutable();
         break;
@@ -273,11 +310,14 @@ export class AppController implements Disposable {
       case 'listTasks':
         await this.postHistory();
         break;
+      case 'listSessions':
+        await this.postSessions();
+        break;
       case 'openTask':
-        await this.openTask(message.id);
+        await this.openTask(message.id, message.folder);
         break;
       case 'deleteTask':
-        await this.deleteTask(message.id);
+        await this.deleteTask(message.id, message.folder);
         break;
       case 'searchFiles':
         await this.searchFiles(message.query);
@@ -356,6 +396,7 @@ export class AppController implements Disposable {
       if (isModelId(value)) await this.setDefaultModel(ref, value);
       return;
     }
+    if (DESKTOP_SETTINGS.has(key) && this.shell.kind !== 'desktop') return;
     if (WEBVIEW_SETTINGS[key]?.(value)) await this.updateSetting(key, value);
   }
 
@@ -450,8 +491,20 @@ export class AppController implements Disposable {
     await this.saveTask();
   }
 
-  /** Archive the current task in the history and start an empty one. */
-  async newTask(): Promise<void> {
+  /**
+   * Archive the current task in the history and start an empty one. With a folder (the desktop
+   * app's session list), the new task is in that recent folder; without any folder, one is picked.
+   */
+  async newTask(folder?: string): Promise<void> {
+    if (folder !== undefined || !this.orchestrator) {
+      const target = folder === undefined ? undefined : this.recentFolder(folder);
+      if (folder !== undefined && !target) return;
+      // Another folder starts with a new task of its own.
+      if (!target || !this.isCurrentFolder(target)) {
+        await this.selectFolder(target);
+        return;
+      }
+    }
     if (this.orchestrator?.isRunning) this.orchestrator.stop();
     await this.saveTask();
     this.task = { id: newTaskId(), createdAt: new Date().toISOString() };
@@ -838,9 +891,46 @@ export class AppController implements Disposable {
   private async postHistory(): Promise<void> {
     const tasks = this.store ? await this.store.list() : [];
     this.shell.post({ type: 'history', tasks, currentId: this.orchestrator?.snapshot().messages.length ? this.task.id : undefined });
+    await this.postSessions();
   }
 
-  async openTask(id: string): Promise<void> {
+  /** The desktop app's session list: the newest tasks of each recent folder. */
+  private async postSessions(): Promise<void> {
+    if (this.shell.kind !== 'desktop' || this.settings.desktop.layout !== 'ide') return;
+    const groups: SessionGroup[] = await Promise.all(
+      this.shell.folders().map(async (folder) => ({
+        folder: folder.path,
+        name: folder.name,
+        tasks: (await new FileTaskStore(this.shell.storage(folder.path).tasks).list().catch(() => [])).slice(0, MAX_SESSION_TASKS),
+      })),
+    );
+    this.shell.post({ type: 'sessions', groups, taskId: this.orchestrator ? this.task.id : undefined });
+  }
+
+  /** A folder named by the UI, if it is one of the recent folders (never any other path). */
+  private recentFolder(folder: string): string | undefined {
+    return this.shell.folders().find((f) => samePath(f.path, folder))?.path;
+  }
+
+  private isCurrentFolder(folder: string): boolean {
+    const root = this.host?.workspaceRoot;
+    return !!root && samePath(root, folder);
+  }
+
+  /** Open a task from the history; with a folder (desktop session list), first switch to that recent folder. */
+  async openTask(id: string, folder?: string): Promise<void> {
+    if (folder !== undefined) {
+      const target = this.recentFolder(folder);
+      if (!target) return;
+      if (!this.isCurrentFolder(target)) {
+        if (this.orchestrator?.isRunning) {
+          void this.shell.message('info', t('Stop the agent before opening another task.'));
+          return;
+        }
+        await this.selectFolder(target);
+        if (!this.isCurrentFolder(target)) return;
+      }
+    }
     const orchestrator = this.orchestrator;
     if (!orchestrator || !this.store) return;
     if (orchestrator.isRunning) {
@@ -864,13 +954,18 @@ export class AppController implements Disposable {
     await this.postHistory();
   }
 
-  async deleteTask(id: string): Promise<void> {
-    if (!this.store) return;
+  async deleteTask(id: string, folder?: string): Promise<void> {
+    const target = folder === undefined ? undefined : this.recentFolder(folder);
+    if (folder !== undefined && !target) return;
+    // A task of another recent folder (desktop session list) is deleted from that folder's history.
+    const elsewhere = target !== undefined && !this.isCurrentFolder(target);
+    const store = elsewhere ? new FileTaskStore(this.shell.storage(target).tasks) : this.store;
+    if (!store) return;
     const deleteLabel = t('Delete');
     const choice = await this.shell.message('warning', t('Delete this task from the history? This cannot be undone.'), { modal: true }, deleteLabel);
     if (choice !== deleteLabel) return;
-    await this.store.delete(id);
-    if (id === this.task.id) {
+    await store.delete(id);
+    if (!elsewhere && id === this.task.id) {
       this.task = { id: newTaskId(), createdAt: new Date().toISOString() };
       if (!this.orchestrator?.isRunning) this.orchestrator?.reset();
     }
@@ -1458,6 +1553,66 @@ export class AppController implements Disposable {
     }
   }
 
+  private appVersionView(): AppVersionView {
+    const saved = this.shell.globalState.get<AppUpdateState>(APP_UPDATE_STATE) ?? {};
+    // Only a release page Orka builds itself for that version is ever opened.
+    const url = saved.latest ? [releasePageUrl(`v${saved.latest}`), releasePageUrl(saved.latest)].find((u) => u && u === saved.url) : undefined;
+    const update = saved.latest && url && isNewerVersion(saved.latest, VERSION) ? { version: saved.latest, url } : undefined;
+    return {
+      version: VERSION,
+      checkUpdates: this.settings.checkUpdates,
+      update,
+      checkedAt: saved.checkedAt,
+      error: typeof saved.error === 'string' ? saved.error.slice(0, 200) : undefined,
+      checking: !!this.appUpdateCheck,
+    };
+  }
+
+  /**
+   * Is there a newer Orka release? Asked once a day in the background (setting updates.check, or
+   * ORKA_NO_UPDATE_CHECK=1 to turn it off), or now from the settings. It only tells: the release
+   * page opens in the browser if the user wants it; nothing is downloaded.
+   */
+  async checkAppUpdate(manual = false): Promise<void> {
+    if (this.appUpdateCheck) return this.appUpdateCheck;
+    const saved = this.shell.globalState.get<AppUpdateState>(APP_UPDATE_STATE) ?? {};
+    if (!manual && (!this.settings.checkUpdates || process.env.ORKA_NO_UPDATE_CHECK || Date.now() - (saved.checkedAt ?? 0) < MODEL_REFRESH_MS)) return;
+    this.appUpdateCheck = this.runAppUpdateCheck(saved, manual);
+    this.postConfig();
+    try {
+      await this.appUpdateCheck;
+    } catch (error) {
+      if (manual) this.reportError(error);
+    } finally {
+      this.appUpdateCheck = undefined;
+      this.postConfig();
+    }
+  }
+
+  private async runAppUpdateCheck(saved: AppUpdateState, manual: boolean): Promise<void> {
+    const result = await checkAppUpdate({ currentVersion: VERSION, etag: saved.etag });
+    // At most one attempt a day, answered or not; not_modified: the saved answer still holds.
+    const next: AppUpdateState = { ...saved, checkedAt: Date.now(), error: result.status === 'error' ? result.error || '?' : undefined };
+    if (result.status === 'newer' || result.status === 'current') Object.assign(next, { etag: result.etag, latest: result.latest, url: result.url });
+    await this.shell.globalState.update(APP_UPDATE_STATE, next);
+    if (result.status === 'error') {
+      if (manual) void this.shell.message('warning', t('Could not check for a new Orka version: {error}', { error: result.error ?? '?' }));
+      return;
+    }
+    const update = this.appVersionView().update;
+    if (!update) {
+      if (manual) void this.shell.message('info', t('Orka is up to date ({version}).', { version: VERSION }));
+      return;
+    }
+    // In the background, each new version is announced once.
+    if (!manual && next.notified === update.version) return;
+    await this.shell.globalState.update(APP_UPDATE_STATE, { ...next, notified: update.version });
+    const download = t('Download');
+    void this.shell
+      .message('info', t('Orka {version} is available (you have {current}).', { version: update.version, current: VERSION }), {}, download)
+      .then((choice) => (choice === download ? this.shell.openExternal(update.url) : undefined));
+  }
+
   /** "Check for updates" (button or command): every provider's model list and Claude Code, now. */
   async checkForUpdates(): Promise<void> {
     const updateClaudeCode = this.settings.claudeCode.enabled && resolveClaudeExecutable(this.settings.claudeCode.path);
@@ -1853,6 +2008,8 @@ export class AppController implements Disposable {
         learnLessons: s.orchestrator.learnLessons !== false,
         presets: PROVIDER_PRESETS.map((p) => ({ id: p.id, label: p.label, baseUrl: p.baseURL, requiresKey: p.requiresKey })),
       },
+      app: this.appVersionView(),
+      ui: this.shell.kind === 'desktop' ? { layout: s.desktop.layout, theme: s.desktop.theme } : undefined,
     };
   }
 
@@ -1895,6 +2052,7 @@ export class AppController implements Disposable {
   }
 
   async dispose(): Promise<void> {
+    clearInterval(this.appUpdateTimer);
     await this.saveTask();
     this.orchestrator?.dispose();
     for (const resolve of this.pendingApprovals.values()) resolve({ approved: false });
@@ -1903,6 +2061,15 @@ export class AppController implements Disposable {
     this.host?.stopAllProcesses();
     for (const d of this.disposables) d.dispose();
   }
+}
+
+/** Two paths name the same folder (Windows paths ignore case). */
+function samePath(a: string, b: string): boolean {
+  const norm = (p: string) => {
+    const resolved = path.resolve(p);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  return norm(a) === norm(b);
 }
 
 /** Errors that mean the provider's quota or session limit is used up. */

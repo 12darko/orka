@@ -118,6 +118,10 @@ API keys come from the environment only: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMI
 (custom endpoints: "apiKeyEnv" in the config). Claude Code (unofficial, opt-in with
 "claudeCode": { "enabled": true } in the config) needs no key: it uses your logged-in claude CLI.
 
+Once a day Orka asks GitHub in the background whether a newer release is out and mentions it at
+the next start; it never downloads anything. Turn this off with "updateCheck": false in the config
+or ORKA_NO_UPDATE_CHECK=1.
+
 In a session: /help lists the commands (/new, /diff, /undo, /rewind, /compact, /mode, /model,
 /usage, /skills, /freebuff, /exit). Ctrl+C stops the running request; press it twice at the prompt
 to leave.`;
@@ -146,6 +150,10 @@ Seçenekler
 API key'ler yalnızca ortam değişkenlerinden okunur: ANTHROPIC_API_KEY, OPENAI_API_KEY,
 GEMINI_API_KEY (custom endpoint'ler: config'de "apiKeyEnv"). Claude Code (resmi değil, config'de
 "claudeCode": { "enabled": true } ile açılır) key istemez: giriş yapılmış claude CLI'ını kullanır.
+
+Orka günde bir kez arka planda GitHub'a yeni bir sürüm çıkıp çıkmadığını sorar ve varsa bir sonraki
+açılışta söyler; hiçbir şey indirmez. Kapatmak için config'de "updateCheck": false ya da
+ORKA_NO_UPDATE_CHECK=1.
 
 Oturumda: /help komutları listeler (/new, /diff, /undo, /rewind, /compact, /mode, /model,
 /usage, /skills, /freebuff, /exit). Ctrl+C çalışan isteği durdurur; prompt'ta iki kez basınca

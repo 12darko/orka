@@ -65,6 +65,8 @@ export interface OrkaConfig {
   memory?: { learn?: boolean };
   /** Workers started together run side by side in copies of the project (default true). */
   parallelWorkers?: boolean;
+  /** Look for a newer Orka release once a day and mention it at the next start (default true; ORKA_NO_UPDATE_CHECK=1 also turns it off). */
+  updateCheck?: boolean;
 }
 
 export function loadConfig(file = CONFIG_FILE): { config: OrkaConfig; error?: string } {

@@ -5,5 +5,5 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["*.ts", "../src/protocol.ts"]
+  "include": ["**/*.ts", "../src/protocol.ts"]
 }

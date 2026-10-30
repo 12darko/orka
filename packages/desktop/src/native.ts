@@ -52,6 +52,12 @@ export async function pickFile(title: string, filters?: Record<string, string[]>
   return picked && existsSync(picked) ? picked : undefined;
 }
 
+/** An error in a message box of its own (Windows only), for when there is no Orka window to show it in. */
+export async function showErrorBox(title: string, text: string): Promise<void> {
+  if (process.platform !== 'win32') return;
+  await windowsDialog(`${OWNER}; [void][System.Windows.Forms.MessageBox]::Show($o, $env:ORKA_TEXT, $env:ORKA_TITLE, 'OK', 'Error')`, { ORKA_TITLE: title, ORKA_TEXT: text });
+}
+
 /** A web page, file or folder with the system's default app. */
 export function openExternal(target: string): Promise<boolean> {
   const [file, args] = process.platform === 'win32' ? ['explorer.exe', [target]] : process.platform === 'darwin' ? ['open', [target]] : ['xdg-open', [target]];
@@ -73,7 +79,8 @@ export function openTerminalWindow(options: { title: string; cwd: string; comman
   const title = options.title.replace(/["^&|<>%]/g, '');
   let child: ChildProcess;
   if (process.platform === 'win32') {
-    // "start /wait" returns when the new console window closes.
+    // "start /wait" returns when the new console window closes. windowsHide only hides the cmd
+    // that runs "start"; the console window it opens is shown.
     child = spawn('cmd.exe', ['/d', '/c', `start "${title}" /wait cmd.exe /k ${options.command}`], {
       cwd: options.cwd,
       windowsVerbatimArguments: true,

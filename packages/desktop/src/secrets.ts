@@ -12,8 +12,10 @@ function run(file: string, args: string[], options: { env?: NodeJS.ProcessEnv; i
   return new Promise((resolve, reject) => {
     // Generous: the first PowerShell start on a cold or busy machine can take well over 20 seconds.
     const child = execFile(file, args, { env: options.env ?? process.env, windowsHide: true, timeout: 90_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-      debug(error ? `failed (${error.message.split('\n')[0]}; ${stderr.trim().slice(0, 300)})` : 'done');
-      if (error) reject(new Error(stderr.trim() || error.message));
+      // Node's own message repeats the command line, and on macOS that holds the secret: never pass it on.
+      const why = error ? `${path.basename(file)} failed (${error.killed ? 'timed out' : (error.code ?? error.signal ?? 'error')})` : '';
+      debug(error ? `${why}; ${stderr.trim().slice(0, 300)}` : 'done');
+      if (error) reject(new Error(stderr.trim() || why));
       else resolve(stdout);
     });
     // Always close stdin: PowerShell can wait for the end of a redirected input before it exits.

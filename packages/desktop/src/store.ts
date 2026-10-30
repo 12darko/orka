@@ -1,6 +1,7 @@
 import type { Disposable, SettingsStore, StateStore } from '@orka/app';
 import { type FSWatcher, mkdirSync, readFileSync, renameSync, watch, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { log } from './log';
 
 type Json = Record<string, unknown>;
 
@@ -18,7 +19,24 @@ function writeJson(file: string, data: Json): void {
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-  renameSync(tmp, file);
+  renameOver(tmp, file);
+}
+
+/**
+ * Windows refuses to replace a file another program has open for a moment (a virus scanner or the
+ * search indexer looking at the file just written): try again for about a second before giving up.
+ */
+function renameOver(from: string, to: string): void {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      renameSync(from, to);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (attempt >= 12 || (code !== 'EPERM' && code !== 'EACCES' && code !== 'EBUSY')) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15 * attempt);
+    }
+  }
 }
 
 /**
@@ -113,7 +131,12 @@ export class JsonState {
       update: async (key: string, value: unknown) => {
         if (value === undefined) delete bucket()[key];
         else bucket()[key] = value;
-        writeJson(this.file, this.data);
+        // Remembered state is a convenience: the value stays in memory, and the next write saves it.
+        try {
+          writeJson(this.file, this.data);
+        } catch (error) {
+          log(`Could not save ${path.basename(this.file)}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       },
     } as StateStore;
   }

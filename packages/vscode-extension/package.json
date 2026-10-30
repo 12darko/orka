@@ -24,7 +24,7 @@
     "mcp",
     "unity"
   ],
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "12darko",
   "private": true,
   "engines": {
@@ -855,6 +855,12 @@
           "type": "boolean",
           "default": true,
           "description": "%config.memory.learn%"
+        },
+        "orka.updates.check": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "%config.updates.check%"
         }
       }
     }

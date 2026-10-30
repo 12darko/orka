@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.2.0
+
+The desktop app gets a calm, roomy window of its own: your sessions on the left, the conversation in the middle, the plan and the changes on the right.
+
+**Desktop app**
+
+- New layout:
+  - **Sessions on the left:** the tasks of your recent project folders, with a search box, a new session per folder, and delete. Opening a session from another folder switches to it.
+  - **The conversation in the middle:** a centered column. Tool calls are quiet one-line entries that open on a click.
+  - **A message box that holds its controls:** **+** (attach a file, add an image, use a skill or command), the permission mode, the model and a round send button. A new session starts with the box in the middle of the window and suggestions under it.
+  - **The task's plan and changes on the right**, in their own panel.
+  - **Shortcuts:** Ctrl+B and Ctrl+Alt+B show and hide the two sides (a closed session list becomes a narrow rail of icons); Ctrl+K searches the sessions; Ctrl+Alt+N starts a new session.
+  - A finished reply can be copied, and a button takes you back to the newest message when you scroll up.
+  - **The single-column window is still there:** **Settings → Control → Appearance → Layout**.
+- **Orka's own light and dark theme**, taken from its logo. It follows the system, or you pick one at the bottom of the session list or in the settings (setting `desktop.theme`).
+- **`orka-desktop.exe` starts without a console window.** When it cannot start, a message box says why, and `~/.orka/desktop/desktop.log` keeps the details.
+- Edge no longer offers to translate the window.
+- **Fixed:** the desktop app could quit right at start when Windows briefly held its state file open (a virus scanner or the search indexer). Saving now tries again for a moment, and remembered state that cannot be saved no longer stops the app.
+- **Security:** `desktop.log` is private to your user on macOS and Linux and masks anything shaped like an API key. A failed keychain call no longer reports its command line, which on macOS held the key being saved.
+
+**Everywhere**
+
+- **Update notices:** once a day Orka checks whether a newer release is out and says so, with a link to its page. Nothing is downloaded or installed.
+  - Turn it off with `orka.updates.check` (VS Code) or `updates.check` (desktop), `"updateCheck": false` in the CLI config, or `ORKA_NO_UPDATE_CHECK=1`.
+  - **Settings → Control** shows Orka's version and checks on request.
+- **Fixed:** the usage bars and the plan's progress bar stayed empty, because the UI's content security policy blocks inline styles.
+
+**For contributors**
+
+- The chat UI's text sizes and radii are tokens (`packages/app/webview/styles/tokens.css`). The desktop's IDE layout (`webview/ide.css`) raises the base size and the radii.
+- Shared parts of the UI moved out of `webview/main.ts`: the bridge, HTML helpers and formatting into `webview/core/`, and the in-app dialogs into `webview/features/dialogs.ts`. The IDE layout lives in `webview/ide/`.
+- `@orka/app` has tests now (`npm test -w @orka/app`), with a fake shell for the controller. The desktop end-to-end tests cover the session list, the theme and the layout switch.
+- The desktop theme moved to `packages/app/webview/desktop-theme.css`, so the UI preview shows the desktop window too (`npm run preview -w @orka/app`, then add `?ide`).
+
 ## 0.1.1
 
 Security fixes found by code scanning after 0.1.0. Please update.

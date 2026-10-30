@@ -11,17 +11,26 @@ const LAUNCH_CODE_TTL_MS = 3 * 60_000;
 const STATIC: Record<string, string> = {
   '/webview.js': 'text/javascript; charset=utf-8',
   '/webview.css': 'text/css; charset=utf-8',
+  '/ide.css': 'text/css; charset=utf-8',
   '/theme.css': 'text/css; charset=utf-8',
   '/icon.png': 'image/png',
 };
 
+/** How the page looks; chosen as it loads, so the first paint is already right. */
+export interface PageLook {
+  layout: 'ide' | 'classic';
+  theme: 'system' | 'light' | 'dark';
+}
+
 export interface UiServerOptions {
-  /** Where webview.js, webview.css and theme.css are. */
+  /** Where webview.js, webview.css, ide.css and theme.css are. */
   distDir: string;
   onMessage(message: FromWebview): void;
   /** The chat UI's saved state (draft text), handed to a page as it loads. */
   getState(): unknown;
   setState(state: unknown): void;
+  /** The layout and theme settings (default: the IDE layout, following the system's theme). */
+  getLook?(): PageLook;
   onConnect?(): void;
   onDisconnect?(): void;
 }
@@ -141,7 +150,7 @@ export class UiServer {
           "frame-ancestors 'none'",
         ].join('; '),
       });
-      res.end(page(nonce, this.options.getState()));
+      res.end(page(nonce, this.options.getState(), this.options.getLook?.() ?? { layout: 'ide', theme: 'system' }));
       return;
     }
     if (req.method === 'GET' && STATIC[url.pathname]) {
@@ -221,15 +230,19 @@ function readBody(req: http.IncomingMessage): Promise<string> {
  * (acquireVsCodeApi): messages go out as POSTs once the event stream is open, and come in as
  * window messages, exactly as in VS Code.
  */
-function page(nonce: string, state: unknown): string {
+function page(nonce: string, state: unknown, look: PageLook): string {
   const initial = JSON.stringify(state ?? null).replace(/</g, '\\u003c');
+  // Only known values reach the markup.
+  const layout = look.layout === 'classic' ? 'classic' : 'ide';
+  const theme = look.theme === 'light' || look.theme === 'dark' ? look.theme : 'system';
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" translate="no" data-layout="${layout}" data-theme="${theme}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="icon" href="/icon.png">
   <link rel="stylesheet" href="/webview.css">
+  <link rel="stylesheet" href="/ide.css">
   <link rel="stylesheet" href="/theme.css">
   <title>Orka</title>
 </head>
