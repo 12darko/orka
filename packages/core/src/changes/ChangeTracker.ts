@@ -46,16 +46,18 @@ export class ChangeTracker {
     return () => this.listeners.delete(listener);
   }
 
-  /** Call before modifying/deleting a file. Only the first snapshot per file (and per epoch) is kept. */
-  async recordBefore(absPath: string): Promise<void> {
+  /**
+   * Call before modifying/deleting a file. Only the first snapshot per file (and per epoch) is kept.
+   * Once `current` says no (the tracker now holds another task), nothing is recorded.
+   */
+  async recordBefore(absPath: string, current: () => boolean = () => true): Promise<void> {
     const key = normalize(absPath);
     const epoch = this.epochs.at(-1);
-    const forTask = !this.originals.has(key);
-    const forEpoch = !!epoch && !epoch.has(key);
-    if (!forTask && !forEpoch) return;
+    if (this.originals.has(key) && (!epoch || epoch.has(key))) return;
     const content = (await this.host.exists(absPath)) ? await this.host.readFile(absPath) : null;
-    if (forTask) this.originals.set(key, content);
-    if (forEpoch) epoch!.set(key, content);
+    if (!current()) return;
+    if (!this.originals.has(key)) this.originals.set(key, content);
+    if (epoch && !epoch.has(key)) epoch.set(key, content);
   }
 
   /** Record a known original (e.g. from a snapshot taken before a command); only the first one counts. */

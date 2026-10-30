@@ -943,12 +943,16 @@ export class Orchestrator {
       opened = true;
       let blocks = await this.firstAcpPrompt(agent, session, request, fresh ? earlier : []);
       for (let round = 0; ; round++) {
-        if (signal.aborted) return 'stopped';
+        if (signal.aborted || left()) return 'stopped';
         if (round >= settings.maxIterations) {
           this.emit({ type: 'notice', level: 'warning', message: t('Paused after {n} steps. Send "continue" to let the agent keep going.', { n: settings.maxIterations }) });
           return 'max_iterations';
         }
-        if (round > 0 && !(await net.begin())) throw noSnapshots();
+        if (round > 0) {
+          const tracking = await net.begin();
+          if (signal.aborted || left()) return 'stopped';
+          if (!tracking) throw noSnapshots();
+        }
         this.setPhase('thinking');
         // The agent does not report tokens: the call is counted, its usage is marked unreported.
         this.recordUsage('main', `agent:${agent.id}`, agent.label, emptyUsage(), 1, true);
@@ -957,8 +961,9 @@ export class Orchestrator {
         let result: AcpTurnResult | undefined;
         let failure: unknown;
         try {
-          // A file the agent writes through Orka keeps its content from the turn's snapshot as its original.
-          result = await session.prompt(blocks, signal, { recordBefore: (absPath) => net.recordBefore(absPath) });
+          // A file the agent writes through Orka keeps its content from the turn's snapshot as its
+          // original; a write still under way after a new task records nothing into that one.
+          result = await session.prompt(blocks, signal, { recordBefore: (absPath) => net.recordBefore(absPath, () => !left()) });
         } catch (error) {
           failure = error;
         }
@@ -1030,6 +1035,8 @@ export class Orchestrator {
     const session = new AcpAgentSession(client, context);
     try {
       await session.start(signal);
+      // Stopped (or a new task) meanwhile: the session must not become the next task's.
+      if (signal.aborted) throw new AbortedError();
     } catch (error) {
       session.dispose();
       throw this.agentError(agent, error);
@@ -1044,6 +1051,12 @@ export class Orchestrator {
    * for a fresh session in a task already under way, a brief of where the task stands.
    */
   private async firstAcpPrompt(agent: ExternalAgentRuntime, session: AcpAgentSession, request: ChatMessage, earlier: readonly string[]): Promise<ContentBlock[]> {
+    const text = request.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n\n');
+    const images = request.content.filter((b): b is ImageBlock => b.type === 'image');
+    // Said before anything is awaited: once a new task starts, this request emits nothing into it.
+    if (images.length && !session.acceptsImages) {
+      this.emit({ type: 'notice', level: 'warning', message: t('{agent} does not accept images, so the attached images were not sent.', { agent: agent.label }) });
+    }
     let brief = '';
     if (earlier.length) {
       const changed = await this.changes.list().catch(() => []);
@@ -1053,11 +1066,6 @@ export class Orchestrator {
         changedFiles: changed.map((c) => c.relPath),
         note: '[Orka] You are taking over a task that is already under way; its earlier conversation is not available to you. This is where it stands.',
       });
-    }
-    const text = request.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n\n');
-    const images = request.content.filter((b): b is ImageBlock => b.type === 'image');
-    if (images.length && !session.acceptsImages) {
-      this.emit({ type: 'notice', level: 'warning', message: t('{agent} does not accept images, so the attached images were not sent.', { agent: agent.label }) });
     }
     const prompt = withNotes(session.takeNotes(), brief ? `${brief}\n\n# New request\n${text}` : text);
     return [

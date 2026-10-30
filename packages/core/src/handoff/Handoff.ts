@@ -1,4 +1,3 @@
-import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type { ChangeTracker } from '../changes/ChangeTracker';
 import type { CommandChange, ShadowGit } from '../changes/ShadowGit';
@@ -97,8 +96,9 @@ export async function recordChangesSince(
     const tracked = changes.isTracked(abs);
     if (tracked && includeTracked) recorded.push(change);
     if (tracked && changes.capturedInEpoch(abs)) continue;
-    const original = change.status === 'added' ? null : await snapshots.fileAt(before, change.path);
-    if (original === undefined) continue; // binary: not revertible as text
+    const original = change.status === 'added' ? null : await snapshots.contentAt(before, change.path);
+    // Binary, a link, or git failed: not revertible as text. Only an added file did not exist.
+    if (original === undefined || (original === null && change.status !== 'added')) continue;
     if (!current()) return [];
     changes.recordOriginal(abs, original);
     if (!tracked) recorded.push(change);
@@ -140,18 +140,17 @@ export class Handoff<A extends { id: string; label: string } = ExternalAgent> {
   /**
    * Record a file's original before the agent writes it through Orka. The agent may already have
    * changed it unseen (its own tools, a command), so the original is the file as it was at begin(),
-   * from the snapshot. The file on disk serves only where the snapshot cannot tell: a binary file,
-   * one the snapshots leave out (.gitignore), or no snapshot.
+   * from the snapshot: its exact bytes on disk while unchanged since, or "did not exist" for one
+   * the agent created (or renamed) since. The file on disk serves only where the snapshot cannot
+   * tell: a binary file, a link, one the snapshots leave out (.gitignore), or no snapshot. Once
+   * `current` says no (the tracker now holds another task), nothing is recorded.
    */
-  async recordBefore(absPath: string): Promise<void> {
-    if (this.changes.isTracked(absPath) && this.changes.capturedInEpoch(absPath)) return;
-    let original: string | null | undefined;
-    if (this.baseline && this.snapshots) {
-      original = await this.snapshots.contentAt(this.baseline, path.relative(this.root, absPath).split(path.sep).join('/'));
-      // Not in the snapshot but on disk: new since begin(), or left out of the snapshots; only the disk can say.
-      if (original === null && (await exists(absPath))) original = undefined;
-    }
-    if (original === undefined) await this.changes.recordBefore(absPath);
+  async recordBefore(absPath: string, current: () => boolean = () => true): Promise<void> {
+    if (!current() || (this.changes.isTracked(absPath) && this.changes.capturedInEpoch(absPath))) return;
+    const rel = path.relative(this.root, absPath).split(path.sep).join('/');
+    const original = this.baseline && this.snapshots ? await this.snapshots.originalAt(this.baseline, rel) : undefined;
+    if (!current()) return;
+    if (original === undefined) await this.changes.recordBefore(absPath, current);
     else this.changes.recordOriginal(absPath, original);
   }
 
@@ -170,11 +169,4 @@ export class Handoff<A extends { id: string; label: string } = ExternalAgent> {
     }
     return changed;
   }
-}
-
-async function exists(p: string): Promise<boolean> {
-  return fs.lstat(p).then(
-    () => true,
-    () => false,
-  );
 }

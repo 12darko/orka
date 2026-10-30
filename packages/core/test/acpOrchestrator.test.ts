@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import type { AcpLaunchSpec } from '../src/acp/AcpClient';
 import { AcpAgentPool, pooledAgent } from '../src/acp/pool';
+import { ChangeTracker } from '../src/changes/ChangeTracker';
 import { ShadowGit } from '../src/changes/ShadowGit';
 import type { ApprovalRequest, ApprovalResponse } from '../src/host/Host';
 import { NodeHost } from '../src/host/NodeHost';
@@ -29,6 +30,7 @@ describe('a third-party agent over ACP as the main agent', () => {
   let log: string;
   const file = (name: string) => path.join(ws.root, name);
   const read = (name: string) => readFileSync(file(name), 'utf8');
+  const shadowDir = () => path.join(store.root, 'shadow.git');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- free-form log lines of the fake agent
   const logged = (): any[] => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
 
@@ -58,6 +60,9 @@ describe('a third-party agent over ACP as the main agent', () => {
       /** The main agent is the fake agent while this says so, else `model`. */
       useAgent?: () => boolean;
       model?: ScriptedProvider;
+      /** In place of the default snapshots and change tracker (e.g. ones that hold a step until the test lets it go on). */
+      shadow?: ShadowGit;
+      changes?: (host: NodeHost) => ChangeTracker;
     } = {},
   ) {
     const approvals: ApprovalRequest[] = [];
@@ -86,7 +91,8 @@ describe('a third-party agent over ACP as the main agent', () => {
       },
       permissions: new PermissionManager(options.mode ?? 'balanced'),
       getSettings: () => ({ ...SETTINGS, ...options.settings }),
-      commandSnapshots: options.snapshots === false ? undefined : new ShadowGit(ws.root, path.join(store.root, 'shadow.git')),
+      changes: options.changes?.(host),
+      commandSnapshots: options.snapshots === false ? undefined : (options.shadow ?? new ShadowGit(ws.root, shadowDir())),
       getExternalAgent: () => ((options.useAgent?.() ?? true) ? pooledAgent(pool, spec) : undefined),
       supervisor: options.supervisor && {
         getProvider: () => options.supervisor!.provider,
@@ -368,6 +374,94 @@ describe('a third-party agent over ACP as the main agent', () => {
     assert.equal(read('a.txt'), 'a0\n');
   });
 
+  gitIt('a file the agent created or renamed unseen and then writes through Orka did not exist before: Revert and Go back delete it', async () => {
+    const { orchestrator } = setup([
+      [{ directWrite: { path: 'new.txt', content: 'v1\n' } }, { writeFile: { path: file('new.txt'), content: 'v2\n' } }],
+      [{ rename: { from: 'a.txt', to: 'b.txt' } }, { writeFile: { path: file('b.txt'), content: 'b1\n' } }],
+      [
+        // A scaffolder: a new folder with its own .gitignore (one that re-includes a file, too).
+        { directWrite: { path: 'web/.gitignore', content: 'node_modules\n.vscode/*\n!.vscode/extensions.json\n' } },
+        { directWrite: { path: 'web/src/App.jsx', content: 'generated\n' } },
+        { writeFile: { path: file('web/src/App.jsx'), content: 'edited\n' } },
+      ],
+    ]);
+    assert.equal(await orchestrator.run('create'), 'completed');
+    assert.equal(orchestrator.changes.getOriginal(file('new.txt')), null, 'not the content the agent\'s own tool left');
+    assert.deepEqual((await orchestrator.changes.list()).map((c) => `${c.relPath} ${c.status}`), ['new.txt added']);
+    assert.equal(await orchestrator.run('rename'), 'completed');
+    assert.equal(orchestrator.changes.getOriginal(file('b.txt')), null);
+    assert.equal(await orchestrator.run('scaffold'), 'completed');
+    assert.equal(orchestrator.changes.getOriginal(file('web/src/App.jsx')), null);
+    await orchestrator.rewind(orchestrator.rewindTargets[2].id);
+    assert.equal(existsSync(file('web/src/App.jsx')) || existsSync(file('web/.gitignore')), false, 'the scaffolded files are gone');
+    await orchestrator.changes.revertAll();
+    assert.equal(existsSync(file('new.txt')), false);
+    assert.equal(existsSync(file('b.txt')), false);
+    assert.equal(read('a.txt'), 'a0\n');
+  });
+
+  gitIt('an ignored file the agent writes through Orka is never taken for a new one, also after the agent changed the ignore rules', async () => {
+    writeFileSync(file('.gitignore'), '.env\n*.log\n');
+    writeFileSync(file('.env'), 'KEY=0\n');
+    writeFileSync(file('debug.log'), 'log0\n');
+    const { orchestrator } = setup([
+      [
+        { directWrite: { path: 'debug.log', content: 'log1\n' } },
+        { writeFile: { path: file('debug.log'), content: 'log2\n' } },
+        // .env was ignored when the turn began: with that rule gone, it would pass for a new file.
+        { directWrite: { path: '.gitignore', content: 'node_modules\n' } },
+        { writeFile: { path: file('.env'), content: 'KEY=1\n' } },
+      ],
+    ]);
+    assert.equal(await orchestrator.run('rewrite the ignore file, then the secrets'), 'completed');
+    assert.equal(orchestrator.changes.getOriginal(file('.env')), 'KEY=0\n');
+    // Ignored files are not in the snapshots: only the disk can say what they held.
+    assert.equal(orchestrator.changes.getOriginal(file('debug.log')), 'log1\n');
+    await orchestrator.changes.revertAll();
+    assert.equal(read('.env'), 'KEY=0\n', 'not deleted');
+    assert.equal(read('debug.log'), 'log1\n');
+    assert.equal(read('.gitignore'), '.env\n*.log\n');
+  });
+
+  gitIt('originals keep the exact bytes of the start of the turn: line endings that git normalizes', async () => {
+    writeFileSync(file('.gitattributes'), '* text=auto\n*.cs text eol=crlf\n');
+    writeFileSync(file('Player.cs'), 'line1\r\nline2\r\n');
+    writeFileSync(file('Enemy.cs'), 'e1\r\ne2\r\n');
+    const { orchestrator } = setup([
+      [
+        { writeFile: { path: file('Player.cs'), content: 'line1\r\nline2 changed\r\n' } },
+        { directWrite: { path: 'Enemy.cs', content: 'e1\r\nunseen\r\n' } },
+        { writeFile: { path: file('Enemy.cs'), content: 'e1\r\ne2 changed\r\n' } },
+      ],
+      [{ directWrite: { path: 'Player.cs', content: 'line1\r\nline2 again\r\n' } }],
+    ]);
+    assert.equal(await orchestrator.run('edit'), 'completed');
+    assert.equal(orchestrator.changes.getOriginal(file('Player.cs')), 'line1\r\nline2\r\n', 'unchanged since the snapshot: the bytes on disk');
+    assert.equal(orchestrator.changes.getOriginal(file('Enemy.cs')), 'e1\r\ne2\r\n', 'changed unseen: from the snapshot, with git\'s line endings');
+    assert.deepEqual((await orchestrator.changes.list()).map((c) => `${c.relPath} +${c.added} -${c.removed}`), ['Enemy.cs +1 -1', 'Player.cs +1 -1']);
+    // The rewind point of a tracked file changed by the agent's own tool comes from the snapshot too.
+    assert.equal(await orchestrator.run('again'), 'completed');
+    await orchestrator.rewind(orchestrator.rewindTargets[1].id);
+    assert.equal(readFileSync(file('Player.cs'), 'utf8'), 'line1\r\nline2 changed\r\n');
+    await orchestrator.changes.revertAll();
+    assert.equal(read('Player.cs'), 'line1\r\nline2\r\n');
+    assert.equal(read('Enemy.cs'), 'e1\r\ne2\r\n');
+  });
+
+  gitIt('reverting a link the agent wrote through puts back the content of its target', async () => {
+    writeFileSync(file('AGENTS.md'), 'rules\n');
+    try {
+      symlinkSync('AGENTS.md', file('GEMINI.md'), 'file');
+    } catch {
+      return; // links cannot be made here
+    }
+    const { orchestrator } = setup([[{ writeFile: { path: file('GEMINI.md'), content: 'new rules\n' } }]]);
+    assert.equal(await orchestrator.run('update the rules'), 'completed');
+    assert.equal(read('AGENTS.md'), 'new rules\n');
+    await orchestrator.changes.revert(file('GEMINI.md'));
+    assert.equal(read('AGENTS.md'), 'rules\n', 'not the path the link points to');
+  });
+
   gitIt('after a new task, the turn that is still ending writes nothing into it', async () => {
     const { orchestrator, events } = setup([
       [
@@ -390,6 +484,97 @@ describe('a third-party agent over ACP as the main agent', () => {
     assert.equal(orchestrator.currentPlan, undefined);
     const after = events.slice(resetAt).map((e) => e.type);
     assert.ok(after.every((type) => type === 'phase' || type === 'run_finished'), `only the run's end: ${after.join(', ')}`);
+  });
+
+  /** A promise the test opens, and one that says the code under test is waiting for it. */
+  function gate() {
+    let open!: () => void;
+    let reached!: () => void;
+    const opened = new Promise<void>((resolve) => (open = resolve));
+    const waiting = new Promise<void>((resolve) => (reached = resolve));
+    return { open, opened, reached, waiting };
+  }
+
+  gitIt('a new task while the next round snapshots the workspace gets nothing of the old request', async () => {
+    const held = gate();
+    let snapshots = 0;
+    const shadow = new (class extends ShadowGit {
+      override async snapshot(): Promise<string | undefined> {
+        if (++snapshots === 2) {
+          held.reached();
+          await held.opened;
+        }
+        return super.snapshot();
+      }
+    })(ws.root, shadowDir());
+    const supervisor = new ScriptedProvider([() => [text('<verdict>intervene</verdict>\n<message>Add a test for it.</message>')]]);
+    const { orchestrator, events } = setup([[{ chunk: 'Done.' }], [{ chunk: 'never' }]], { shadow, supervisor: { provider: supervisor, settings: { frequency: 'checkpoints' } } });
+    const running = orchestrator.run('fix it');
+    await held.waiting;
+    orchestrator.stop();
+    orchestrator.reset();
+    const resetAt = events.length;
+    held.open();
+    assert.equal(await running, 'stopped');
+    assert.deepEqual(orchestrator.usageByAgent, [], 'no call of the old request is counted in the new task');
+    const after = events.slice(resetAt).map((e) => e.type);
+    assert.ok(after.every((type) => type === 'phase' || type === 'run_finished'), `only the run's end: ${after.join(', ')}`);
+    assert.equal(logged().filter((e) => e.event === 'prompt').length, 1, 'the correction was never sent');
+  });
+
+  gitIt('a write still under way when a new task starts records nothing into it', async () => {
+    const held = gate();
+    const shadow = new (class extends ShadowGit {
+      override async originalAt(snapshot: string, relPath: string): Promise<string | null | undefined> {
+        held.reached();
+        await held.opened;
+        return super.originalAt(snapshot, relPath);
+      }
+    })(ws.root, shadowDir());
+    const { orchestrator } = setup([[{ writeFile: { path: file('a.txt'), content: 'a1\n' } }]], { shadow });
+    const running = orchestrator.run('change a');
+    await held.waiting;
+    orchestrator.stop();
+    orchestrator.reset();
+    held.open();
+    assert.equal(await running, 'stopped');
+    assert.equal(orchestrator.changes.isTracked(file('a.txt')), false, 'the old request\'s original is not the new task\'s');
+    assert.equal(read('a.txt'), 'a0\n', 'nothing was written');
+  });
+
+  gitIt('a new task while the agent\'s first prompt is put together gets no notice of the old request', async () => {
+    const held = gate();
+    let hold = false;
+    let agent = false;
+    const model = new ScriptedProvider([() => [text('From the model.')]]);
+    const { orchestrator, events } = setup([[{ chunk: 'never' }]], {
+      useAgent: () => agent,
+      model,
+      changes: (host) =>
+        new (class extends ChangeTracker {
+          override async list() {
+            if (hold) {
+              held.reached();
+              await held.opened;
+            }
+            return super.list();
+          }
+        })(host),
+    });
+    assert.equal(await orchestrator.run('first'), 'completed');
+    // The agent takes over with a brief of the task (it lists the changes so far), and cannot take the image.
+    agent = true;
+    hold = true;
+    const running = orchestrator.run('second', undefined, [], { images: [{ name: 'shot.png', mediaType: 'image/png', data: 'iVBORw0KGgo=' }] });
+    await held.waiting;
+    orchestrator.stop();
+    orchestrator.reset();
+    const resetAt = events.length;
+    held.open();
+    assert.equal(await running, 'stopped');
+    const after = events.slice(resetAt).map((e) => e.type);
+    assert.ok(after.every((type) => type === 'phase' || type === 'run_finished'), `only the run's end: ${after.join(', ')}`);
+    assert.equal(logged().filter((e) => e.event === 'prompt').length, 0);
   });
 
   for (const method of ['initialize', 'session/new']) {

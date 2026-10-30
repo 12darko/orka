@@ -5,10 +5,11 @@
 //   {permission: {id, title, kind, rawInput, locations, diff: {path, oldText, newText}}}
 //   {readFile: {path, line, limit}} {writeFile: {path, content}} {directWrite: {path, content}}
 //   {terminal: {command, args, cwd}} {hang: true} {stop: "end_turn" | "refusal" | ...}
+//   {rename: {from, to}} (the agent's own tool, like directWrite)
 // Every message and answer is logged as a JSON line to FAKE_ACP_LOG. FAKE_ACP_NEEDS_LOGIN=1 makes
 // session/new fail with "auth required"; FAKE_ACP_IMAGES=1 advertises image prompts;
 // FAKE_ACP_HANG=initialize (or session/new) never answers that request, like a stuck agent.
-import { appendFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import * as path from 'node:path';
 
 const script = JSON.parse(process.env.FAKE_ACP_SCRIPT || '[]');
@@ -166,6 +167,10 @@ async function runTurn(sessionId, steps) {
         if (step.afterCancel !== undefined) update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: step.afterCancel } });
       } else if (step.stop) {
         return step.stop;
+      } else if (step.rename) {
+        // The agent's own tool (e.g. mv): unseen, like directWrite.
+        const cwd = cwds.get(sessionId);
+        renameSync(path.resolve(cwd, step.rename.from), path.resolve(cwd, step.rename.to));
       }
     }
     return cancelled ? 'cancelled' : 'end_turn';
