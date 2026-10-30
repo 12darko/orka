@@ -166,6 +166,7 @@
         { kind: 'claude-code', label: 'Claude Code (local)', local: true, ready: true, models: [m('default', 'CLI default', 'Latest (aliases)', 'whatever Claude Code uses'), m('opus', 'Opus (latest)', 'Latest (aliases)'), m('sonnet', 'Sonnet (latest)', 'Latest (aliases)'), m('haiku', 'Haiku (latest)', 'Latest (aliases)'), m('fable', 'Fable (latest)', 'Latest (aliases)'), ...CLAUDE], model: 'claude-opus-5-5' },
         { kind: 'custom:openrouter', label: 'OpenRouter', local: false, ready: true, models: [m('deepseek/deepseek-coder', 'deepseek-coder', 'deepseek'), m('meta-llama/llama-5-70b', 'llama-5-70b', 'meta-llama'), m('qwen/qwen-4-coder', 'qwen-4-coder', 'qwen')], model: 'qwen/qwen-4-coder', key: { source: 'stored', hint: 'sk-or-••••91ab' }, custom: { id: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', requiresKey: true } },
         { kind: 'custom:ollama', label: 'Ollama (local)', local: true, ready: true, models: [], model: '', custom: { id: 'ollama', baseUrl: 'http://localhost:11434/v1', requiresKey: false } },
+        { kind: 'agent:gemini', label: 'Gemini CLI', local: true, ready: true, models: [{ id: '', label: 'Set in the agent', family: 'Agent CLI' }], model: '', agent: true },
       ].filter((p) => p.kind !== 'claude-code' || !params.has('nocc'));
       const main = empty
         ? { name: 'main', provider: 'claude', model: 'claude-opus-5-5', effective: { provider: 'claude', model: 'claude-opus-5-5' } }
@@ -178,7 +179,14 @@
         folders: [{ name: 'LobbyDemo', path: root }, { name: 'SharedLib', path: 'D:/game/SharedLib' }],
         folder: root,
         canOpenFolder: ide,
-        app: { version: '0.2.0', checkUpdates: true, checkedAt: Date.now() - 3600e3 },
+        app: { version: '0.3.0', checkUpdates: true, checkedAt: Date.now() - 3600e3 },
+        agentClis: [
+          { id: 'gemini', label: 'Gemini CLI', vendor: 'Google', custom: false, enabled: true, status: { state: 'ready', version: '0.66.0', executable: 'C:/Users/you/AppData/Roaming/npm/gemini.cmd' }, path: '', note: "Runs your installed Gemini CLI in its ACP mode. Orka never uses Gemini CLI's sign-in itself: Google's terms forbid other software from using it. Google moved unpaid and Google One accounts from Gemini CLI to Antigravity.", termsUrl: 'https://geminicli.com/docs/resources/tos-privacy/', docsUrl: 'https://geminicli.com/docs/cli/acp-mode/', installHint: 'npm install -g @google/gemini-cli', loginCommand: 'gemini', preview: false },
+          { id: 'codex', label: 'Codex (codex-acp)', vendor: 'OpenAI', custom: false, enabled: true, status: { state: 'not_found' }, path: '', note: 'Runs the codex-acp adapter (Apache-2.0) you installed. Sign in with Codex itself, with a ChatGPT plan or an API key.', termsUrl: 'https://openai.com/policies/terms-of-use/', docsUrl: 'https://github.com/agentclientprotocol/codex-acp', installHint: 'npm install -g @agentclientprotocol/codex-acp', loginCommand: 'codex login', preview: false },
+          { id: 'copilot', label: 'GitHub Copilot CLI', vendor: 'GitHub', custom: false, enabled: false, status: { state: 'unknown' }, path: '', note: 'Runs your installed GitHub Copilot CLI as an ACP server. GitHub documents this mode for other clients; it is a public preview and may change.', termsUrl: 'https://docs.github.com', docsUrl: 'https://docs.github.com', installHint: 'winget install GitHub.Copilot', loginCommand: 'copilot login', preview: true },
+          { id: 'cursor', label: 'Cursor CLI', vendor: 'Cursor', custom: false, enabled: false, status: { state: 'unknown' }, path: '', note: 'Runs your installed Cursor CLI ("agent acp"), which Cursor documents for custom clients.', termsUrl: 'https://cursor.com/terms-of-service', docsUrl: 'https://cursor.com/docs/cli/acp', installHint: '', loginCommand: 'agent login', preview: false },
+        ],
+        agentClisLeftOut: [{ id: 'antigravity', reason: "Google's terms do not allow using Antigravity through third-party software on consumer plans." }, { id: 'claude-agent-acp', reason: "The Claude ACP adapter's licence is unclear. Claude stays available through the Claude API provider and the opt-in Claude Code provider." }],
         ui: ide ? { layout: 'ide', theme } : undefined,
         skillsEnabled: true,
         skills: [

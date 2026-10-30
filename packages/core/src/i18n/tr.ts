@@ -732,6 +732,50 @@ export const TR: Record<string, string> = {
   '{n} hidden session': '{n} gizli oturum',
   '{n} hidden sessions': '{n} gizli oturum',
 
+  // Agent CLIs in the app (settings, pickers, notices)
+  '{agent} is not installed. Install it ({hint}), then check it again in Settings > Providers.':
+    '{agent} kurulu değil. Kurun ({hint}), sonra Ayarlar > Providers bölümünde yeniden kontrol edin.',
+  '{agent} could not be started: {error}': '{agent} başlatılamadı: {error}',
+  'That agent CLI is turned off. Turn it on in Settings > Providers > Agent CLIs.': "Bu agent CLI kapalı. Ayarlar > Providers > Agent CLI'lar bölümünden açın.",
+  'An agent CLI can only be the main agent.': 'Bir agent CLI yalnızca ana agent olabilir.',
+  '{agent}: sign in': '{agent}: giriş',
+  'Choose the {agent} program': '{agent} programını seçin',
+  Programs: 'Programlar',
+  'Add an ACP agent': 'ACP agent ekle',
+  'A name for it': 'Bir ad',
+  'e.g. My agent': 'ör. Benim agent',
+  'The command that starts its ACP server (program and arguments)': 'ACP sunucusunu başlatan komut (program ve argümanlar)',
+  'e.g. my-agent --acp': 'ör. my-agent --acp',
+  'Enter a command.': 'Bir komut girin.',
+  'An agent called {name} already exists.': '{name} adında bir agent zaten var.',
+  'Orka will run exactly this program as an agent in your project: {command}. Only add agents you trust, and follow their terms.':
+    'Orka projenizde agent olarak tam olarak bu programı çalıştıracak: {command}. Yalnızca güvendiğiniz agent\'ları ekleyin ve şartlarına uyun.',
+  'Set in the agent': "Agent'ın kendi ayarı",
+  'Agent CLI': 'Agent CLI',
+  'the agent does not report its tokens': "agent token kullanımını bildirmiyor",
+  'not ready': 'hazır değil',
+  'Agent CLIs': "Agent CLI'lar",
+  '{provider} is not ready.': '{provider} hazır değil.',
+  '{agent} runs its own tools; Orka asks you where it asks, and every file it changes can be reviewed and reverted.':
+    '{agent} kendi araçlarını çalıştırır; izin istediğinde Orka size sorar ve değiştirdiği her dosya incelenip geri alınabilir.',
+  'Not installed': 'Kurulu değil',
+  'Not checked': 'Kontrol edilmedi',
+  Command: 'Komut',
+  'Install it yourself, then check again:': 'Kendiniz kurun, sonra yeniden kontrol edin:',
+  Check: 'Kontrol et',
+  'Opens {command} in a terminal; you sign in there, Orka never sees it.': '{command} bir terminalde açılır; girişi orada yaparsınız, Orka göremez.',
+  'Sign in…': 'Giriş yap…',
+  Docs: 'Belgeler',
+  Terms: 'Şartlar',
+  preview: 'önizleme',
+  'Offer it as the main agent': 'Ana agent olarak sun',
+  'Coding agents you installed and signed in to yourself. As the main agent they run their own tools; Orka answers their permission requests, keeps their file changes reviewable and revertible, and its Supervisor reviews the result. Orka never reads or stores their sign-in.':
+    "Kendi kurup giriş yaptığınız kodlama agent'ları. Ana agent olduklarında kendi araçlarını çalıştırırlar; Orka izin isteklerine yanıt verir, dosya değişikliklerini incelenebilir ve geri alınabilir tutar, Supervisor sonucu inceler. Orka giriş bilgilerini hiçbir zaman okumaz ya da saklamaz.",
+  'Any agent that speaks the Agent Client Protocol: you enter the command that starts it, and Orka runs exactly that.':
+    "Agent Client Protocol konuşan herhangi bir agent: onu başlatan komutu girersiniz, Orka tam olarak onu çalıştırır.",
+  'Add…': 'Ekle…',
+  'Not offered here:': 'Burada sunulmayanlar:',
+
   // Hand-off to external agents (Freebuff)
   'Free, ad-supported terminal coding agent (open models, daily allowance).': 'Ücretsiz, reklamla desteklenen terminal coding agent\'ı (açık modeller, günlük kota).',
   'The provider hit a usage limit. You can continue this task in {agent} for free.': 'Provider kullanım sınırına takıldı. Bu göreve {agent} ile ücretsiz devam edebilirsiniz.',

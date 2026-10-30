@@ -1,4 +1,15 @@
 import {
+  AcpAgentPool,
+  AGENT_CLIS,
+  type AgentCliEntry,
+  agentLaunchSpec,
+  agentPolicy,
+  checkAgentCli,
+  customAgentEntry,
+  type ExternalAgentRuntime,
+  installHint,
+  NOT_IN_CATALOG,
+  pooledAgent,
   type AgentEvent,
   type AIProvider,
   type ApprovalRequest,
@@ -66,6 +77,7 @@ import { existsSync, promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 import type {
+  AgentCliView,
   AgentView,
   AppVersionView,
   ClaudeCodeStatus,
@@ -88,6 +100,7 @@ import {
   type CustomProviderDef,
   DESKTOP_SETTINGS,
   type Disposable,
+  isAgentRef,
   isCustomRef,
   MODEL_SETTING,
   type ProviderRef,
@@ -177,6 +190,9 @@ export class AppController implements Disposable {
   private workspaceMcpCache: { servers: Record<string, McpServerConfig>; hash: string } = { servers: {}, hash: '' };
   private appUpdateCheck?: Promise<void>;
   private appUpdateTimer?: ReturnType<typeof setInterval>;
+  /** Agent CLI processes (ACP), shared by the tasks of every folder; and what their last check found. */
+  private readonly acpPool = new AcpAgentPool();
+  private readonly agentStatus = new Map<string, AgentCliView['status']>();
 
   constructor(private readonly shell: AppShell) {
     this.settings = readSettings(shell.settings);
@@ -205,6 +221,7 @@ export class AppController implements Disposable {
     void this.checkAppUpdate();
     this.appUpdateTimer = setInterval(() => void this.checkAppUpdate(), APP_UPDATE_POLL_MS);
     this.appUpdateTimer.unref?.();
+    for (const id of this.settings.agentClis.enabled) void this.checkAgent(id);
   }
 
   private updateSetting(key: string, value: unknown, options?: { preferGlobal?: boolean }): Promise<void> {
@@ -283,6 +300,33 @@ export class AppController implements Disposable {
       case 'checkClaudeCode':
         await this.checkClaudeCode();
         break;
+      case 'toggleAgentCli':
+        await this.toggleAgentCli(message.id, message.enabled === true);
+        break;
+      case 'checkAgentCli':
+        await this.checkAgent(message.id);
+        break;
+      case 'loginAgentCli':
+        this.loginAgentCli(message.id);
+        break;
+      case 'pickAgentExecutable':
+        await this.pickAgentExecutable(message.id);
+        break;
+      case 'resetAgentExecutable':
+        await this.setAgentPath(message.id, undefined);
+        break;
+      case 'addCustomAgent':
+        await this.addCustomAgent();
+        break;
+      case 'removeCustomAgent':
+        await this.removeCustomAgent(message.id);
+        break;
+      case 'openAgentLink': {
+        const entry = this.agentEntry(message.id);
+        const url = message.link === 'terms' ? agentPolicy(entry?.policy ?? '')?.termsUrl : entry?.docsUrl;
+        if (url?.startsWith('https://')) await this.shell.openExternal(url);
+        break;
+      }
       case 'updateClaudeCode':
         await this.updateClaudeCode();
         break;
@@ -424,6 +468,18 @@ export class AppController implements Disposable {
       return;
     }
     const main = this.mainProvider();
+    const agent = this.agentFor(main);
+    if (agent && !this.isReady(main)) {
+      const status = this.agentStatus.get(agent.id);
+      this.publishNotice(
+        'error',
+        status?.state === 'not_found'
+          ? t('{agent} is not installed. Install it ({hint}), then check it again in Settings > Providers.', { agent: agent.label, hint: installHint(agent) || '?' })
+          : t('{agent} could not be started: {error}', { agent: agent.label, error: status?.detail ?? '?' }),
+        'agentClis',
+      );
+      return;
+    }
     if (!this.isReady(main)) {
       this.publishNotice(
         'error',
@@ -1110,16 +1166,60 @@ export class AppController implements Disposable {
   }
 
   private providerLabel(ref: string): string {
-    return this.customDef(ref)?.label ?? PROVIDERS[ref as ProviderKind]?.label ?? ref;
+    return this.agentFor(ref)?.label ?? this.customDef(ref)?.label ?? PROVIDERS[ref as ProviderKind]?.label ?? ref;
   }
 
   private defaultModel(ref: string): string {
+    // An agent CLI uses whatever model the agent itself is set to.
+    if (isAgentRef(ref)) return '';
     const custom = this.customDef(ref);
     if (custom) return custom.defaultModel;
     return this.settings.models[ref as ProviderKind] ?? '';
   }
 
+  /** Built-in and custom agent CLIs, as catalog entries. */
+  private agentEntries(): AgentCliEntry[] {
+    return [...AGENT_CLIS, ...this.settings.agentClis.custom.map((c) => customAgentEntry(c))];
+  }
+
+  private agentEntry(id: string): AgentCliEntry | undefined {
+    return this.agentEntries().find((e) => e.id === id);
+  }
+
+  /** "agent:gemini" -> its catalog entry, when the user turned it on. */
+  private agentFor(ref: string): AgentCliEntry | undefined {
+    if (!isAgentRef(ref)) return undefined;
+    const id = ref.slice('agent:'.length);
+    return this.settings.agentClis.enabled.includes(id) ? this.agentEntry(id) : undefined;
+  }
+
+  /** The third-party agent that runs the main agent's turns, when the main agent is one. */
+  private externalAgent(): ExternalAgentRuntime | undefined {
+    const ref = this.mainProvider();
+    if (!isAgentRef(ref)) return undefined;
+    const entry = this.agentFor(ref);
+    const root = this.host?.workspaceRoot;
+    if (!entry || !root) throw new Error(t('That agent CLI is turned off. Turn it on in Settings > Providers > Agent CLIs.'));
+    return pooledAgent(this.acpPool, agentLaunchSpec(entry, root, this.settings.agentClis.paths[entry.id]));
+  }
+
+  /**
+   * With an agent CLI as the main agent, the model the other roles (Supervisor, sub-agents, the
+   * light and fallback models) inherit: Claude Code when it is on and ready, else the first
+   * provider that works, else the Claude API.
+   */
+  private modelMain(): { provider: ProviderRef; model: string } {
+    const ready = (ref: ProviderRef) => this.isReady(ref) && (ref !== 'claude-code' || this.claudeCodeStatus.state === 'ready');
+    const ref = this.allProviderRefs().find(ready) ?? 'claude';
+    return { provider: ref, model: this.defaultModel(ref) };
+  }
+
   private isReady(ref: string): boolean {
+    if (isAgentRef(ref)) {
+      const entry = this.agentFor(ref);
+      const state = entry ? this.agentStatus.get(entry.id)?.state : undefined;
+      return !!entry && state !== 'not_found' && state !== 'error';
+    }
     const custom = this.customDef(ref);
     if (custom) return !custom.requiresKey || !!this.apiKey(ref);
     const info = PROVIDERS[ref as ProviderKind];
@@ -1171,7 +1271,8 @@ export class AppController implements Disposable {
     if (name === 'main') return main;
     const choice: AgentChoice | undefined =
       name === 'supervisor' ? s.supervisor : name === 'fallback' ? s.fallback : name === 'light' ? s.light : s.subagents.agents[name];
-    if (!choice || choice.provider === 'inherit') return main;
+    // An agent CLI runs only the main agent's turns: the others inherit a model.
+    if (!choice || choice.provider === 'inherit') return isAgentRef(mainRef) ? this.modelMain() : main;
     return { provider: choice.provider, model: choice.model || this.defaultModel(choice.provider) };
   }
 
@@ -1182,6 +1283,7 @@ export class AppController implements Disposable {
       if (!value) throw new Error(t('No API key set for {provider}. Run "Orka: Set API Key".', { provider: this.providerLabel(ref) }));
       return value;
     };
+    if (isAgentRef(ref)) throw new Error(t('An agent CLI can only be the main agent.'));
     const custom = this.customDef(ref);
     if (custom) {
       return {
@@ -1324,12 +1426,14 @@ export class AppController implements Disposable {
   }
 
   private async setAgent(agent: string, provider: string, model: string): Promise<void> {
-    const valid = provider === 'inherit' || this.allProviderRefs().includes(provider as ProviderRef);
+    // An agent CLI the user turned on can be the main agent, never another role.
+    const asAgent = agent === 'main' && !!this.agentFor(provider);
+    const valid = provider === 'inherit' || asAgent || this.allProviderRefs().includes(provider as ProviderRef);
     if (!valid || (model && !isModelId(model))) return;
     if (agent === 'main') {
       if (provider === 'inherit') return;
       if (provider !== this.settings.provider || !this.settings.providerExplicit) await this.updateSetting('provider', provider);
-      if (model && model !== this.defaultModel(provider)) await this.setDefaultModel(provider, model);
+      if (!asAgent && model && model !== this.defaultModel(provider)) await this.setDefaultModel(provider, model);
       return;
     }
     if (agent === 'light') {
@@ -1650,6 +1754,134 @@ export class AppController implements Disposable {
     }
   }
 
+  // ---------------------------------------------------------------- agent CLIs (ACP)
+
+  private async toggleAgentCli(id: string, enabled: boolean): Promise<void> {
+    if (!this.agentEntry(id)) return;
+    const list = this.settings.agentClis.enabled.filter((x) => x !== id);
+    if (enabled) list.push(id);
+    await this.updateSetting('agentClis.enabled', list, { preferGlobal: true });
+    if (enabled) await this.checkAgent(id);
+  }
+
+  /** Is the agent's program there, and which version? (`--version` only; a sign-in problem shows on the first request.) */
+  private async checkAgent(id: string): Promise<void> {
+    const entry = this.agentEntry(id);
+    if (!entry) return;
+    this.agentStatus.set(id, { state: 'checking' });
+    this.postConfig();
+    const result = await checkAgentCli(entry, this.settings.agentClis.paths[id]).catch((error: unknown) => ({
+      state: 'error' as const,
+      detail: error instanceof Error ? error.message : String(error),
+    }));
+    this.agentStatus.set(id, result);
+    this.postConfig();
+  }
+
+  /** The vendor's own login command, in a terminal the user types into; Orka never sees the sign-in. */
+  private loginAgentCli(id: string): void {
+    const entry = this.agentEntry(id);
+    if (!entry?.loginCommand) return;
+    this.shell.runInTerminal({
+      name: t('{agent}: sign in', { agent: entry.label }),
+      cwd: this.host?.workspaceRoot ?? homedir(),
+      command: entry.loginCommand,
+      onClose: () => void this.checkAgent(id),
+    });
+  }
+
+  private async pickAgentExecutable(id: string): Promise<void> {
+    const entry = this.agentEntry(id);
+    if (!entry) return;
+    const file = await this.shell.pickFile({
+      title: t('Choose the {agent} program', { agent: entry.label }),
+      filters: process.platform === 'win32' ? { [t('Programs')]: ['exe', 'cmd', 'bat'] } : undefined,
+    });
+    if (file) await this.setAgentPath(id, file);
+  }
+
+  /** Executable paths are machine settings: a repository's own settings can never point them elsewhere. */
+  private async setAgentPath(id: string, file: string | undefined): Promise<void> {
+    if (!this.agentEntry(id)) return;
+    const paths = { ...this.settings.agentClis.paths };
+    if (file) paths[id] = file;
+    else delete paths[id];
+    await this.updateSetting('agentClis.paths', paths, { preferGlobal: true });
+    await this.checkAgent(id);
+  }
+
+  /** A custom ACP agent: a name and the exact command line Orka will run, confirmed by the user. */
+  private async addCustomAgent(): Promise<void> {
+    const name = (
+      await this.shell.input({
+        title: t('Add an ACP agent'),
+        prompt: t('A name for it'),
+        placeHolder: t('e.g. My agent'),
+        validate: (v) => (!v.trim() ? t('Enter a name.') : v.trim().length > 60 ? t('At most {n} characters.', { n: 60 }) : undefined),
+      })
+    )?.trim();
+    if (!name) return;
+    const line = (
+      await this.shell.input({
+        title: t('Add an ACP agent'),
+        prompt: t('The command that starts its ACP server (program and arguments)'),
+        placeHolder: t('e.g. my-agent --acp'),
+        validate: (v) => (!splitCommandLine(v).length ? t('Enter a command.') : undefined),
+      })
+    )?.trim();
+    if (!line) return;
+    const [command, ...args] = splitCommandLine(line);
+    const entry = customAgentEntry({ name, command, args });
+    if (this.agentEntries().some((e) => e.id === entry.id)) {
+      void this.shell.message('warning', t('An agent called {name} already exists.', { name }));
+      return;
+    }
+    const add = t('Add');
+    const choice = await this.shell.message(
+      'warning',
+      t('Orka will run exactly this program as an agent in your project: {command}. Only add agents you trust, and follow their terms.', { command: line }),
+      { modal: true },
+      add,
+    );
+    if (choice !== add) return;
+    await this.updateSetting('agentClis.custom', [...this.settings.agentClis.custom, { name, command, args }], { preferGlobal: true });
+    await this.updateSetting('agentClis.enabled', [...this.settings.agentClis.enabled.filter((x) => x !== entry.id), entry.id], { preferGlobal: true });
+    await this.checkAgent(entry.id);
+  }
+
+  private async removeCustomAgent(id: string): Promise<void> {
+    const custom = this.settings.agentClis.custom.filter((c) => customAgentEntry(c).id !== id);
+    if (custom.length === this.settings.agentClis.custom.length) return;
+    await this.updateSetting('agentClis.custom', custom, { preferGlobal: true });
+    await this.updateSetting('agentClis.enabled', this.settings.agentClis.enabled.filter((x) => x !== id), { preferGlobal: true });
+    if (this.settings.agentClis.paths[id]) await this.setAgentPath(id, undefined);
+    this.agentStatus.delete(id);
+  }
+
+  private agentClisView(): AgentCliView[] {
+    const s = this.settings.agentClis;
+    return this.agentEntries().map((entry) => {
+      const policy = agentPolicy(entry.policy);
+      const custom = entry.kind === 'custom' ? s.custom.find((c) => customAgentEntry(c).id === entry.id) : undefined;
+      return {
+        id: entry.id,
+        label: entry.label,
+        vendor: entry.vendor,
+        custom: entry.kind === 'custom',
+        enabled: s.enabled.includes(entry.id),
+        status: this.agentStatus.get(entry.id) ?? { state: 'unknown' },
+        path: s.paths[entry.id] ?? '',
+        commandLine: custom ? [custom.command, ...custom.args].join(' ') : undefined,
+        note: policy ? t(policy.note) : '',
+        termsUrl: policy?.termsUrl ?? '',
+        docsUrl: entry.docsUrl,
+        installHint: installHint(entry),
+        loginCommand: entry.loginCommand,
+        preview: !!policy?.preview,
+      };
+    });
+  }
+
   private appVersionView(): AppVersionView {
     const saved = this.shell.globalState.get<AppUpdateState>(APP_UPDATE_STATE) ?? {};
     // Only a release page Orka builds itself for that version is ever opened.
@@ -1918,6 +2150,7 @@ export class AppController implements Disposable {
     const orchestrator = new Orchestrator({
       host: this.host,
       getProvider: () => this.providerFor('main'),
+      getExternalAgent: () => this.externalAgent(),
       getExtraTools: () => this.mcpTools(),
       getLightProvider: () => (this.settings.light.provider === 'inherit' ? undefined : this.providerFor('light')),
       get commandSnapshots() {
@@ -2036,6 +2269,18 @@ export class AppController implements Disposable {
         custom: { id: p.id, baseUrl: p.baseUrl, requiresKey: p.requiresKey },
       };
     });
+    // Agent CLIs the user turned on, offered for the main agent only.
+    const agents: ProviderView[] = this.agentEntries()
+      .filter((e) => s.agentClis.enabled.includes(e.id))
+      .map((e) => ({
+        kind: `agent:${e.id}`,
+        label: e.label,
+        local: true,
+        ready: this.isReady(`agent:${e.id}`),
+        models: [{ id: '', label: t('Set in the agent'), family: t('Agent CLI') }],
+        model: '',
+        agent: true,
+      }));
     return {
       locale: getLocale(),
       mode: s.mode,
@@ -2050,7 +2295,7 @@ export class AppController implements Disposable {
       mcp: this.mcpView(),
       externalAgents: this.externalAgentsView(),
       pricing: s.pricing,
-      providers: [...builtIns, ...customs],
+      providers: [...builtIns, ...customs, ...agents],
       main: agentView('main', { provider: this.mainProvider(), model: this.defaultModel(this.mainProvider()) }),
       supervisor: agentView('supervisor', s.supervisor),
       fallback: agentView('fallback', s.fallback),
@@ -2106,6 +2351,8 @@ export class AppController implements Disposable {
         presets: PROVIDER_PRESETS.map((p) => ({ id: p.id, label: p.label, baseUrl: p.baseURL, requiresKey: p.requiresKey })),
       },
       app: this.appVersionView(),
+      agentClis: this.agentClisView(),
+      agentClisLeftOut: NOT_IN_CATALOG.map((a) => ({ id: a.id, reason: t(a.reason) })),
       ui: this.shell.kind === 'desktop' ? { layout: s.desktop.layout, theme: s.desktop.theme } : undefined,
     };
   }
@@ -2150,6 +2397,7 @@ export class AppController implements Disposable {
 
   async dispose(): Promise<void> {
     clearInterval(this.appUpdateTimer);
+    this.acpPool.dispose();
     await this.saveTask();
     this.orchestrator?.dispose();
     for (const resolve of this.pendingApprovals.values()) resolve({ approved: false });
@@ -2158,6 +2406,11 @@ export class AppController implements Disposable {
     this.host?.stopAllProcesses();
     for (const d of this.disposables) d.dispose();
   }
+}
+
+/** A command line typed by the user: words, or "quoted words" with spaces. */
+function splitCommandLine(line: string): string[] {
+  return [...line.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]).filter((w) => w.length > 0);
 }
 
 /** Two paths name the same folder (Windows paths ignore case). */

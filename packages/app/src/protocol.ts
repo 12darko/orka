@@ -19,6 +19,29 @@ export interface ProviderView {
   key?: { source: 'stored' | 'env'; hint: string };
   /** Set for user-added OpenAI-compatible endpoints. */
   custom?: { id: string; baseUrl: string; requiresKey: boolean };
+  /** A coding agent driven over ACP ("agent:<id>"): only the main agent can use it. */
+  agent?: true;
+}
+
+/** A coding agent Orka can drive as its main agent (Settings > Providers > Agent CLIs). */
+export interface AgentCliView {
+  /** "gemini", or "custom:<slug>". */
+  id: string;
+  label: string;
+  vendor: string;
+  custom: boolean;
+  enabled: boolean;
+  status: { state: 'unknown' | 'checking' | 'ready' | 'not_found' | 'error'; version?: string; executable?: string; detail?: string };
+  /** The executable the user chose ('' = found on PATH). */
+  path: string;
+  /** For a custom agent: the command line Orka runs. */
+  commandLine?: string;
+  note: string;
+  termsUrl: string;
+  docsUrl: string;
+  installHint: string;
+  loginCommand?: string;
+  preview: boolean;
 }
 
 export interface AgentView {
@@ -119,6 +142,10 @@ export interface ConfigView {
   settings: SettingsView;
   /** Orka's own version and the newest release, if an update check found one. */
   app: AppVersionView;
+  /** Coding agents Orka can drive as the main agent, and which are turned on. */
+  agentClis: AgentCliView[];
+  /** Why some well-known agents are not offered (shown under the list). */
+  agentClisLeftOut: Array<{ id: string; reason: string }>;
   /** Desktop only: the window's layout and color theme. */
   ui?: { layout: 'ide' | 'classic'; theme: 'system' | 'light' | 'dark' };
 }
@@ -247,6 +274,16 @@ export type FromWebview =
   | { type: 'loadModels'; provider: string }
   | { type: 'checkClaudeCode' }
   | { type: 'updateClaudeCode' }
+  /** Agent CLIs: turn one on or off, check it, sign in with its own login, choose its program, add or remove a custom one. */
+  | { type: 'toggleAgentCli'; id: string; enabled: boolean }
+  | { type: 'checkAgentCli'; id: string }
+  | { type: 'loginAgentCli'; id: string }
+  | { type: 'pickAgentExecutable'; id: string }
+  | { type: 'resetAgentExecutable'; id: string }
+  | { type: 'addCustomAgent' }
+  | { type: 'removeCustomAgent'; id: string }
+  /** Open an agent's documentation or terms (the URLs come from Orka's catalog, never from the page). */
+  | { type: 'openAgentLink'; id: string; link: 'docs' | 'terms' }
   /** Continue the task in an external agent; text: what the user typed but did not send. */
   | { type: 'handoff'; agent: string; text?: string }
   | { type: 'checkForUpdates' }

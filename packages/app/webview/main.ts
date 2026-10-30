@@ -4,6 +4,7 @@ import { applyEvent, emptySession } from '@orka/core/src/ui/transcript';
 import { estimateCost } from '@orka/core/src/usage/pricing';
 import orkaLogo from '../media/orka-logo.svg';
 import type {
+  AgentCliView,
   AgentView,
   ConfigView,
   HunkView,
@@ -780,6 +781,27 @@ document.addEventListener('click', (e) => {
     case 'check-claude-code':
       post({ type: 'checkClaudeCode' });
       break;
+    case 'check-agent':
+      post({ type: 'checkAgentCli', id: id! });
+      break;
+    case 'login-agent':
+      post({ type: 'loginAgentCli', id: id! });
+      break;
+    case 'pick-agent-exe':
+      post({ type: 'pickAgentExecutable', id: id! });
+      break;
+    case 'reset-agent-exe':
+      post({ type: 'resetAgentExecutable', id: id! });
+      break;
+    case 'add-custom-agent':
+      post({ type: 'addCustomAgent' });
+      break;
+    case 'remove-custom-agent':
+      post({ type: 'removeCustomAgent', id: id! });
+      break;
+    case 'agent-link':
+      post({ type: 'openAgentLink', id: id!, link: target.dataset.link === 'terms' ? 'terms' : 'docs' });
+      break;
     case 'update-claude-code':
       target.setAttribute('disabled', '');
       post({ type: 'updateClaudeCode' });
@@ -1066,6 +1088,10 @@ document.addEventListener('change', (e) => {
     post({ type: 'toggleSkill', name: target.dataset.skill, enabled: target.checked });
     return;
   }
+  if (target instanceof HTMLInputElement && target.dataset.agentCli) {
+    post({ type: 'toggleAgentCli', id: target.dataset.agentCli, enabled: target.checked });
+    return;
+  }
   // Generic settings controls.
   const key = target.dataset.setting;
   if (key && (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) {
@@ -1148,7 +1174,7 @@ function modelLabel(provider: string, model: string): string {
 
 function shortModel(provider: string, model: string): string {
   const label = providerView(provider)?.label.replace(/ \(local\)| API/, '') ?? provider;
-  return model === 'default' ? label : `${label} · ${modelLabel(provider, model)}`;
+  return !model || model === 'default' ? label : `${label} · ${modelLabel(provider, model)}`;
 }
 
 let history: { tasks: TaskSummary[]; currentId?: string } = { tasks: [] };
@@ -1334,7 +1360,7 @@ function renderUsage(): void {
           <span class="muted ellipsis" title="${attr(`${provider} · ${e.model}`)}">${escapeHtml(provider)} · ${escapeHtml(e.model)}</span>
           <span class="spacer"></span><span class="usage-cost">${escapeHtml(costText(e))}</span></div>
         <div class="usage-bar" aria-hidden="true"><span data-width="${share}"></span></div>
-        <div class="usage-nums muted">${tn('{n} call', '{n} calls', e.calls)} · ${usageSummary(e.usage)}</div>
+        <div class="usage-nums muted">${tn('{n} call', '{n} calls', e.calls)} · ${e.unreported ? escapeHtml(t('the agent does not report its tokens')) : usageSummary(e.usage)}</div>
       </div>`;
     })
     .join('');
@@ -1351,10 +1377,16 @@ function renderUsage(): void {
 
 // ------------------------------------------------------------------ agents (panel + settings tab)
 
-function providerOptions(selected: string, allowInherit: boolean, inheritLabel = t('Same as main')): string {
-  const options = (config?.providers ?? []).map(
-    (p) => `<option value="${attr(p.kind)}"${p.kind === selected ? ' selected' : ''}>${escapeHtml(p.label)}${p.ready ? '' : ` – ${escapeHtml(t('no key'))}`}</option>`,
-  );
+/** Provider choices; agent CLIs only for the main agent, in a group of their own. */
+function providerOptions(selected: string, allowInherit: boolean, inheritLabel = t('Same as main'), withAgents = false): string {
+  const option = (p: ProviderView) =>
+    `<option value="${attr(p.kind)}"${p.kind === selected ? ' selected' : ''}>${escapeHtml(p.label)}${
+      p.ready ? '' : ` – ${escapeHtml(p.agent ? t('not ready') : t('no key'))}`
+    }</option>`;
+  const all = config?.providers ?? [];
+  const options = all.filter((p) => !p.agent).map(option);
+  const agents = withAgents ? all.filter((p) => p.agent) : [];
+  if (agents.length) options.push(`<optgroup label="${attr(t('Agent CLIs'))}">${agents.map(option).join('')}</optgroup>`);
   if (allowInherit) options.unshift(`<option value="inherit"${selected === 'inherit' ? ' selected' : ''}>${escapeHtml(inheritLabel)}</option>`);
   return options.join('');
 }
@@ -1383,23 +1415,37 @@ function pickers(agent: AgentView, allowInherit: boolean, inheritLabel?: string)
   const inherit = agent.provider === 'inherit';
   const effective = providerView(agent.effective.provider);
   const warn = !effective?.ready && !inherit;
+  // An agent CLI uses the model it is set to itself.
+  const model = effective?.agent
+    ? `<select aria-label="${attr(t('Model'))}" disabled><option>${escapeHtml(t('Set in the agent'))}</option></select>`
+    : `<select data-action="agent-model" data-agent="${attr(agent.name)}" aria-label="${attr(t('Model'))}"${inherit ? ' disabled' : ''}>${modelOptions(effective, agent.effective.model)}</select>`;
+  const hint = !warn
+    ? ''
+    : effective?.agent
+      ? `<div class="hint warn">${icon('warn')}<span>${escapeHtml(t('{provider} is not ready.', { provider: effective.label }))}</span><button class="link" data-action="open-settings" data-tab="providers">${escapeHtml(t('Set up'))}</button></div>`
+      : `<div class="hint warn">${icon('key')}<span>${escapeHtml(t('{provider} needs an API key.', { provider: effective?.label ?? '' }))}</span><button class="link" data-action="set-key" data-provider="${attr(agent.effective.provider)}">${escapeHtml(t('Add key'))}</button></div>`;
   return `<div class="pickers">
-      <select class="${warn ? 'warn' : ''}" data-action="agent-provider" data-agent="${attr(agent.name)}" aria-label="${attr(t('Provider'))}">${providerOptions(allowInherit ? agent.provider : agent.effective.provider, allowInherit, inheritLabel)}</select>
-      <select data-action="agent-model" data-agent="${attr(agent.name)}" aria-label="${attr(t('Model'))}"${inherit ? ' disabled' : ''}>${modelOptions(effective, agent.effective.model)}</select>
+      <select class="${warn ? 'warn' : ''}" data-action="agent-provider" data-agent="${attr(agent.name)}" aria-label="${attr(t('Provider'))}">${providerOptions(
+        allowInherit ? agent.provider : agent.effective.provider,
+        allowInherit,
+        inheritLabel,
+        agent.name === 'main',
+      )}</select>
+      ${model}
     </div>
-    ${
-      warn
-        ? `<div class="hint warn">${icon('key')}<span>${escapeHtml(t('{provider} needs an API key.', { provider: effective?.label ?? '' }))}</span><button class="link" data-action="set-key" data-provider="${attr(agent.effective.provider)}">${escapeHtml(t('Add key'))}</button></div>`
-        : ''
-    }`;
+    ${hint}`;
 }
 
 function mainCard(): string {
   if (!config) return '';
   const main = config.main;
   const p = providerView(main.effective.provider);
-  const status =
-    p?.kind === 'claude-code'
+  const agentCli = p?.agent ? (config.agentClis ?? []).find((a) => `agent:${a.id}` === p.kind) : undefined;
+  const status = agentCli
+    ? `<div class="hint${agentCli.status.state === 'ready' ? ' ok' : ''}">${icon(agentCli.status.state === 'ready' ? 'check' : 'info')}<span>${escapeHtml(
+        t('{agent} runs its own tools; Orka asks you where it asks, and every file it changes can be reviewed and reverted.', { agent: agentCli.label }),
+      )}</span></div>`
+    : p?.kind === 'claude-code'
       ? claudeCodeLine(config.settings.claudeCode.status)
       : p?.ready
         ? `<div class="hint ok">${icon('check')}<span>${escapeHtml(p.key?.source === 'env' ? t('Key from {name}', { name: p.key.hint }) : t('API key stored'))}</span></div>`
@@ -1689,6 +1735,70 @@ function claudeCodeCard(s: SettingsView, cc: ProviderView | undefined): string {
     </div>`;
 }
 
+/**
+ * Agent CLIs: coding agents the user installed and signed in to themselves (Gemini CLI, Codex,
+ * Copilot, Cursor, or their own), which Orka can run as the main agent over ACP.
+ */
+function agentClisSection(): string {
+  const agents = config?.agentClis ?? [];
+  const state = (a: AgentCliView) =>
+    !a.enabled
+      ? `<span class="pill">${escapeHtml(t('Off'))}</span>`
+      : a.status.state === 'checking'
+        ? `<span class="pill"><span class="spinner small"></span>${escapeHtml(t('Checking'))}</span>`
+        : a.status.state === 'ready'
+          ? statusPill(true, a.status.version ? `v${a.status.version}` : t('Ready'))
+          : a.status.state === 'not_found'
+            ? statusPill(false, t('Not installed'))
+            : a.status.state === 'error'
+              ? statusPill(false, t('Error'))
+              : `<span class="pill">${escapeHtml(t('Not checked'))}</span>`;
+  const card = (a: AgentCliView) => {
+    const id = `data-id="${attr(a.id)}"`;
+    const details = a.enabled
+      ? `<div class="field"><span class="field-label">${escapeHtml(a.custom ? t('Command') : t('Executable'))}</span>
+          <div class="key-row"><span class="key mono ellipsis" title="${attr(a.commandLine ?? (a.path || a.status.executable || ''))}">${escapeHtml(
+            a.commandLine ?? (a.path || (a.status.executable ? t('Auto: {path}', { path: a.status.executable }) : t('Auto-detect'))),
+          )}</span>
+          ${a.custom ? '' : `<button class="btn" data-action="pick-agent-exe" ${id}>${escapeHtml(t('Browse…'))}</button>${a.path ? `<button class="btn" data-action="reset-agent-exe" ${id}>${escapeHtml(t('Auto'))}</button>` : ''}`}</div></div>
+        ${
+          a.status.state === 'not_found' && a.installHint
+            ? `<div class="hint warn">${icon('warn')}<span>${escapeHtml(t('Install it yourself, then check again:'))} <code class="mono">${escapeHtml(a.installHint)}</code></span></div>`
+            : a.status.state === 'error' && a.status.detail
+              ? `<div class="hint warn">${icon('warn')}<span>${escapeHtml(a.status.detail)}</span></div>`
+              : ''
+        }
+        <div class="key-row">
+          <button class="btn" data-action="check-agent" ${id}>${escapeHtml(t('Check'))}</button>
+          ${a.loginCommand ? `<button class="btn" data-action="login-agent" ${id} title="${attr(t('Opens {command} in a terminal; you sign in there, Orka never sees it.', { command: a.loginCommand }))}">${escapeHtml(t('Sign in…'))}</button>` : ''}
+          ${a.custom ? `<button class="btn danger-outline" data-action="remove-custom-agent" ${id}>${escapeHtml(t('Remove'))}</button>` : ''}
+        </div>`
+      : '';
+    const links = [
+      a.docsUrl ? `<button class="link" data-action="agent-link" data-link="docs" ${id}>${escapeHtml(t('Docs'))}</button>` : '',
+      a.termsUrl ? `<button class="link" data-action="agent-link" data-link="terms" ${id}>${escapeHtml(t('Terms'))}</button>` : '',
+    ].join('');
+    return `<div class="card">
+      <div class="card-head"><strong>${escapeHtml(a.label)}</strong>${a.preview ? `<span class="tag">${escapeHtml(t('preview'))}</span>` : ''}${a.custom ? `<span class="tag sub">${escapeHtml(t('yours'))}</span>` : ''}<span class="spacer"></span>${state(a)}</div>
+      <label class="check"><input type="checkbox" data-agent-cli="${attr(a.id)}"${a.enabled ? ' checked' : ''}><span>${escapeHtml(t('Offer it as the main agent'))}</span></label>
+      ${a.note ? `<div class="muted small">${escapeHtml(a.note)}</div>` : ''}
+      ${details}
+      ${links ? `<div class="key-row">${links}</div>` : ''}
+    </div>`;
+  };
+  const leftOut = (config?.agentClisLeftOut ?? []).map((a) => `<li>${escapeHtml(a.reason)}</li>`).join('');
+  return `<div class="section"><strong class="section-title">${escapeHtml(t('Agent CLIs'))}</strong>
+      <span class="muted small">${escapeHtml(
+        t('Coding agents you installed and signed in to yourself. As the main agent they run their own tools; Orka answers their permission requests, keeps their file changes reviewable and revertible, and its Supervisor reviews the result. Orka never reads or stores their sign-in.'),
+      )}</span></div>
+    ${agents.map(card).join('')}
+    <div class="card"><div class="card-head"><strong>${escapeHtml(t('Add an ACP agent'))}</strong></div>
+      <div class="card-text">${escapeHtml(t('Any agent that speaks the Agent Client Protocol: you enter the command that starts it, and Orka runs exactly that.'))}</div>
+      <button class="btn" data-action="add-custom-agent">${icon('plus')}${escapeHtml(t('Add…'))}</button>
+      ${leftOut ? `<div class="muted small">${escapeHtml(t('Not offered here:'))}<ul class="left-out">${leftOut}</ul></div>` : ''}
+    </div>`;
+}
+
 const claudeEfforts = (): Array<[string, string]> => [['', t('CLI default')], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']];
 
 function providersTab(s: SettingsView): string {
@@ -1723,6 +1833,7 @@ function providersTab(s: SettingsView): string {
       )}<br><span class="muted">${escapeHtml(t('Server-side fallback (beta)'))}</span></span></label>
     </div>
     ${claudeCodeCard(s, config!.providers.find((p) => p.kind === 'claude-code'))}
+    ${agentClisSection()}
     <div class="card">
       <div class="card-head"><strong>Gemini API</strong><span class="spacer"></span>${keyPill(gemini)}</div>
       ${keyRow(gemini)}
@@ -2266,6 +2377,7 @@ function supervisorHtml(item: Extract<TranscriptItem, { kind: 'supervisor' }>): 
 }
 
 function noticeAction(action?: string): string {
+  if (action === 'agentClis') return `<button class="btn primary small" data-action="open-settings" data-tab="providers">${escapeHtml(t('Set up'))}</button>`;
   if (action?.startsWith('handoff:')) {
     const agent = config?.externalAgents?.find((a) => a.id === action.slice('handoff:'.length));
     return agent

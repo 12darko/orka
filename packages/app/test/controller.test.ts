@@ -1,6 +1,6 @@
 import { applyEvent, emptySession, FileTaskStore, VERSION } from '@orka/core';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
@@ -56,6 +56,14 @@ async function saveTask(shell: FakeShell, folder: string, id: string, title: str
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+async function until(check: () => boolean, what: string, ms = 5000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
 
 describe('desktop session list', () => {
   it('lists the tasks of every recent folder, with the task open now', async () => {
@@ -163,6 +171,52 @@ describe('session groups', () => {
     shell.answer = 'Delete';
     await controller.handleMessage({ type: 'deleteTask', id: 'task-b1', folder: folderB });
     assert.deepEqual(shell.last('sessions')!.organizer.hidden, []);
+  });
+});
+
+describe('agent CLIs', () => {
+  // The core's fake ACP agent, run with this Node as a custom agent.
+  const fakeAgent = path.resolve(__dirname, '..', '..', '..', 'core', 'test', 'fixtures', 'fake-acp.mjs');
+  const agentSettings = {
+    provider: 'agent:custom:fake',
+    'agentClis.enabled': ['custom:fake'],
+    'agentClis.custom': [{ name: 'Fake', command: process.execPath, args: [fakeAgent] }],
+    'supervisor.enabled': false,
+  };
+
+  afterEach(() => {
+    delete process.env.FAKE_ACP_SCRIPT;
+  });
+
+  it('runs a task with an agent CLI as the main agent, and its own file writes join Changes', async () => {
+    process.env.FAKE_ACP_SCRIPT = JSON.stringify([[{ chunk: 'Hello from the agent.' }, { directWrite: { path: 'agent.txt', content: 'made by the agent\n' } }, { stop: 'end_turn' }]]);
+    const { shell, controller } = await start('desktop', agentSettings);
+    const main = shell.last('init')!.config.main;
+    assert.equal(main.effective.provider, 'agent:custom:fake');
+    await controller.send('Say hello and write a file');
+    const events = shell.posted.flatMap((m) => (m.type === 'event' ? [m.event] : []));
+    assert.ok(
+      events.some((e) => e.type === 'assistant_end' && e.text.includes('Hello from the agent.')),
+      'the reply is shown',
+    );
+    // The change list is published once its line counts are read, just after the run.
+    await until(
+      () => shell.posted.some((m) => m.type === 'event' && m.event.type === 'changes' && m.event.changes.some((c) => c.relPath === 'agent.txt')),
+      'the file the agent wrote itself in Changes',
+    );
+    assert.equal(readFileSync(path.join(folderA, 'agent.txt'), 'utf8'), 'made by the agent\n');
+  });
+
+  it('offers agent CLIs to the main agent only', async () => {
+    const { shell, controller } = await start('desktop', { ...agentSettings, provider: 'claude' });
+    await controller.handleMessage({ type: 'setAgent', agent: 'supervisor', provider: 'agent:custom:fake', model: '' });
+    assert.equal(shell.settings.isSet('supervisor.provider'), false);
+    await controller.handleMessage({ type: 'setAgent', agent: 'main', provider: 'agent:custom:fake', model: '' });
+    assert.equal(shell.settings.get('provider', ''), 'agent:custom:fake');
+    // A provider ref for an agent that is not turned on is never used.
+    await shell.settings.update('agentClis.enabled', []);
+    await tick();
+    assert.notEqual(shell.last('config')!.config.main.effective.provider, 'agent:custom:fake');
   });
 });
 
