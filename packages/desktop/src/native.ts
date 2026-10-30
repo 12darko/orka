@@ -1,3 +1,4 @@
+import { cmdLine, comspec, shLine, shQuote, type TerminalProgram } from '@orka/app';
 import { findBrowser } from '@orka/core';
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
@@ -73,27 +74,32 @@ export function openExternal(target: string): Promise<boolean> {
 
 /**
  * A new terminal window in `cwd` running `command`, left open for the user; `onClose` when the
- * window is closed (Windows, Linux). The command is Orka's own (e.g. "freebuff"), never model output.
+ * window is closed (Windows, Linux). The command is Orka's own (e.g. "freebuff"), never model
+ * output; a program (a vendor's sign-in) runs by its full path.
  */
-export function openTerminalWindow(options: { title: string; cwd: string; command: string; onClose?: () => void }): void {
-  const title = options.title.replace(/["^&|<>%]/g, '');
+export function openTerminalWindow(options: { title: string; cwd: string; command: string | TerminalProgram; onClose?: () => void }): void {
+  const title = options.title.replace(/["^&|<>%!]/g, '');
+  const { command } = options;
   let child: ChildProcess;
   if (process.platform === 'win32') {
     // "start /wait" returns when the new console window closes. windowsHide only hides the cmd
     // that runs "start"; the console window it opens is shown.
-    child = spawn('cmd.exe', ['/d', '/c', `start "${title}" /wait cmd.exe /k ${options.command}`], {
+    const cmd = comspec();
+    const line = typeof command === 'string' ? `/k ${command}` : `/s /k ${cmdLine(command)}`;
+    child = spawn(cmd, ['/d', '/c', `start "${title}" /wait "${cmd}" /d ${line}`], {
       cwd: options.cwd,
       windowsVerbatimArguments: true,
       stdio: 'ignore',
       windowsHide: true,
     });
   } else if (process.platform === 'darwin') {
-    const script = `cd ${JSON.stringify(options.cwd)} && ${options.command}`;
+    const script = `cd ${shQuote(options.cwd)} && ${typeof command === 'string' ? command : shLine(command)}`;
     child = spawn('osascript', ['-e', 'on run argv', '-e', 'tell application "Terminal" to do script (item 1 of argv)', '-e', 'end run', script], { stdio: 'ignore' });
     child.once('exit', () => undefined); // Terminal.app keeps the window; there is no close signal.
     return;
   } else {
-    child = spawn('x-terminal-emulator', ['-e', 'sh', '-c', `${options.command}; exec "\${SHELL:-sh}"`], { cwd: options.cwd, stdio: 'ignore' });
+    const line = typeof command === 'string' ? command : shLine(command);
+    child = spawn('x-terminal-emulator', ['-e', 'sh', '-c', `${line}; exec "\${SHELL:-sh}"`], { cwd: options.cwd, stdio: 'ignore' });
   }
   child.once('error', () => options.onClose?.());
   child.once('exit', () => options.onClose?.());

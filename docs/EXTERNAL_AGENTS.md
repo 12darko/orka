@@ -43,9 +43,9 @@ The commands below are listed in Orka's source (`packages/core/src/acp/catalog.t
 | Agent | id | Command Orka runs | Install | Sign in (the vendor's own login) |
 |---|---|---|---|---|
 | **Gemini CLI** (Google) | `gemini` | `gemini --acp` | `npm install -g @google/gemini-cli` | Run `gemini` in a terminal and choose how to sign in (Google account, Gemini API key or Vertex AI) |
-| **Codex** through the `codex-acp` adapter (OpenAI) | `codex` | `codex-acp` | `npm install -g @agentclientprotocol/codex-acp` | `codex login` (a ChatGPT plan or an API key) |
+| **Codex** through the `codex-acp` adapter (OpenAI) | `codex` | `codex-acp` | `npm install -g @agentclientprotocol/codex-acp @openai/codex` (the adapter, and the Codex CLI whose sign-in it uses) | `codex login` (a ChatGPT plan or an API key; needs the Codex CLI) |
 | **GitHub Copilot CLI** (GitHub) | `copilot` | `copilot --acp --stdio` | `npm install -g @github/copilot` (Windows: `winget install GitHub.Copilot`) | `copilot login` |
-| **Cursor CLI** (Cursor) | `cursor` | `cursor-agent acp` (or `agent acp`, its newer name) | `curl https://cursor.com/install -fsS \| bash` (Windows: `irm 'https://cursor.com/install?win32=true' \| iex`) | `agent login` |
+| **Cursor CLI** (Cursor) | `cursor` | `cursor-agent acp` (or `agent acp`, its newer name) | `curl https://cursor.com/install -fsS \| bash` (Windows: `irm 'https://cursor.com/install?win32=true' \| iex`) | `agent login` (or `cursor-agent login`, whichever program Orka found) |
 
 What Orka shows with each agent, and the terms it is used under (`packages/core/src/acp/policy.ts`):
 
@@ -56,14 +56,14 @@ What Orka shows with each agent, and the terms it is used under (`packages/core/
 | GitHub Copilot CLI | Runs your installed GitHub Copilot CLI as an ACP server. GitHub documents this mode for other clients; it is a public preview and may change. | [GitHub terms for additional products and features](https://docs.github.com/en/site-policy/github-terms/github-terms-for-additional-products-and-features) · [ACP server](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server) | Public preview |
 | Cursor CLI | Runs your installed Cursor CLI (`agent acp`), which Cursor documents for custom clients. | [Cursor terms of service](https://cursor.com/terms-of-service) · [ACP](https://cursor.com/docs/cli/acp) | |
 
-Signing in always happens in the vendor's own login command or app. The only exception Orka allows is Cursor's own `cursor_login` sign-in method, which Orka asks the agent to start over ACP when you ask for it; the sign-in itself still happens in Cursor's own flow, and the result stays inside Cursor CLI. Whether an agent is signed in shows on the first request: if it is not, Orka names the vendor's login command to run in a terminal.
+Signing in always happens in the vendor's own login command or app. **Sign in…** on an agent's card opens that command in a terminal, with the program Orka found (or the path you set) by its full path and in your home folder, so nothing in the open project can stand in for it. You sign in there; Orka never sees it. Whether an agent is signed in shows on the first request: if it is not, Orka names the vendor's login command to run in a terminal.
 
 ## What Orka keeps doing
 
 - **Permission prompts.** When the agent asks for permission before one of its tool calls, Orka decides with its own rules (the permission mode and your per-category overrides) and asks you where they say so, exactly as for its own tools. Orka always answers "allow once" or "reject once": an *always allow* you give becomes Orka's own grant for the session, so the next request is decided by Orka again. A request to switch the agent's mode always asks, because a mode switch could turn the agent's own approvals off. Once the task has read a file that may hold secrets, the agent's web access asks too.
-- **File access inside the workspace only.** The agent reads and writes files through Orka. Paths outside the workspace, and links inside it that lead outside it, are refused. Writes follow Orka's permission rules, are recorded in Changes before they happen, and your `afterEdit` hooks run after them.
-- **Terminal commands.** Commands the agent runs through Orka run in Orka's shell and are classified like Orka's own `run_command`: risky commands (`rm -rf`, `git push`, downloads, writes outside the workspace, ...) ask.
-- **Changes and revert, including files the agent wrote itself.** Some agents also change files with their own tools, without asking Orka. Orka snapshots the workspace in its private git directory before and after every request, so whatever changed shows up in Changes (CLI: `/diff`) and can be kept or reverted like any other change (CLI: `/undo`). This is why agent mode needs snapshots.
+- **Files the agent asks Orka for stay inside the workspace.** When the agent reads or writes a file through Orka (ACP's file requests), paths outside the workspace, and links inside it that lead outside it, are refused. Those writes follow Orka's permission rules, are recorded in Changes before they happen, and your `afterEdit` hooks run after them. **The agent's own tools are not confined by Orka:** what an agent reads, writes or runs with its own tools without asking Orka follows that agent's own sandbox and permission settings.
+- **Terminal commands.** Commands the agent runs through Orka run in Orka's shell and are classified like Orka's own `run_command`: risky commands (`rm -rf`, `git push`, downloads, writes outside the workspace, ...) ask, and so do git commands when the repository's git configuration names programs for git to run.
+- **Changes and revert, including files the agent wrote itself.** Some agents also change files with their own tools, without asking Orka. Orka snapshots the workspace in its private git directory before and after every request, so whatever changed shows up in Changes (CLI: `/diff`) and can be kept or reverted like any other change (CLI: `/undo`). This is why agent mode needs snapshots. The snapshots follow git's rules: files your `.gitignore` excludes (such as `.env`), ignored folders such as `node_modules`, and anything outside the workspace are not snapshotted, so changes there are neither listed nor revertible.
 - **Go back (rewind).** Going back restores the files as usual. The agent's own conversation cannot be cut back, so the next request starts a fresh agent session with a summary of where the task stands.
 - **The Supervisor's final review.** The Supervisor reviews the result with the task's real diff when the agent says it is done; if it is not convinced, its correction goes to the agent as the next prompt. It cannot step in during the agent's turn, so with an agent as the main agent it reviews only the final result, whatever its frequency setting. It runs on its own model provider (in the CLI: `--supervisor` or `"supervisor": { "provider": ... }`).
 - **Your checks.** `beforeFinish` hooks and the "build and test before finishing" check still run, and their results go back to the agent.
@@ -92,7 +92,7 @@ These rules hold for every agent and are enforced in code (`packages/core/src/ac
 - **Orka only runs the unmodified program you installed**, found on `PATH` or at the path you set.
 - **Orka never downloads an agent.** Install commands are shown to you and never run, and the catalog starts no agent through a download launcher such as `npx`.
 - **Orka never turns on an agent's "approve everything" mode** (no `--yolo`, no permission bypass). It answers each permission request once, with its own rules.
-- Signing in happens in the vendor's own login. Orka asks an agent to sign in over ACP only when you ask, and only with a method its policy lists (today only Cursor's `cursor_login`).
+- Signing in happens in the vendor's own login, in a terminal you type into. Orka does not start an agent's sign-in over ACP.
 
 Your use of each agent is governed by that vendor's terms (linked above); Orka is not affiliated with Google, OpenAI, GitHub or Cursor.
 
@@ -105,7 +105,7 @@ Your use of each agent is governed by that vendor's terms (linked above); Orka i
 
 ## Adding your own ACP agent
 
-Any program that speaks ACP (protocol version 1) on stdio can be added as a custom agent, **on your own responsibility**: Orka runs exactly the command you enter, and it is up to you to make sure your use follows that agent's terms. Orka still applies everything above (permissions, workspace-only files, snapshots, the Supervisor).
+Any program that speaks ACP (protocol version 1) on stdio can be added as a custom agent, **on your own responsibility**: Orka runs exactly the command you enter, and it is up to you to make sure your use follows that agent's terms. Orka still applies everything above (permissions, the workspace limits on the files it asks Orka for, snapshots, the Supervisor).
 
 ```json
 "agentClis": {
@@ -114,7 +114,7 @@ Any program that speaks ACP (protocol version 1) on stdio can be added as a cust
 }
 ```
 
-(In VS Code: `orka.agentClis.custom` and `orka.agentClis.enabled`.) The agent's id is `custom:` followed by its name in lowercase, with every run of other characters turned into a dash: `My agent` becomes `custom:my-agent`. The part after `custom:` may have at most 40 letters, digits and dashes. `command` is a program on `PATH` or a full path; `args` are the arguments that start its ACP server. An older Gemini CLI that only knows `--experimental-acp` can be added this way.
+(In VS Code: `orka.agentClis.custom` and `orka.agentClis.enabled`.) The agent's id is `custom:` followed by its name in lowercase, with every run of other characters turned into a dash: `My agent` becomes `custom:my-agent`. The part after `custom:` is cut to its first 40 characters. `command` is a program on `PATH` or a full path; `args` are the arguments that start its ACP server. An older Gemini CLI that only knows `--experimental-acp` can be added this way.
 
 ## A note on Gemini CLI
 

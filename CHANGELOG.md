@@ -9,10 +9,10 @@ Coding agents you installed yourself can now be Orka's main agent, and the deskt
 - **Supported agents:** Gemini CLI, Codex (through the `codex-acp` adapter), GitHub Copilot CLI (preview), Cursor CLI, or any agent that speaks the Agent Client Protocol (ACP). Each one runs as the main agent: pick it in the agent menu after turning it on in **Settings → Providers → Agent CLIs**.
 - **The agent runs its own loop. Orka keeps control of the rest:**
   - it answers the agent's permission requests with your permission mode;
-  - it keeps file access inside the project;
-  - it lists every file the agent changes in Changes, including files it writes with its own tools (a snapshot is taken around each request), so you can review and revert them;
+  - the files the agent asks Orka for stay inside the project (what the agent does with its own tools follows its own sandbox and settings);
+  - it lists the files the agent changes in the project in Changes, including files it writes with its own tools (a snapshot is taken around each request), so you can review and revert them. Files git ignores, such as `.env` or `node_modules`, are not snapshotted;
   - going back starts a fresh agent session, and the Supervisor reviews the result.
-- **Signing in:** Orka never reads, stores or passes on an agent's sign-in. You sign in with the agent's own login command, which Orka opens in a terminal. Orka runs only programs you installed and never downloads one.
+- **Signing in:** Orka never reads, stores or passes on an agent's sign-in. You sign in with the agent's own login command, which Orka opens in a terminal, with the agent's program by its full path and in your home folder. Orka runs only programs you installed and never downloads one.
 - **Not offered:** Antigravity (Google's terms do not allow it through third-party software on consumer plans) and the Claude ACP adapter (licence unclear). Claude stays available through the Claude API and the opt-in Claude Code provider.
 - **CLI:** `orka --provider agent:gemini` and `orka agents`. More in [docs/EXTERNAL_AGENTS.md](docs/EXTERNAL_AGENTS.md).
 

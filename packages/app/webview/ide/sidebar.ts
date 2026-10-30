@@ -92,7 +92,7 @@ export function sessionListHtml(v: SidebarView): string {
     return `<div class="side-item${open ? ' current' : ''}${open && v.running ? ' running' : ''}">
       <button class="side-open" data-action="open-session" data-id="${attr(item.task.id)}" data-folder="${attr(item.folder)}" title="${attr(`${item.task.title}\n${item.folderName} · ${ago(item.task.updatedAt)}`)}"${open ? ' aria-current="true"' : ''}>
         <span class="side-title">${open && v.running ? '<span class="run-dot"></span>' : ''}<span class="ellipsis">${escapeHtml(item.task.title)}</span>${meta ? `<span class="side-meta">${escapeHtml(meta)}</span>` : ''}</span></button>
-      <button class="icon-btn side-more" data-action="session-menu" data-id="${attr(item.task.id)}" data-folder="${attr(item.folder)}" aria-haspopup="menu" aria-label="${attr(t('More for this session'))}" title="${attr(t('More'))}">${icon('more')}</button>
+      <button class="icon-btn side-more" data-action="session-menu" data-id="${attr(item.task.id)}" data-folder="${attr(item.folder)}" aria-haspopup="menu" aria-label="${attr(t('More for this session'))}" title="${attr(t('More for this session'))}">${icon('more')}</button>
     </div>`;
   };
   /** A foldable section; `buttons` sit at the end of its heading. */

@@ -49,10 +49,12 @@ export {
   type AgentCliEntry,
   type AgentCliStatus,
   agentLaunchSpec,
+  agentLogin,
   checkAgentCli,
   type CustomAgentDefinition,
   customAgentEntry,
   installHint,
+  loginCommand,
   resolveAgentExecutable,
 } from './acp/catalog';
 export { AGENT_POLICIES, agentPolicy, type AgentPolicy, type AuthKind, NOT_IN_CATALOG } from './acp/policy';

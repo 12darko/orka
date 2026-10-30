@@ -1,6 +1,7 @@
 import type { ApprovalRequest, ApprovalResponse, EditorContext, NodeHost, Orchestrator } from '@orka/core';
 import type { FromWebview, ToWebview } from './protocol';
 import type { AppSettings, Disposable, SettingsStore } from './settings';
+import type { TerminalProgram } from './terminal';
 
 export interface SecretStore {
   get(key: string): Promise<string | undefined>;
@@ -93,8 +94,11 @@ export interface AppShell {
   openExternal(target: string): Promise<boolean>;
   openSettings(section?: 'all' | 'mcpServers'): Promise<void>;
   writeClipboard(text: string): Promise<void>;
-  /** Run a command in a visible terminal the user can type into; onClose when it is closed. */
-  runInTerminal(options: { name: string; cwd: string; command: string; onClose?: () => void }): TerminalHandle;
+  /**
+   * Run a command in a terminal the user can type into; onClose when it is closed. `command` is a
+   * line for the user's shell, or a program by its full path that the host quotes itself.
+   */
+  runInTerminal(options: { name: string; cwd: string; command: string | TerminalProgram; onClose?: () => void }): TerminalHandle;
 
   // ---- diffs
   openChangeDiff(absPath: string): Promise<void>;

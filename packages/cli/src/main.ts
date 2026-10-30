@@ -16,6 +16,7 @@ import {
   Handoff,
   handoffBrief,
   installHint,
+  loginCommand,
   NOT_IN_CATALOG,
   pooledAgent,
   resolveAgentExecutable,
@@ -398,6 +399,7 @@ async function printAgents(filter: string | undefined, config: OrkaConfig, s: St
   // Runs only each program's version flag; whether it is signed in shows on the first request.
   const statuses = await Promise.all(shown.map((entry) => checkAgentCli(entry, agentPath(config, entry.id))));
   const quote = (arg: string) => (/\s/.test(arg) ? `"${arg}"` : arg);
+  const signIn = shown.map((entry, i) => loginCommand(entry, agentPath(config, entry.id), statuses[i].executable));
   out(s.bold(t('Agent CLIs (agent mode): orka --provider agent:<id>')));
   out(s.dim(t('Orka runs the agent you installed and signed in to with its own login. It never reads or stores that sign-in, never downloads an agent and never turns on an approve-everything mode.')));
   for (const [i, entry] of shown.entries()) {
@@ -416,7 +418,7 @@ async function printAgents(filter: string | undefined, config: OrkaConfig, s: St
     out(s.dim(`  ${t('Runs: {command}', { command: [status.executable ?? entry.bin, ...entry.acpArgs].map(quote).join(' ') })}`));
     const setup = [
       entry.installHint ? t('Install: {command}', { command: installHint(entry) }) : '',
-      entry.loginCommand ? t('Sign in: run "{command}" in a terminal', { command: entry.loginCommand }) : '',
+      signIn[i] ? t('Sign in: run "{command}" in a terminal', { command: signIn[i] }) : '',
     ].filter(Boolean);
     if (setup.length) out(s.dim(`  ${setup.join('  ·  ')}`));
     const links = [policy?.termsUrl ? t('Terms: {url}', { url: policy.termsUrl }) : '', entry.docsUrl ? t('Docs: {url}', { url: entry.docsUrl }) : ''].filter(Boolean);

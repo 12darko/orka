@@ -3,11 +3,13 @@ import {
   AGENT_CLIS,
   type AgentCliEntry,
   agentLaunchSpec,
+  agentLogin,
   agentPolicy,
   checkAgentCli,
   customAgentEntry,
   type ExternalAgentRuntime,
   installHint,
+  loginCommand,
   NOT_IN_CATALOG,
   pooledAgent,
   type AgentEvent,
@@ -193,6 +195,8 @@ export class AppController implements Disposable {
   /** Agent CLI processes (ACP), shared by the tasks of every folder; and what their last check found. */
   private readonly acpPool = new AcpAgentPool();
   private readonly agentStatus = new Map<string, AgentCliView['status']>();
+  /** "No Supervisor next to this agent" was said once already. */
+  private supervisorSkipNoted = false;
 
   constructor(private readonly shell: AppShell) {
     this.settings = readSettings(shell.settings);
@@ -489,6 +493,15 @@ export class AppController implements Disposable {
         `setApiKey:${main}`,
       );
       return;
+    }
+    if (agent && this.settings.supervisor.enabled && !this.supervisorSkipNoted && this.inheritsNoModel('supervisor')) {
+      this.supervisorSkipNoted = true;
+      this.publishNotice(
+        'info',
+        t('No Supervisor while {agent} is the main agent: it needs a model provider of its own. Add an API key, or pick a provider for the Supervisor in Settings > Agents.', {
+          agent: agent.label,
+        }),
+      );
     }
     // Files an external agent changed meanwhile become reviewable changes, and the agent hears about them.
     if (this.handoff) await this.collectHandoff(false);
@@ -1206,12 +1219,20 @@ export class AppController implements Disposable {
   /**
    * With an agent CLI as the main agent, the model the other roles (Supervisor, sub-agents, the
    * light and fallback models) inherit: Claude Code when it is on and ready, else the first
-   * provider that works, else the Claude API.
+   * provider that works; undefined when none does.
    */
-  private modelMain(): { provider: ProviderRef; model: string } {
-    const ready = (ref: ProviderRef) => this.isReady(ref) && (ref !== 'claude-code' || this.claudeCodeStatus.state === 'ready');
-    const ref = this.allProviderRefs().find(ready) ?? 'claude';
-    return { provider: ref, model: this.defaultModel(ref) };
+  private modelMain(): { provider: ProviderRef; model: string } | undefined {
+    const ref: ProviderRef | undefined =
+      this.settings.claudeCode.enabled && this.claudeCodeStatus.state === 'ready'
+        ? 'claude-code'
+        : this.allProviderRefs().find((r) => r !== 'claude-code' && this.isReady(r));
+    return ref ? { provider: ref, model: this.defaultModel(ref) } : undefined;
+  }
+
+  /** An agent CLI is the main agent and `name` inherits its model, but no model provider works. */
+  private inheritsNoModel(name: string): boolean {
+    const choice = name === 'supervisor' ? this.settings.supervisor : this.settings.subagents.agents[name];
+    return (!choice || choice.provider === 'inherit') && isAgentRef(this.mainProvider()) && !this.modelMain();
   }
 
   private isReady(ref: string): boolean {
@@ -1271,8 +1292,9 @@ export class AppController implements Disposable {
     if (name === 'main') return main;
     const choice: AgentChoice | undefined =
       name === 'supervisor' ? s.supervisor : name === 'fallback' ? s.fallback : name === 'light' ? s.light : s.subagents.agents[name];
-    // An agent CLI runs only the main agent's turns: the others inherit a model.
-    if (!choice || choice.provider === 'inherit') return isAgentRef(mainRef) ? this.modelMain() : main;
+    // An agent CLI runs only the main agent's turns: the others inherit a model (the Claude API
+    // when none works, which then reports its missing key).
+    if (!choice || choice.provider === 'inherit') return isAgentRef(mainRef) ? (this.modelMain() ?? { provider: 'claude', model: this.defaultModel('claude') }) : main;
     return { provider: choice.provider, model: choice.model || this.defaultModel(choice.provider) };
   }
 
@@ -1778,16 +1800,30 @@ export class AppController implements Disposable {
     this.postConfig();
   }
 
-  /** The vendor's own login command, in a terminal the user types into; Orka never sees the sign-in. */
+  /** The vendor's own sign-in, in a terminal the user types into; Orka never sees it. */
   private loginAgentCli(id: string): void {
     const entry = this.agentEntry(id);
-    if (!entry?.loginCommand) return;
-    this.shell.runInTerminal({
-      name: t('{agent}: sign in', { agent: entry.label }),
-      cwd: this.host?.workspaceRoot ?? homedir(),
-      command: entry.loginCommand,
-      onClose: () => void this.checkAgent(id),
-    });
+    if (!entry?.login) return;
+    const program = agentLogin(entry, this.settings.agentClis.paths[id]);
+    if (!program) {
+      const bin = entry.login.bin;
+      this.publishNotice(
+        'error',
+        bin
+          ? t('{program} was not found. Install it ({command}), then sign in again.', { program: bin, command: entry.login.installHint ?? '?' })
+          : t('{agent} was not found. Install it ({command}) or set its path in the settings.', { agent: entry.label, command: installHint(entry) || '?' }),
+      );
+      return;
+    }
+    // The program by its full path, in the home folder: nothing in the open project can stand in for it.
+    this.shell
+      .runInTerminal({
+        name: t('{agent}: sign in', { agent: entry.label }),
+        cwd: homedir(),
+        command: program,
+        onClose: () => void this.checkAgent(id),
+      })
+      .show();
   }
 
   private async pickAgentExecutable(id: string): Promise<void> {
@@ -1876,7 +1912,7 @@ export class AppController implements Disposable {
         termsUrl: policy?.termsUrl ?? '',
         docsUrl: entry.docsUrl,
         installHint: installHint(entry),
-        loginCommand: entry.loginCommand,
+        loginCommand: loginCommand(entry, s.paths[entry.id], this.agentStatus.get(entry.id)?.executable),
         preview: !!policy?.preview,
       };
     });
@@ -2165,7 +2201,8 @@ export class AppController implements Disposable {
       },
       supervisor: {
         getProvider: () => this.providerFor('supervisor'),
-        getSettings: () => this.settings.supervisor,
+        // Next to an agent CLI the Supervisor needs a model; without one it sits out (send() says so).
+        getSettings: () => ({ ...this.settings.supervisor, enabled: this.settings.supervisor.enabled && !this.inheritsNoModel('supervisor') }),
       },
       skills: () => this.activeSkills(),
     });

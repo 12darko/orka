@@ -1,7 +1,7 @@
-import { applyEvent, emptySession, FileTaskStore, VERSION } from '@orka/core';
+import { applyEvent, customAgentEntry, emptySession, FileTaskStore, VERSION } from '@orka/core';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { AppController } from '../src/AppController';
@@ -217,6 +217,64 @@ describe('agent CLIs', () => {
     await shell.settings.update('agentClis.enabled', []);
     await tick();
     assert.notEqual(shell.last('config')!.config.main.effective.provider, 'agent:custom:fake');
+  });
+
+  it('opens the sign-in by its full path in the home folder, and shows it', async () => {
+    const { shell, controller } = await start('vscode', { 'agentClis.paths': { gemini: process.execPath } });
+    await controller.handleMessage({ type: 'loginAgentCli', id: 'gemini' });
+    assert.equal(shell.terminals.length, 1);
+    const [terminal] = shell.terminals;
+    assert.equal(terminal.cwd, homedir(), 'never in the open project, where a planted program could stand in');
+    assert.deepEqual(terminal.command, { file: process.execPath, args: [] }, 'the program the user set, not "gemini" from PATH');
+    assert.equal(terminal.shown, true);
+  });
+
+  it('says which program is missing when a sign-in needs another one', async () => {
+    const saved = { PATH: process.env.PATH, Path: process.env.Path };
+    process.env.PATH = path.join(home, 'empty-bin');
+    if (process.platform === 'win32') process.env.Path = process.env.PATH;
+    try {
+      const { shell, controller } = await start('desktop');
+      await controller.handleMessage({ type: 'loginAgentCli', id: 'codex' });
+      assert.equal(shell.terminals.length, 0);
+      const notice = shell.posted.flatMap((m) => (m.type === 'event' && m.event.type === 'notice' ? [m.event] : [])).at(-1);
+      assert.match(notice?.message ?? '', /codex was not found.*npm install -g @openai\/codex/);
+    } finally {
+      process.env.PATH = saved.PATH;
+      if (process.platform === 'win32') process.env.Path = saved.Path;
+    }
+  });
+
+  it('keeps a custom agent with a long name usable', async () => {
+    const name = 'Experimental in-house ACP agent for the monorepo';
+    const id = customAgentEntry({ name, command: process.execPath }).id;
+    assert.ok(id.length <= 'custom:'.length + 40, id);
+    const { shell } = await start('desktop', {
+      provider: `agent:${id}`,
+      'agentClis.enabled': [id],
+      'agentClis.custom': [{ name, command: process.execPath, args: [fakeAgent] }],
+    });
+    const config = shell.last('init')!.config;
+    assert.equal(config.agentClis.find((a) => a.id === id)?.enabled, true);
+    assert.equal(config.main.effective.provider, `agent:${id}`);
+  });
+
+  it('runs without the Supervisor, and says so once, when no model provider works next to the agent', async () => {
+    const keys = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY'];
+    const saved = keys.map((k) => process.env[k]);
+    for (const k of keys) delete process.env[k];
+    try {
+      process.env.FAKE_ACP_SCRIPT = JSON.stringify([[{ chunk: 'One.' }, { stop: 'end_turn' }], [{ chunk: 'Two.' }, { stop: 'end_turn' }]]);
+      const { shell, controller } = await start('desktop', { ...agentSettings, 'supervisor.enabled': true });
+      await controller.send('First');
+      await controller.send('Second');
+      const events = shell.posted.flatMap((m) => (m.type === 'event' ? [m.event] : []));
+      assert.equal(events.filter((e) => e.type === 'notice' && e.message.startsWith('No Supervisor')).length, 1);
+      assert.ok(!JSON.stringify(events).includes('No API key'), 'the Supervisor did not try a provider without a key');
+      assert.ok(events.some((e) => e.type === 'assistant_end' && e.text.includes('Two.')));
+    } finally {
+      keys.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i])));
+    }
   });
 });
 

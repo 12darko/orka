@@ -6,15 +6,20 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, it } from 'node:test';
+import { after, afterEach, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ORKA = path.join(HERE, '..', 'dist', 'orka.js');
 const FAKE = path.resolve(HERE, '../../core/test/fixtures/fake-acp.mjs');
 const HAS_GIT = spawnSync('git', ['--version'], { windowsHide: true }).status === 0;
-/** Only node itself on PATH: no agent CLI (and no git) can be found. */
-const BARE_PATH = path.dirname(process.execPath);
+/**
+ * An empty folder as PATH: no agent CLI (and no git) can be found. Node's own folder is not enough,
+ * since global npm programs and git often sit next to node. Orka and the fake agent start by
+ * process.execPath, so they need nothing on PATH.
+ */
+const BARE_PATH = mkdtempSync(path.join(tmpdir(), 'orka-agents-path-'));
+after(() => rmSync(BARE_PATH, { recursive: true, force: true }));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid) => {
@@ -90,8 +95,9 @@ describe('orka CLI agent mode', { skip: !existsSync(ORKA) && 'build the CLI firs
     // What is wrong in the config is said, and the rest still works.
     assert.match(stdout, /! Skipped an entry of "agentClis\.custom": it needs a "name" and a "command"/);
     assert.match(stdout, /! Skipped the custom agent "Fake agent": another one already has the id custom:fake-agent\./);
-    assert.match(stdout, /! Skipped the custom agent "x{45}": its id \(custom:x{45}\) may have at most 40 letters/);
-    assert.equal(stdout.match(/^custom:/gm).length, 1);
+    // A long name gives an id cut to 40 characters, as the apps' settings accept it.
+    assert.match(stdout, /^custom:x{40} x{45} · your own ACP agent {2}· {2}not installed$/m);
+    assert.equal(stdout.match(/^custom:/gm).length, 2);
 
     const one = await orka(['--lang', 'tr', 'agents', 'agent:custom:fake-agent'], { env: { PATH: BARE_PATH, Path: BARE_PATH } });
     assert.equal(one.code, 0, one.stderr);
@@ -100,7 +106,7 @@ describe('orka CLI agent mode', { skip: !existsSync(ORKA) && 'build the CLI firs
 
     const unknown = await orka(['agents', 'antigravity']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.stderr, /Unknown agent "antigravity"\. Known: gemini, codex, copilot, cursor, custom:fake-agent\./);
+    assert.match(unknown.stderr, /Unknown agent "antigravity"\. Known: gemini, codex, copilot, cursor, custom:fake-agent, custom:x{40}\./);
   });
 
   it('refuses an unknown agent, an agent in any other role, and a model for an agent; says what is missing', async () => {

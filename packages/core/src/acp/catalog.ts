@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import * as path from 'node:path';
 import { findExecutable, resolveCommand } from '../host/commands';
 import { killTree } from '../host/processes';
@@ -24,8 +25,11 @@ export interface AgentCliEntry {
   acpArgs: readonly string[];
   /** Prints the version; empty when the program has no such flag (the check then only finds it). */
   versionArgs: readonly string[];
-  /** The vendor's own login command; the user runs it in a terminal. */
-  loginCommand?: string;
+  /**
+   * The vendor's own sign-in, which the user runs in a terminal: these arguments for the agent's
+   * own program, or for `bin`, another program of the vendor's (with how to install it).
+   */
+  login?: { args: readonly string[]; bin?: string; installHint?: string };
   /** How to install it, shown to the user (Orka never runs it). */
   installHint: string;
   /** The install hint for Windows, when it differs. */
@@ -46,7 +50,7 @@ export const AGENT_CLIS: readonly AgentCliEntry[] = [
     acpArgs: ['--acp'],
     versionArgs: ['--version'],
     // Sign-in is a choice inside the interactive CLI (Google account, API key or Vertex AI).
-    loginCommand: 'gemini',
+    login: { args: [] },
     installHint: 'npm install -g @google/gemini-cli',
     docsUrl: 'https://geminicli.com/docs/cli/acp-mode/',
     policy: 'google',
@@ -59,8 +63,9 @@ export const AGENT_CLIS: readonly AgentCliEntry[] = [
     bin: 'codex-acp',
     acpArgs: [],
     versionArgs: ['--version'],
-    loginCommand: 'codex login',
-    installHint: 'npm install -g @agentclientprotocol/codex-acp',
+    // The adapter uses the Codex CLI's sign-in, so "codex login" needs the Codex CLI itself.
+    login: { bin: 'codex', args: ['login'], installHint: 'npm install -g @openai/codex' },
+    installHint: 'npm install -g @agentclientprotocol/codex-acp @openai/codex',
     docsUrl: 'https://github.com/agentclientprotocol/codex-acp',
     policy: 'openai',
     kind: 'builtin',
@@ -72,7 +77,7 @@ export const AGENT_CLIS: readonly AgentCliEntry[] = [
     bin: 'copilot',
     acpArgs: ['--acp', '--stdio'],
     versionArgs: ['--version'],
-    loginCommand: 'copilot login',
+    login: { args: ['login'] },
     installHint: 'npm install -g @github/copilot',
     installHintWindows: 'winget install GitHub.Copilot',
     docsUrl: 'https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server',
@@ -88,7 +93,7 @@ export const AGENT_CLIS: readonly AgentCliEntry[] = [
     altBins: ['agent'],
     acpArgs: ['acp'],
     versionArgs: ['--version'],
-    loginCommand: 'agent login',
+    login: { args: ['login'] },
     installHint: 'curl https://cursor.com/install -fsS | bash',
     installHintWindows: "irm 'https://cursor.com/install?win32=true' | iex",
     docsUrl: 'https://cursor.com/docs/cli/acp',
@@ -109,7 +114,15 @@ export interface CustomAgentDefinition {
 }
 
 export function customAgentEntry(definition: CustomAgentDefinition): AgentCliEntry {
-  const slug = definition.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'agent';
+  // At most 40 characters, as the settings and the CLI's config accept ids.
+  const slug =
+    definition.name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+/, '')
+      .slice(0, 40)
+      .replace(/-+$/, '') || 'agent';
   return {
     id: `custom:${slug}`,
     label: definition.name.trim() || slug,
@@ -136,6 +149,38 @@ export function resolveAgentExecutable(entry: AgentCliEntry, overridePath?: stri
   return undefined;
 }
 
+/**
+ * The vendor's sign-in as a program by its full path and its arguments: the agent's own program
+ * (the one Orka runs, so also the user's path when set), or the vendor's other program on PATH.
+ * Undefined when the agent has none or the program is not installed.
+ */
+export function agentLogin(
+  entry: AgentCliEntry,
+  overridePath?: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): { file: string; args: string[] } | undefined {
+  if (!entry.login) return undefined;
+  const file = entry.login.bin ? findExecutable(entry.login.bin, env, platform) : resolveAgentExecutable(entry, overridePath, env, platform);
+  return file ? { file, args: [...entry.login.args] } : undefined;
+}
+
+/**
+ * The sign-in as the user would type it, for hints: by the program's name, or by its path when
+ * the user set one. `executable` is the agent's program when it was found.
+ */
+export function loginCommand(entry: AgentCliEntry, overridePath?: string, executable?: string): string | undefined {
+  if (!entry.login) return undefined;
+  const explicit = !entry.login.bin && overridePath?.trim();
+  const program = entry.login.bin ?? (explicit ? (/\s/.test(explicit) ? `"${explicit}"` : explicit) : executable ? programName(executable) : entry.bin);
+  return [program, ...entry.login.args].join(' ');
+}
+
+function programName(file: string): string {
+  const base = path.basename(file);
+  return base.replace(/\.(?:exe|cmd|bat|com|ps1)$/i, '');
+}
+
 /** How to start the agent in `cwd`; throws a user-facing error when it is not installed. */
 export function agentLaunchSpec(entry: AgentCliEntry, cwd: string, overridePath?: string): AcpLaunchSpec {
   const command = resolveAgentExecutable(entry, overridePath);
@@ -146,7 +191,7 @@ export function agentLaunchSpec(entry: AgentCliEntry, cwd: string, overridePath?
         : t('{agent} was not found at "{path}".', { agent: entry.label, path: overridePath?.trim() || entry.bin }),
     );
   }
-  return { agentId: entry.id, label: entry.label, command, args: [...entry.acpArgs], cwd, loginCommand: entry.loginCommand };
+  return { agentId: entry.id, label: entry.label, command, args: [...entry.acpArgs], cwd, loginCommand: loginCommand(entry, overridePath, command) };
 }
 
 export function installHint(entry: AgentCliEntry, platform: NodeJS.Platform = process.platform): string {
@@ -169,12 +214,14 @@ export async function checkAgentCli(entry: AgentCliEntry, overridePath?: string,
   if (!executable) return { state: 'not_found' };
   if (!entry.versionArgs.length) return { state: 'ready', executable };
   const { file, args, shell } = resolveCommand(executable, [...entry.versionArgs]);
-  const env = { ...process.env };
+  // An npm shim starts "node" through cmd.exe, which looks in the current folder first: run the
+  // check in the home folder, and tell cmd.exe not to look there at all.
+  const env: NodeJS.ProcessEnv = { ...process.env, ...(shell ? { NoDefaultCurrentDirectoryInExePath: '1' } : {}) };
   delete env.ELECTRON_RUN_AS_NODE;
   return new Promise((resolve) => {
     let output = '';
     let settled = false;
-    const child = spawn(file, args, { env, shell, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(file, args, { cwd: homedir(), env, shell, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const done = (status: AgentCliStatus) => {
       if (settled) return;
       settled = true;

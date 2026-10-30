@@ -1,6 +1,6 @@
 import type { ApprovalRequest, ApprovalResponse, EditorContext, NodeHost, Orchestrator } from '@orka/core';
-import type { AppSettings, AppShell, Folder, FromWebview, InputOptions, PickItem, SecretStore, StateStore, TerminalHandle, ToWebview } from '@orka/app';
-import { USER_SKILLS_DIR } from '@orka/app';
+import type { AppSettings, AppShell, Folder, FromWebview, InputOptions, PickItem, SecretStore, StateStore, TerminalHandle, TerminalProgram, ToWebview } from '@orka/app';
+import { cmdLine, comspec, shLine, USER_SKILLS_DIR } from '@orka/app';
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
@@ -188,10 +188,19 @@ export class VSCodeShell implements AppShell, vscode.Disposable {
     await vscode.env.clipboard.writeText(text);
   }
 
-  runInTerminal(options: { name: string; cwd: string; command: string; onClose?: () => void }): TerminalHandle {
-    const terminal = vscode.window.createTerminal({ name: options.name, cwd: options.cwd, iconPath: new vscode.ThemeIcon('rocket') });
+  runInTerminal(options: { name: string; cwd: string; command: string | TerminalProgram; onClose?: () => void }): TerminalHandle {
+    const { command } = options;
+    // A program runs in a shell Orka picks (the user's default one could be any), by its full path,
+    // and that shell stays open afterwards.
+    const shell: Partial<vscode.TerminalOptions> =
+      typeof command === 'string'
+        ? {}
+        : process.platform === 'win32'
+          ? { shellPath: comspec(), shellArgs: `/d /s /k ${cmdLine(command)}` }
+          : { shellPath: '/bin/sh', shellArgs: ['-c', `${shLine(command)}; exec "\${SHELL:-sh}"`] };
+    const terminal = vscode.window.createTerminal({ name: options.name, cwd: options.cwd, iconPath: new vscode.ThemeIcon('rocket'), ...shell });
     if (options.onClose) this.terminalClosers.set(terminal, options.onClose);
-    terminal.sendText(options.command);
+    if (typeof command === 'string') terminal.sendText(command);
     return { show: () => terminal.show() };
   }
 

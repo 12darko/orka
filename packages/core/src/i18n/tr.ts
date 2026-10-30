@@ -858,6 +858,9 @@ export const TR: Record<string, string> = {
   'Outside the workspace: {paths}': 'Çalışma alanının dışında: {paths}',
   '{agent} was not found. Install it ({command}) or set its path in the settings.': '{agent} bulunamadı. Kurun ({command}) ya da yolunu ayarlardan belirtin.',
   '{agent} was not found at "{path}".': '{agent} "{path}" konumunda bulunamadı.',
+  '{program} was not found. Install it ({command}), then sign in again.': '{program} bulunamadı. Kurun ({command}), sonra tekrar giriş yapın.',
+  'No Supervisor while {agent} is the main agent: it needs a model provider of its own. Add an API key, or pick a provider for the Supervisor in Settings > Agents.':
+    "{agent} ana agent iken Supervisor yok: kendi model Provider'ı gerekiyor. Bir API anahtarı ekleyin ya da Ayarlar > Agents bölümünden Supervisor için bir Provider seçin.",
   '{agent} did not answer within {n} seconds.': '{agent} {n} saniye içinde yanıt vermedi.',
   '{agent} cannot start: Orka cannot snapshot this folder ({reason}), so the files it changes could not be reviewed or reverted.':
     "{agent} başlatılamıyor: Orka bu klasörün snapshot'ını alamıyor ({reason}); bu yüzden değiştirdiği dosyalar incelenemez ve geri alınamaz.",

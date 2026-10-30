@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import type { ToWebview } from '../src/protocol';
 import type { Disposable, SettingsStore } from '../src/settings';
 import type { AppShell, Folder, SecretStore, StateStore, TerminalHandle } from '../src/shell';
+import type { TerminalProgram } from '../src/terminal';
 
 export class MemorySettings implements SettingsStore {
   private readonly listeners = new Set<() => void>();
@@ -70,6 +71,7 @@ export class FakeShell implements AppShell {
   readonly posted: ToWebview[] = [];
   readonly asked: Array<{ level: string; text: string; actions: string[] }> = [];
   readonly opened: string[] = [];
+  readonly terminals: Array<{ name: string; cwd: string; command: string | TerminalProgram; shown: boolean }> = [];
   /** The action message() answers with, when it offers it. */
   answer?: string;
   private folder?: string;
@@ -154,8 +156,10 @@ export class FakeShell implements AppShell {
 
   async writeClipboard(): Promise<void> {}
 
-  runInTerminal(): TerminalHandle {
-    return { show: () => undefined };
+  runInTerminal(options: { name: string; cwd: string; command: string | TerminalProgram }): TerminalHandle {
+    const terminal = { ...options, shown: false };
+    this.terminals.push(terminal);
+    return { show: () => void (terminal.shown = true) };
   }
 
   async openChangeDiff(): Promise<void> {}
