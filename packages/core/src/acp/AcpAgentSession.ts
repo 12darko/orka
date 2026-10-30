@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type { ChangeTracker } from '../changes/ChangeTracker';
@@ -7,9 +8,10 @@ import { t } from '../i18n';
 import type { AgentEvent, ToolCallView } from '../orchestrator/events';
 import { classifyCommand } from '../permissions/commandRisk';
 import type { PermissionManager } from '../permissions/PermissionManager';
-import { isSecretFile } from '../permissions/secrets';
+import { isSecretFile, secretInCommand } from '../permissions/secrets';
 import type { Plan } from '../planning/Plan';
 import { JsonRpcError, RPC_INTERNAL_ERROR, RPC_INVALID_PARAMS } from '../rpc/JsonRpcStdio';
+import { gitConfigRisk } from '../tools/GitTools';
 import { toRelative } from '../tools/workspace';
 import type { AcpClient, AcpSessionHandlers } from './AcpClient';
 import { AcpTurnMapper, isInside, safeId } from './mapping';
@@ -60,6 +62,16 @@ export interface AcpTurnResult {
   ranCommandAfterChange: boolean;
 }
 
+/** What the orchestrator gives one prompt turn. */
+export interface AcpPromptOptions {
+  /**
+   * Record a file's original before the agent writes it through Orka: its content when the turn
+   * began (the turn's snapshot knows it, also after the agent changed it unseen). Default: the
+   * change tracker reads it from disk.
+   */
+  recordBefore?(absPath: string): Promise<void>;
+}
+
 /** How long a cancelled turn may take to end before the agent's process is stopped. */
 const CANCEL_GRACE_MS = 5_000;
 const MAX_CARD_OUTPUT = 20_000;
@@ -69,12 +81,13 @@ interface Turn {
   signal: AbortSignal;
   /**
    * What the agent's own permission requests got approved in this turn, so carrying them out
-   * through Orka does not ask twice: exact command lines, and files with the content the approval
-   * showed (undefined: the request showed no content, any content is what was approved).
+   * through Orka does not ask twice: exact command lines, and per file the content (hashes) of
+   * the diff the approval showed, or 'any' for the files of a request that showed no diff.
    */
   approvedCommands: Set<string>;
-  approvedWrites: Map<string, string | undefined>;
+  approvedWrites: Map<string, Set<string> | 'any'>;
   ownCards: number;
+  recordBefore(absPath: string): Promise<void>;
 }
 
 type Approval = 'awaiting' | 'allowed' | 'cancelled' | { denied: string };
@@ -95,6 +108,10 @@ export class AcpAgentSession {
   /** For the agent with its next prompt: what the user said when declining, hook results. */
   private notes: string[] = [];
   private readonly terminals: AcpTerminals;
+  /** The task is done with this session: a turn still ending reaches neither the transcript nor the task. */
+  private disposed = false;
+  /** Why the repository's git config makes git run programs, as of the last check (before each command). */
+  private gitRisk?: string;
 
   constructor(
     readonly client: AcpClient,
@@ -107,9 +124,9 @@ export class AcpAgentSession {
     return this.ctx.host.workspaceRoot;
   }
 
-  /** Open the session in the workspace. */
-  async start(): Promise<void> {
-    this.sessionId = await this.client.newSession(this.root, this.handlers());
+  /** Open the session in the workspace. Aborting `signal` stops waiting for the agent at once. */
+  async start(signal?: AbortSignal): Promise<void> {
+    this.sessionId = await this.client.newSession(this.root, this.handlers(), signal);
   }
 
   /** The agent accepts images in prompts. */
@@ -129,15 +146,32 @@ export class AcpAgentSession {
    * session/cancel, open approvals answered "cancelled", terminals stopped, and the process is
    * stopped if the turn has not ended within 5 seconds.
    */
-  async prompt(blocks: ContentBlock[], signal: AbortSignal): Promise<AcpTurnResult> {
+  async prompt(blocks: ContentBlock[], signal: AbortSignal, options: AcpPromptOptions = {}): Promise<AcpTurnResult> {
     const sessionId = this.sessionId;
     if (!sessionId) throw new Error('The ACP session was not started.');
     const turnNumber = ++this.turns;
     const mapper = new AcpTurnMapper(
-      { emit: this.ctx.emit, setPlan: this.ctx.setPlan, nextId: this.ctx.nextId, root: this.root, label: this.ctx.label },
+      {
+        emit: (event) => this.emit(event),
+        setPlan: (plan) => {
+          if (!this.disposed) this.ctx.setPlan(plan);
+        },
+        nextId: this.ctx.nextId,
+        root: this.root,
+        label: this.ctx.label,
+        gitRisk: () => this.gitRisk,
+        noteSecret: (relPath) => this.noteSecret(relPath),
+      },
       `acp_${safeId(sessionId).slice(-16)}_${turnNumber}_${this.ctx.nextId('')}_`,
     );
-    const turn: Turn = { mapper, signal, approvedCommands: new Set(), approvedWrites: new Map(), ownCards: 0 };
+    const turn: Turn = {
+      mapper,
+      signal,
+      approvedCommands: new Set(),
+      approvedWrites: new Map(),
+      ownCards: 0,
+      recordBefore: options.recordBefore ?? ((absPath) => this.ctx.changes.recordBefore(absPath)),
+    };
     this.current = turn;
     let killTimer: NodeJS.Timeout | undefined;
     const onAbort = () => {
@@ -168,10 +202,27 @@ export class AcpAgentSession {
     };
   }
 
-  /** The task is done with this session (new task, rewind, another agent). */
+  /**
+   * The task is done with this session (new task, another task opened, another agent). A turn that
+   * is still ending is muted: its last cards and plan must not land in whatever task comes next.
+   */
   dispose(): void {
+    this.disposed = true;
     this.terminals.killAll();
     if (this.sessionId) this.client.forgetSession(this.sessionId);
+  }
+
+  private emit(event: AgentEvent): void {
+    if (!this.disposed) this.ctx.emit(event);
+  }
+
+  private noteSecret(relPath: string): void {
+    if (!this.disposed) this.ctx.noteSecret(relPath);
+  }
+
+  /** Read the repository's git config again: the agent may have changed it since the last command. */
+  private async checkGit(): Promise<void> {
+    this.gitRisk = (await gitConfigRisk(this.root).catch(() => [])).join(', ') || undefined;
   }
 
   private handlers(): AcpSessionHandlers {
@@ -195,13 +246,17 @@ export class AcpAgentSession {
    */
   private async requestPermission(params: RequestPermissionParams): Promise<PermissionOutcome> {
     const turn = this.current;
-    if (!turn || turn.signal.aborted) return { outcome: 'cancelled' };
+    if (!turn) return { outcome: 'cancelled' };
+    // Git commands are judged with the repository's config as it is now.
+    await this.checkGit();
+    if (turn.signal.aborted || this.disposed) return { outcome: 'cancelled' };
     const state = turn.mapper.tool(params.toolCall);
     if (!state) return { outcome: 'cancelled' };
     const action = turn.mapper.actionOf(state);
     const view = turn.mapper.viewOf(state);
-    // Once the task has read a secret-looking file, nothing goes to the internet unseen.
-    const guard = action.category === 'network' && !!this.ctx.secretFile();
+    // Once the task has read a secret-looking file, nothing goes to the internet unseen, nor
+    // through tools Orka cannot classify (MCP tools reach a browser, a database, a web service).
+    const guard = (action.category === 'network' || state.kind === 'other') && !!this.ctx.secretFile();
     const request: ApprovalRequest = {
       id: view.id,
       toolName: view.name,
@@ -216,11 +271,15 @@ export class AcpAgentSession {
     if (answer === 'allow') {
       if (action.command) turn.approvedCommands.add(action.command.trim());
       if (action.category === 'edit') {
+        // Exactly what the approval showed: the diff's file with that content; without a diff, the files it named.
         const preview = request.preview;
-        if (preview) turn.approvedWrites.set(pathKey(preview.path), preview.after ?? undefined);
-        for (const p of state.locations) if (!turn.approvedWrites.has(pathKey(p))) turn.approvedWrites.set(pathKey(p), undefined);
+        if (preview) {
+          if (preview.after !== null) approveWrite(turn, preview.path, contentHash(preview.after));
+        } else for (const p of state.locations) approveWrite(turn, p, 'any');
       }
-      if (action.category === 'read') for (const p of state.locations) if (isSecretFile(p)) this.ctx.noteSecret(toRelative(this.root, p));
+      // Whatever it is for (a read, an edit, a command), it touches a secret-looking file now.
+      const secret = turn.mapper.secretOf(state);
+      if (secret) this.noteSecret(secret);
     }
     return choose(params.options, answer === 'allow');
   }
@@ -262,7 +321,7 @@ export class AcpAgentSession {
     const rel = toRelative(this.root, abs);
     const host = this.ctx.host;
     if (!(await host.exists(abs)) || (await host.isDirectory(abs))) throw new JsonRpcError(`File not found: ${rel}`, ACP_RESOURCE_NOT_FOUND);
-    if (isSecretFile(rel)) this.ctx.noteSecret(rel);
+    if (isSecretFile(rel)) this.noteSecret(rel);
     const text = await host.readFile(abs);
     if (params.line == null && params.limit == null) return { content: text };
     const start = Math.max(0, Math.floor(Number(params.line ?? 1)) - 1);
@@ -272,12 +331,13 @@ export class AcpAgentSession {
 
   /**
    * fs/write_text_file: inside the workspace, approved by Orka's rules (unless the agent's own
-   * request for this call was just approved), recorded in the change list before it is written,
-   * then the user's afterEdit hooks.
+   * request for this call was just approved with this content), recorded in the change list with
+   * the file's content when the turn began, then written, then the user's afterEdit hooks.
    */
   private async writeTextFile(params: WriteTextFileParams): Promise<void> {
     const turn = this.current;
-    if (!turn || turn.signal.aborted) throw new JsonRpcError('The user stopped the agent; nothing was written.', RPC_INTERNAL_ERROR);
+    const stopped = () => new JsonRpcError('The user stopped the agent; nothing was written.', RPC_INTERNAL_ERROR);
+    if (!turn || turn.signal.aborted || this.disposed) throw stopped();
     const abs = await this.workspacePath(params.path);
     const rel = toRelative(this.root, abs);
     const host = this.ctx.host;
@@ -288,16 +348,20 @@ export class AcpAgentSession {
     const call = turn.mapper.callForPath(abs);
     const cardId = call?.cardId ?? `${turn.mapper.prefix}w${++turn.ownCards}`;
     if (!call) turn.mapper.showCard({ id: cardId, name: 'acp:write', title, category: 'edit', risk: 'normal', status: 'running', path: abs });
-    // Approved content only: an approval that showed one change does not cover writing another.
-    const key = pathKey(abs);
-    const approved = turn.approvedWrites.has(key) && [undefined, params.content].includes(turn.approvedWrites.get(key));
-    if (!approved) {
+    // Approved content only: an approval that showed one change does not cover writing another,
+    // nor another file the request named without showing it.
+    const approved = turn.approvedWrites.get(pathKey(abs));
+    if (approved !== 'any' && !approved?.has(contentHash(params.content))) {
       const request: ApprovalRequest = { id: cardId, toolName: 'acp:write', category: 'edit', risk: 'normal', title, preview: { path: abs, before, after: params.content } };
       const answer = await this.authorize(turn, request, false, (approval) => (call ? turn.mapper.setApproval(call, approval) : turn.mapper.patchCard(cardId, cardStatus(approval))));
-      if (answer === 'cancelled') throw new JsonRpcError('The user stopped the agent; nothing was written.', RPC_INTERNAL_ERROR);
+      if (answer === 'cancelled') throw stopped();
       if (answer === 'deny') throw new JsonRpcError(`Not written: the user declined writing ${rel}.`, RPC_INTERNAL_ERROR);
     }
-    await this.ctx.changes.recordBefore(abs);
+    // Checked again right before writing: a link may have appeared while the user decided.
+    await this.workspacePath(params.path);
+    if (turn.signal.aborted || this.disposed) throw stopped();
+    await turn.recordBefore(abs);
+    if (turn.signal.aborted || this.disposed) throw stopped();
     await host.writeFile(abs, params.content);
     this.ctx.changes.notify();
     turn.mapper.noteWrite(abs);
@@ -313,11 +377,13 @@ export class AcpAgentSession {
    */
   private async createTerminal(params: CreateTerminalParams): Promise<{ terminalId: string }> {
     const turn = this.current;
-    if (!turn || turn.signal.aborted) throw new JsonRpcError('No prompt is running, so no command can start.', RPC_INTERNAL_ERROR);
+    if (!turn || turn.signal.aborted || this.disposed) throw new JsonRpcError('No prompt is running, so no command can start.', RPC_INTERNAL_ERROR);
     const cwd = params.cwd ? await this.workspacePath(params.cwd) : this.root;
     if (!(await this.ctx.host.isDirectory(cwd))) throw new JsonRpcError(`Not a folder: ${toRelative(this.root, cwd)}`, RPC_INVALID_PARAMS);
     const line = commandLine(params.command, params.args ?? [], this.ctx.host.shellName);
-    const risk = classifyCommand(line, { workspaceRoot: this.root, cwd });
+    // Like Orka's own run_command: git started by a command is not hardened, so a risky repository config makes any git command ask.
+    await this.checkGit();
+    const risk = classifyCommand(line, { workspaceRoot: this.root, cwd, gitRisk: this.gitRisk });
     const title = t('Run: {command}', { command: oneLine(line, 80) });
     const detail = [`$ ${line}`, cwd !== this.root ? t('in {cwd}', { cwd: toRelative(this.root, cwd) }) : '', risk.reason ? t('Risk: {reason}', { reason: t(risk.reason) }) : '']
       .filter(Boolean)
@@ -332,11 +398,15 @@ export class AcpAgentSession {
       if (answer === 'cancelled') throw new JsonRpcError('The user stopped the agent; the command did not run.', RPC_INTERNAL_ERROR);
       if (answer === 'deny') throw new JsonRpcError('Not run: the user declined this command.', RPC_INTERNAL_ERROR);
     }
+    if (turn.signal.aborted || this.disposed) throw new JsonRpcError('The user stopped the agent; the command did not run.', RPC_INTERNAL_ERROR);
+    // A command that names a secret-looking file (`cat .env`) reads it, as far as the secrets guard is concerned.
+    const secret = secretInCommand(line);
+    if (secret) this.noteSecret(secret);
     const terminalId = this.terminals.start(
       line,
       cwd,
       params.outputByteLimit,
-      (chunk) => this.ctx.emit({ type: 'tool_output', id: turn.mapper.terminalCard(terminalId) ?? cardId, chunk }),
+      (chunk) => this.emit({ type: 'tool_output', id: turn.mapper.terminalCard(terminalId) ?? cardId, chunk }),
       (status, output) => {
         turn.mapper.noteCommand();
         if (!call) turn.mapper.patchCard(cardId, { status: status.exitCode === 0 ? 'done' : 'error', output: tail(output) || undefined });
@@ -348,7 +418,8 @@ export class AcpAgentSession {
 
   /**
    * A path the agent named, as an absolute path inside the workspace. Paths outside it, and links
-   * inside it that lead outside it, are refused.
+   * inside it that lead outside it (also links whose target does not exist yet: writing would
+   * create it), are refused.
    */
   private async workspacePath(input: string): Promise<string> {
     const root = this.root;
@@ -356,12 +427,28 @@ export class AcpAgentSession {
     const refuse = () => new JsonRpcError(`Orka only lets agents use files inside the workspace (${root}); ${input} is outside it.`, RPC_INVALID_PARAMS);
     if (!isInside(root, abs)) throw refuse();
     const realRoot = await fs.realpath(root).catch(() => root);
-    let probe = abs;
-    while (!(await exists(probe)) && path.dirname(probe) !== probe) probe = path.dirname(probe);
-    const real = await fs.realpath(probe).catch(() => probe);
-    if (!isInside(realRoot, real)) throw refuse();
+    const real = await realTarget(abs).catch(() => undefined);
+    if (!real || !isInside(realRoot, real)) throw refuse();
     return abs;
   }
+}
+
+/**
+ * Where a path really leads, also when it does not exist yet: the nearest part of it that exists
+ * (a link counts, even one whose target is missing) resolved, the rest appended. A dangling link
+ * is followed to its target, as writing through it would. Throws on a link loop.
+ */
+async function realTarget(target: string, depth = 0): Promise<string> {
+  if (depth > 40) throw new Error(`Too many links: ${target}`);
+  let probe = target;
+  while (!(await lexists(probe)) && path.dirname(probe) !== probe) probe = path.dirname(probe);
+  const rest = path.relative(probe, target);
+  const real = await fs.realpath(probe).catch(() => undefined);
+  if (real !== undefined) return path.join(real, rest);
+  // It exists but does not resolve: a link to something missing. Its target counts, relative to the link's real folder.
+  const link = await fs.readlink(probe);
+  const next = path.resolve(await fs.realpath(path.dirname(probe)), link);
+  return realTarget(path.join(next, rest), depth + 1);
 }
 
 /** Orka answers "once" so the next request asks Orka again; without such an option, the request is cancelled. */
@@ -386,9 +473,22 @@ function pathKey(p: string): string {
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
-async function exists(p: string): Promise<boolean> {
+function contentHash(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+/** Approve writing `file`: with one exact content (its hash), or with any content; 'any' wins. */
+function approveWrite(turn: Turn, file: string, hash: string | 'any'): void {
+  const key = pathKey(file);
+  const current = turn.approvedWrites.get(key);
+  if (current === 'any' || hash === 'any') turn.approvedWrites.set(key, 'any');
+  else turn.approvedWrites.set(key, new Set([...(current ?? []), hash]));
+}
+
+/** The path exists, as a file, a folder or a link (even one whose target is missing). */
+async function lexists(p: string): Promise<boolean> {
   try {
-    await fs.access(p);
+    await fs.lstat(p);
     return true;
   } catch {
     return false;

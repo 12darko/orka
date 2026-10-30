@@ -6,7 +6,8 @@
 //   {readFile: {path, line, limit}} {writeFile: {path, content}} {directWrite: {path, content}}
 //   {terminal: {command, args, cwd}} {hang: true} {stop: "end_turn" | "refusal" | ...}
 // Every message and answer is logged as a JSON line to FAKE_ACP_LOG. FAKE_ACP_NEEDS_LOGIN=1 makes
-// session/new fail with "auth required"; FAKE_ACP_IMAGES=1 advertises image prompts.
+// session/new fail with "auth required"; FAKE_ACP_IMAGES=1 advertises image prompts;
+// FAKE_ACP_HANG=initialize (or session/new) never answers that request, like a stuck agent.
 import { appendFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import * as path from 'node:path';
 
@@ -55,6 +56,7 @@ async function handle(message) {
     return;
   }
   log({ event: message.method, params: message.method === 'session/prompt' ? undefined : message.params });
+  if (process.env.FAKE_ACP_HANG === message.method) return;
   switch (message.method) {
     case 'initialize':
       // CRLF on purpose: the client must cope with it.

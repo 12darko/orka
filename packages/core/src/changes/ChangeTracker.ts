@@ -115,6 +115,11 @@ export class ChangeTracker {
     return this.originals.has(normalize(absPath));
   }
 
+  /** The current rewind point already holds this file's earlier content (true when there is no rewind point). */
+  capturedInEpoch(absPath: string): boolean {
+    return this.epochs.at(-1)?.has(normalize(absPath)) ?? true;
+  }
+
   /** Current net changes; files edited back to their original content are omitted. */
   async list(): Promise<FileChange[]> {
     const changes: FileChange[] = [];

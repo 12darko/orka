@@ -36,8 +36,12 @@ export class AcpAgentPool {
     return this.entries.size;
   }
 
-  /** A started agent for `spec`; give it back with release() when the prompt is over. */
-  async acquire(spec: AcpLaunchSpec): Promise<AcpClient> {
+  /**
+   * A started agent for `spec`; give it back with release() when the prompt is over. Aborting
+   * `signal` while the agent starts stops waiting at once, and stops the process if no one else
+   * waits for it (an agent that never answers would otherwise hold the request for a minute).
+   */
+  async acquire(spec: AcpLaunchSpec, signal?: AbortSignal): Promise<AcpClient> {
     const key = poolKey(spec);
     let entry = this.entries.get(key);
     if (entry && !entry.client.alive) {
@@ -61,22 +65,26 @@ export class AcpAgentPool {
     entry.lastUsed = Date.now();
     clearTimeout(entry.timer);
     try {
-      await entry.client.start();
+      await entry.client.start(signal);
     } catch (error) {
       entry.leases--;
-      this.drop(key, entry);
+      if (entry.leases === 0 || !entry.client.alive) this.drop(key, entry);
       throw error;
     }
     return entry.client;
   }
 
-  /** The prompt is over; the process may idle out. */
-  release(client: AcpClient): void {
+  /**
+   * The prompt is over; the process may idle out. `stop`: the request was stopped while the agent
+   * was not answering (opening its session), so the process stops now unless another request uses it.
+   */
+  release(client: AcpClient, stop = false): void {
     for (const [key, entry] of this.entries) {
       if (entry.client !== client) continue;
       entry.leases = Math.max(0, entry.leases - 1);
       entry.lastUsed = Date.now();
-      if (entry.leases === 0) {
+      if (entry.leases === 0 && stop) this.drop(key, entry);
+      else if (entry.leases === 0) {
         clearTimeout(entry.timer);
         entry.timer = setTimeout(() => this.drop(key, entry), this.options.idleTimeoutMs ?? IDLE_TIMEOUT_MS);
         entry.timer.unref?.();
@@ -117,10 +125,10 @@ export interface ExternalAgentRuntime {
   readonly label: string;
   /** The vendor's own login command, for the "not logged in" notice. */
   readonly loginCommand?: string;
-  /** A started agent for this request. */
-  acquire(): Promise<AcpClient>;
-  /** The request is over. */
-  release(client: AcpClient): void;
+  /** A started agent for this request; aborting `signal` (the user stopped) ends the wait at once. */
+  acquire(signal?: AbortSignal): Promise<AcpClient>;
+  /** The request is over; `stop`: it was stopped while the agent did not answer, so its process may be stuck. */
+  release(client: AcpClient, stop?: boolean): void;
 }
 
 /** The runtime for one agent launched from a shared pool. */
@@ -129,8 +137,8 @@ export function pooledAgent(pool: AcpAgentPool, spec: AcpLaunchSpec): ExternalAg
     id: spec.agentId,
     label: spec.label,
     loginCommand: spec.loginCommand,
-    acquire: () => pool.acquire(spec),
-    release: (client) => pool.release(client),
+    acquire: (signal) => pool.acquire(spec, signal),
+    release: (client, stop) => pool.release(client, stop),
   };
 }
 

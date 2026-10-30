@@ -4,6 +4,7 @@ import { t } from '../i18n';
 import type { AgentEvent, ToolCallStatus as CardStatus, ToolCallView } from '../orchestrator/events';
 import { classifyCommand } from '../permissions/commandRisk';
 import type { PermissionCategory, RiskLevel } from '../permissions/PermissionManager';
+import { isSecretFile, secretInCommand } from '../permissions/secrets';
 import type { Plan, PlanStepStatus } from '../planning/Plan';
 import { toRelative } from '../tools/workspace';
 import type { ContentBlock, SessionUpdate, StopReason, ToolCallContent, ToolCallFields, ToolKind } from './types';
@@ -30,10 +31,12 @@ const ACTIVITY_LINES = 30;
 
 /**
  * Orka's permission category and risk for an ACP tool kind: read/search/think are reads, edit and
- * move are edits, execute is a command classified like Orka's own run_command, fetch is network.
- * Anything Orka cannot classify is a normal command.
+ * move are edits, execute is a command classified like Orka's own run_command (with the git risk
+ * of the repository's config, `gitRisk`, and the working directory it names), fetch is network.
+ * An execute call whose command Orka cannot read is dangerous; any other unknown kind is a normal
+ * command.
  */
-export function actionFor(kind: ToolKind, rawInput: unknown, locations: readonly string[], root: string): AcpAction {
+export function actionFor(kind: ToolKind, rawInput: unknown, locations: readonly string[], root: string, context: { gitRisk?: string } = {}): AcpAction {
   const outside = locations.filter((p) => !isInside(root, p));
   const base = { outside, alwaysAsk: outside.length > 0 };
   switch (kind) {
@@ -48,9 +51,14 @@ export function actionFor(kind: ToolKind, rawInput: unknown, locations: readonly
       return { ...base, category: 'delete', risk: outside.length ? 'dangerous' : 'normal' };
     case 'execute': {
       const command = commandOf(rawInput);
-      if (!command) return { ...base, category: 'command', risk: 'normal' };
-      const c = classifyCommand(command, { workspaceRoot: root });
-      return { ...base, category: c.category, risk: c.risk, reason: c.reason, command };
+      // Nobody knows what it runs: the user sees its raw input and decides.
+      if (!command) return { ...base, category: 'command', risk: 'dangerous', reason: 'a command Orka cannot read' };
+      const dir = cwdOf(rawInput);
+      const cwd = dir === undefined ? root : path.resolve(root, dir);
+      const c = classifyCommand(command, { workspaceRoot: root, cwd, gitRisk: context.gitRisk });
+      // A command that runs in a folder outside the workspace always asks, like a path outside it.
+      const all = isInside(root, cwd) ? outside : [...outside, cwd];
+      return { outside: all, alwaysAsk: all.length > 0, category: c.category, risk: c.risk, reason: c.reason, command };
     }
     case 'fetch':
       return { ...base, category: 'network', risk: 'normal' };
@@ -82,6 +90,14 @@ export function commandOf(rawInput: unknown): string | undefined {
   return undefined;
 }
 
+/** The working directory an execute call's raw input names (`cwd`, `workdir` or `directory`), if any. */
+export function cwdOf(rawInput: unknown): string | undefined {
+  if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined;
+  const input = rawInput as Record<string, unknown>;
+  const value = input.cwd ?? input.workdir ?? input.directory;
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
 export interface MapperContext {
   emit(event: AgentEvent): void;
   setPlan(plan: Plan): void;
@@ -90,6 +106,10 @@ export interface MapperContext {
   root: string;
   /** The agent's name, shown as the "model" of its answers. */
   label: string;
+  /** Why the repository's git config makes git run programs, if it does (see gitConfigRisk). */
+  gitRisk?(): string | undefined;
+  /** A tool call the agent reports as running or done touched a secret-looking file (workspace-relative). */
+  noteSecret?(relPath: string): void;
 }
 
 export interface ToolState {
@@ -159,12 +179,14 @@ export class AcpTurnMapper {
         return;
       }
       case 'tool_call':
-        this.closeBubble();
-        this.tool(update);
+      case 'tool_call_update': {
+        if (update.sessionUpdate === 'tool_call') this.closeBubble();
+        const state = this.tool(update);
+        // A call that ran (as the agent reports it) on a secret-looking file turns the secrets guard on.
+        const secret = state && (update.status === 'in_progress' || update.status === 'completed') ? this.secretOf(state) : undefined;
+        if (secret) this.ctx.noteSecret?.(secret);
         return;
-      case 'tool_call_update':
-        this.tool(update);
-        return;
+      }
       case 'plan': {
         if (!Array.isArray(update.entries)) return;
         const steps = update.entries
@@ -224,7 +246,18 @@ export class AcpTurnMapper {
 
   /** How Orka's permission rules see a call. */
   actionOf(state: ToolState): AcpAction {
-    return actionFor(state.kind, state.rawInput, [...state.locations, ...diffPaths(state.content, this.ctx.root)], this.ctx.root);
+    return actionFor(state.kind, state.rawInput, [...state.locations, ...diffPaths(state.content, this.ctx.root)], this.ctx.root, { gitRisk: this.ctx.gitRisk?.() });
+  }
+
+  /**
+   * The secret-looking file a call touches, if any (workspace-relative), read the way Orka's own
+   * secrets guard reads its tools: a location or diff path, or a command's argument.
+   */
+  secretOf(state: ToolState): string | undefined {
+    const file = [...state.locations, ...diffPaths(state.content, this.ctx.root)].find((p) => isSecretFile(p));
+    if (file) return toRelative(this.ctx.root, file);
+    const command = state.kind === 'execute' ? commandOf(state.rawInput) : undefined;
+    return command ? secretInCommand(command) : undefined;
   }
 
   /** The proposed change of an edit call, for the approval diff. */
@@ -325,8 +358,12 @@ export class AcpTurnMapper {
     const action = this.actionOf(state);
     const details: string[] = [];
     if (action.command) details.push(`$ ${action.command}`);
+    else if (state.kind === 'execute' && state.rawInput !== undefined) details.push(t('Input: {input}', { input: oneLine(JSON.stringify(state.rawInput) ?? '', 500) }));
     const url = state.kind === 'fetch' ? urlOf(state.rawInput) : undefined;
     if (url) details.push(url);
+    // Every file the call names, so an approval shows all of them (the card's path is only the first).
+    const inside = state.locations.filter((p) => isInside(this.ctx.root, p));
+    if (inside.length > 1) details.push(t('Files: {paths}', { paths: inside.map((p) => toRelative(this.ctx.root, p)).join(', ') }));
     if (action.outside.length) details.push(t('Outside the workspace: {paths}', { paths: action.outside.join(', ') }));
     if (action.reason) details.push(t('Risk: {reason}', { reason: t(action.reason) }));
     const output = state.denied ?? this.outputOf(state);

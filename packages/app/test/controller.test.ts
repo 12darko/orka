@@ -219,6 +219,21 @@ describe('agent CLIs', () => {
     assert.notEqual(shell.last('config')!.config.main.effective.provider, 'agent:custom:fake');
   });
 
+  it('a new task during a request stops it, keeps it in its own task, and starts empty', async () => {
+    process.env.FAKE_ACP_SCRIPT = JSON.stringify([[{ chunk: 'Working on it.' }, { hang: true }, { chunk: 'Too late.' }]]);
+    const { shell, controller } = await start('desktop', agentSettings);
+    const sent = controller.send('First request');
+    await until(() => shell.posted.some((m) => m.type === 'event' && m.event.type === 'assistant_delta'), 'the agent to start answering');
+    const before = shell.posted.length;
+    await controller.newTask();
+    await sent;
+    const tasks = await new FileTaskStore(shell.storage(folderA).tasks).list();
+    assert.equal(tasks.length, 1, 'the stopped request was saved as its own task');
+    assert.match(tasks[0].title, /First request/);
+    const later = shell.posted.slice(before).flatMap((m) => (m.type === 'event' ? [m.event] : []));
+    assert.ok(!JSON.stringify(later).includes('Too late.'), 'nothing of the old turn reaches the new task');
+  });
+
   it('opens the sign-in by its full path in the home folder, and shows it', async () => {
     const { shell, controller } = await start('vscode', { 'agentClis.paths': { gemini: process.execPath } });
     await controller.handleMessage({ type: 'loginAgentCli', id: 'gemini' });

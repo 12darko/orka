@@ -8,3 +8,8 @@ export const SECRET_FILE =
 export function isSecretFile(filePath: string): boolean {
   return SECRET_FILE.test(filePath);
 }
+
+/** The secret-looking file a command line names (`cat .env`, `Get-Content secrets.json`), if any. */
+export function secretInCommand(command: string): string | undefined {
+  return command.split(/[\s"'|;&<>]+/).find((token) => SECRET_FILE.test(token));
+}

@@ -64,6 +64,20 @@ export class ShadowGit {
   }
 
   /**
+   * A file's content in a snapshot, or null when the snapshot has no such file; undefined when
+   * that cannot be said (binary, or git failed). Unlike fileAt, a failure is never "no file".
+   */
+  async contentAt(snapshot: string, relPath: string): Promise<string | null | undefined> {
+    // ls-tree takes paths literally (no wildcards).
+    const listed = await this.git(['ls-tree', '-z', '--name-only', snapshot, '--', relPath]).catch(() => undefined);
+    if (listed === undefined) return undefined;
+    if (!listed) return null;
+    const data = await this.gitBuffer(['show', `${snapshot}:${relPath}`]).catch(() => undefined);
+    if (!data || data.subarray(0, 8000).includes(0)) return undefined;
+    return data.toString('utf8');
+  }
+
+  /**
    * Write a snapshot's files into the empty folder `dir`. `index` is a git index file of the
    * copy's own, so the workspace's snapshots are not disturbed.
    */

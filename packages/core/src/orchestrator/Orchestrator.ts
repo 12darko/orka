@@ -18,7 +18,7 @@ import {
 import type { Host } from '../host/Host';
 import type { PermissionManager } from '../permissions/PermissionManager';
 import { formatPlan, type Plan } from '../planning/Plan';
-import { type AIProvider, type ChatResponse, isAbortError, ProviderError, type ProviderStreamEvent } from '../providers/AIProvider';
+import { AbortedError, type AIProvider, type ChatResponse, isAbortError, ProviderError, type ProviderStreamEvent } from '../providers/AIProvider';
 import { INVALID_JSON_KEY } from '../providers/OpenAIProvider';
 import { defaultTools } from '../tools';
 import { type Tool, type ToolAction, type ToolContext, ToolError, toSpec, truncateMiddle, validateInput } from '../tools/Tool';
@@ -38,7 +38,7 @@ import type { AcpClient } from '../acp/AcpClient';
 import { AcpAgentSession, type AcpSessionContext, type AcpTurnResult } from '../acp/AcpAgentSession';
 import type { ExternalAgentRuntime } from '../acp/pool';
 import { ACP_AUTH_REQUIRED, type ContentBlock } from '../acp/types';
-import { SECRET_FILE } from '../permissions/secrets';
+import { SECRET_FILE, secretInCommand } from '../permissions/secrets';
 import { JsonRpcError } from '../rpc/JsonRpcStdio';
 import { appendLessons, LESSONS_FILE, MEMORY_DIR, parseLessons } from '../memory/ProjectMemory';
 import { describeHookResult, type HookCommand, type HookResult, hooksForFile, type HooksConfig, runHook } from '../hooks/Hooks';
@@ -236,6 +236,11 @@ export class Orchestrator {
   private acp?: { agentId: string; session: AcpAgentSession; stale: boolean };
   /** Notices shown once per task (what an external agent cannot do). */
   private shownNotices = new Set<string>();
+  /**
+   * Which task the orchestrator holds: a new task or another opened task counts it up. An external
+   * agent's turn that ends after that belongs to no task and writes nothing (messages, changes, events).
+   */
+  private generation = 0;
 
   private messages: ChatMessage[] = [];
   private systemPrompt?: string;
@@ -262,6 +267,7 @@ export class Orchestrator {
 
   dispose(): void {
     this.stop();
+    this.generation++;
     this.dropAcpSession();
     this.unsubscribeChanges?.();
     this.listeners.clear();
@@ -344,6 +350,7 @@ export class Orchestrator {
    */
   restore(state: Pick<TaskSnapshot, 'messages' | 'systemPrompt' | 'subagentProfiles' | 'plan' | 'usageByAgent' | 'skills' | 'checkpoint'>): void {
     if (this.abort) throw new Error('Stop the agent before opening another task.');
+    this.generation++;
     this.messages = [...state.messages];
     this.systemPrompt = state.systemPrompt;
     this.plan = state.plan;
@@ -422,6 +429,7 @@ export class Orchestrator {
   /** Start a fresh task: new conversation, new system prompt snapshot, no plan. */
   reset(): void {
     this.stop();
+    this.generation++;
     this.messages = [];
     this.systemPrompt = undefined;
     this.plan = undefined;
@@ -758,7 +766,8 @@ export class Orchestrator {
 
   /**
    * Record a user request: a rewind point, the message (with the turn context, attached files and
-   * invoked skills) and its user_message event. Returns the message.
+   * invoked skills) and its user_message event. Returns the message. Stopped (`signal`) before it is
+   * recorded, it records nothing: after a new task, the request is not the new task's.
    */
   private async recordRequest(
     userText: string,
@@ -766,8 +775,10 @@ export class Orchestrator {
     attachments: Array<{ path: string; content: string }>,
     invokedSkills: readonly Skill[],
     images: readonly AttachedImage[],
+    signal?: AbortSignal,
   ): Promise<ChatMessage> {
     const turnContext = await this.context.buildTurnContext(editor, this.options.permissions.getMode(), this.notes);
+    if (signal?.aborted) throw new AbortedError();
     this.notes = [];
     const attached = [
       ...invokedSkills.map(invokedSkillBlock),
@@ -880,6 +891,9 @@ export class Orchestrator {
     images: readonly AttachedImage[],
   ): Promise<RunEndReason> {
     const settings = this.options.getSettings();
+    // A new task or another opened task while this request runs: what is left of it belongs to no task.
+    const generation = this.generation;
+    const left = () => this.generation !== generation;
     this.setPhase('thinking');
     // The safety net comes first: without snapshots, what the agent changes with its own tools
     // could be neither reviewed nor reverted, so it does not start at all.
@@ -895,8 +909,9 @@ export class Orchestrator {
     // The supervisor's briefs and the verify nudge need the project scan; no system prompt is
     // frozen (that happens if the task continues on a model).
     if (!this.context.projectSummary) await this.context.buildSystemPrompt(settings.customInstructions, { subagents: [] });
+    if (signal.aborted) return 'stopped';
     const earlier = userRequests(this.messages);
-    const request = await this.recordRequest(userText, editor, attachments, invokedSkills, images);
+    const request = await this.recordRequest(userText, editor, attachments, invokedSkills, images, signal);
 
     const task: RequestState = { codeChangedSinceCheck: false, verifyNudged: false, changedSinceHooks: false, hookRounds: 0, changedCode: false };
     const oversight = this.supervisor ? this.options.supervisor!.getSettings() : undefined;
@@ -915,14 +930,17 @@ export class Orchestrator {
     }
     this.lastProviderKey = agentKey;
 
+    // Stop works while the agent starts (initialize) and opens its session (session/new) too.
     let client: AcpClient;
     try {
-      client = await agent.acquire();
+      client = await agent.acquire(signal);
     } catch (error) {
       throw this.agentError(agent, error);
     }
+    let opened = false;
     try {
-      const { session, fresh } = await this.acpSessionFor(agent, client);
+      const { session, fresh } = await this.acpSessionFor(agent, client, signal);
+      opened = true;
       let blocks = await this.firstAcpPrompt(agent, session, request, fresh ? earlier : []);
       for (let round = 0; ; round++) {
         if (signal.aborted) return 'stopped';
@@ -936,16 +954,19 @@ export class Orchestrator {
         this.recordUsage('main', `agent:${agent.id}`, agent.label, emptyUsage(), 1, true);
         this.lastModel = agent.label;
         this.emitUsage();
-        let result: AcpTurnResult;
-        let changed: CommandChange[] = [];
+        let result: AcpTurnResult | undefined;
+        let failure: unknown;
         try {
-          result = await session.prompt(blocks, signal);
+          // A file the agent writes through Orka keeps its content from the turn's snapshot as its original.
+          result = await session.prompt(blocks, signal, { recordBefore: (absPath) => net.recordBefore(absPath) });
         } catch (error) {
-          throw this.agentError(agent, error);
-        } finally {
-          // Also after a failure: what the agent wrote before it stopped stays reviewable.
-          changed = await net.collect().catch(() => []);
+          failure = error;
         }
+        if (left()) return 'stopped';
+        // Also after a failure: what the agent wrote before it stopped stays reviewable.
+        const changed: CommandChange[] = await net.collect(false, () => !left()).catch(() => []);
+        if (left()) return 'stopped';
+        if (!result) throw this.agentError(agent, failure);
         const files = changed.map((c) => `${c.path} (${c.status})`);
         this.activity = [...this.activity, ...result.activity, ...(files.length ? [`- files changed: ${files.slice(0, 20).join(', ')}`] : [])].slice(-ACTIVITY_LINES);
         if (result.changedCode || changed.some((c) => !NON_CODE_EXTENSIONS.has(path.extname(c.path).toLowerCase()))) {
@@ -970,12 +991,13 @@ export class Orchestrator {
         }
         const answer = describeTurn({ role: 'assistant', content: [{ type: 'text', text: (result.lastText || result.text).trim() }] });
         const next = await this.afterFinalAnswer(answer, task, watch, oversight, settings, signal, true);
-        if (next === undefined) return signal.aborted ? 'stopped' : 'completed';
+        if (next === undefined || left()) return signal.aborted ? 'stopped' : 'completed';
         this.messages.push({ role: 'user', content: [{ type: 'text', text: next }] });
         blocks = [{ type: 'text', text: withNotes(session.takeNotes(), next) }];
       }
     } finally {
-      agent.release(client);
+      // Stopped before the agent opened its session: it may be stuck, so its process stops unless in use.
+      agent.release(client, !opened && signal.aborted);
     }
   }
 
@@ -983,7 +1005,7 @@ export class Orchestrator {
    * The task's ACP session with this agent process; a fresh one after a rewind, a restored task,
    * another agent, or when the process was restarted.
    */
-  private async acpSessionFor(agent: ExternalAgentRuntime, client: AcpClient): Promise<{ session: AcpAgentSession; fresh: boolean }> {
+  private async acpSessionFor(agent: ExternalAgentRuntime, client: AcpClient, signal: AbortSignal): Promise<{ session: AcpAgentSession; fresh: boolean }> {
     const current = this.acp;
     if (current && !current.stale && current.agentId === agent.id && current.session.client === client && client.alive) return { session: current.session, fresh: false };
     this.dropAcpSession();
@@ -1007,7 +1029,7 @@ export class Orchestrator {
     };
     const session = new AcpAgentSession(client, context);
     try {
-      await session.start();
+      await session.start(signal);
     } catch (error) {
       session.dispose();
       throw this.agentError(agent, error);
@@ -1888,7 +1910,7 @@ function secretTouched(call: ToolCallBlock): string | undefined {
   const input = call.input;
   if (call.name === 'read_file' && typeof input.path === 'string' && SECRET_FILE.test(input.path)) return input.path;
   if (call.name === 'run_command' && typeof input.command === 'string') {
-    const match = input.command.split(/[\s"'|;&<>]+/).find((token) => SECRET_FILE.test(token));
+    const match = secretInCommand(input.command);
     if (match) return match;
   }
   if (call.name === 'search_code' && typeof input.glob === 'string' && /\.env|secret|credential|\.pem|\.key/i.test(input.glob)) return input.glob;

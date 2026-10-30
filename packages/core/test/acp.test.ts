@@ -8,6 +8,7 @@ import { actionFor, commandOf } from '../src/acp/mapping';
 import { AcpAgentPool } from '../src/acp/pool';
 import { commandLine } from '../src/acp/terminals';
 import type { SessionUpdate } from '../src/acp/types';
+import { childEnv, findExecutable } from '../src/host/commands';
 import { JsonRpcError, JsonRpcStdio } from '../src/rpc/JsonRpcStdio';
 import { tempWorkspace } from './helpers';
 
@@ -203,6 +204,64 @@ describe('ACP helpers', () => {
     assert.equal(commandOf(['git', 'status']), 'git status');
     assert.equal(commandOf('ls'), 'ls');
     assert.equal(commandOf({ cmd: 'dir' }), 'dir');
+  });
+
+  it('classifies execute calls with the repository\'s git risk and their working directory; one it cannot read is dangerous', () => {
+    const root = path.resolve('/work/project');
+    assert.deepEqual(pick(actionFor('execute', { command: 'git status' }, [], root)), ['command', 'safe', false]);
+    const risky = actionFor('execute', { command: 'git status' }, [], root, { gitRisk: 'core.fsmonitor' });
+    assert.deepEqual([...pick(risky), risky.reason], ['command', 'dangerous', false, 'git runs programs from this repository']);
+    assert.deepEqual(pick(actionFor('execute', ['git', 'diff'], [], root, { gitRisk: 'diff.external' })), ['command', 'dangerous', false]);
+    const unreadable = actionFor('execute', { script: 'rm -rf ~/projects' }, [], root);
+    assert.deepEqual([...pick(unreadable), unreadable.reason], ['command', 'dangerous', false, 'a command Orka cannot read']);
+    assert.deepEqual(pick(actionFor('execute', undefined, [], root)), ['command', 'dangerous', false]);
+    const elsewhere = actionFor('execute', { command: ['bash', '-lc', 'rm notes.txt'], workdir: path.resolve('/home/u') }, [], root);
+    assert.deepEqual(pick(elsewhere), ['command', 'normal', true], 'a working directory outside the workspace always asks');
+    assert.deepEqual(elsewhere.outside, [path.resolve('/home/u')]);
+    assert.deepEqual(pick(actionFor('execute', { command: 'rm notes.txt', cwd: 'src' }, [], root)), ['command', 'normal', false], 'inside the workspace');
+  });
+
+  it('finds a program by a name that already has its extension, and never in a relative PATH entry', () => {
+    const ws = tempWorkspace();
+    try {
+      writeFileSync(path.join(ws.root, 'my-agent.cmd'), '@echo off\r\n');
+      writeFileSync(path.join(ws.root, 'tool'), '#!/bin/sh\n');
+      const env = { PATH: ws.root, PATHEXT: '.COM;.EXE;.BAT;.CMD' };
+      assert.equal(findExecutable('my-agent.cmd', env, 'win32'), path.join(ws.root, 'my-agent.cmd'));
+      assert.equal(findExecutable('my-agent', env, 'win32'), path.join(ws.root, 'my-agent.cmd'));
+      assert.equal(findExecutable('my-agent.js', env, 'win32'), undefined, 'not a PATHEXT name');
+      if (process.platform === 'win32') assert.match(findExecutable('node.exe') ?? '', /node\.exe$/i);
+      // The tests run in a package folder, which has a package.json.
+      assert.ok(existsSync(path.join(process.cwd(), 'package.json')));
+      assert.equal(findExecutable('package.json', { PATH: `.${path.delimiter}${ws.root}` }, 'linux'), undefined, 'a relative PATH entry is the current folder');
+      assert.equal(findExecutable('tool', { PATH: `.${path.delimiter}${ws.root}` }, 'linux'), path.join(ws.root, 'tool'));
+      assert.equal(childEnv({ A: '1' }, 'win32').NoDefaultCurrentDirectoryInExePath, '1');
+      assert.deepEqual(childEnv({ A: '1' }, 'linux'), { A: '1' });
+    } finally {
+      ws.cleanup();
+    }
+  });
+
+  it('on Windows, an agent started through its npm shim never runs a "node" from the workspace', { skip: process.platform !== 'win32' && 'Windows-only' }, async () => {
+    const ws = tempWorkspace();
+    const store = tempWorkspace();
+    // The test runner may already have the protection on; the agent must get it from Orka.
+    const inherited = process.env.NoDefaultCurrentDirectoryInExePath;
+    delete process.env.NoDefaultCurrentDirectoryInExePath;
+    const marker = path.join(store.root, 'pwned.txt');
+    // A repository that ships node.cmd, and an npm-style shim that starts "node" by name.
+    writeFileSync(path.join(ws.root, 'node.cmd'), `@echo pwned> "${marker}"\r\n`);
+    writeFileSync(path.join(store.root, 'fake-agent.cmd'), `@node "${FAKE}" %*\r\n`);
+    const c = new AcpClient({ agentId: 'fake', label: 'Fake Agent', command: path.join(store.root, 'fake-agent.cmd'), args: [], cwd: ws.root, env: { FAKE_ACP_SCRIPT: '[]' } });
+    try {
+      assert.equal((await c.start()).agentInfo?.name, 'fake-acp', 'the real node ran the agent');
+      assert.equal(existsSync(marker), false);
+    } finally {
+      c.close();
+      if (inherited !== undefined) process.env.NoDefaultCurrentDirectoryInExePath = inherited;
+      ws.cleanup();
+      store.cleanup();
+    }
   });
 
   it('quotes a command and its arguments for the host shell', () => {

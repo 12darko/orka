@@ -78,6 +78,8 @@ export const TR: Record<string, string> = {
   'global git configuration': 'global git yapılandırması',
   'writes outside the workspace': 'çalışma alanının dışına yazıyor',
   'changes git state': 'git durumunu değiştiriyor',
+  'git runs programs from this repository': 'git bu depodaki programları çalıştırıyor',
+  'a command Orka cannot read': "Orka'nın okuyamadığı bir komut",
 
   // ------------------------------------------------------------ model catalog (dynamic keys)
   'most capable': 'en yetenekli',
@@ -856,6 +858,8 @@ export const TR: Record<string, string> = {
   '{n} agent processes are already working. Wait for one to finish or stop it, then try again.':
     '{n} agent süreci zaten çalışıyor. Birinin bitmesini bekleyin ya da birini durdurun, sonra tekrar deneyin.',
   'Outside the workspace: {paths}': 'Çalışma alanının dışında: {paths}',
+  'Files: {paths}': 'Dosyalar: {paths}',
+  'Input: {input}': 'Girdi: {input}',
   '{agent} was not found. Install it ({command}) or set its path in the settings.': '{agent} bulunamadı. Kurun ({command}) ya da yolunu ayarlardan belirtin.',
   '{agent} was not found at "{path}".': '{agent} "{path}" konumunda bulunamadı.',
   '{program} was not found. Install it ({command}), then sign in again.': '{program} bulunamadı. Kurun ({command}), sonra tekrar giriş yapın.',

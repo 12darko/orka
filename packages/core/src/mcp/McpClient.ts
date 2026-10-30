@@ -1,5 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from 'node:child_process';
-import { resolveCommand } from '../host/commands';
+import { childEnv, resolveCommand } from '../host/commands';
 import type { JsonSchema } from '../types';
 import { VERSION } from '../version';
 
@@ -88,7 +88,7 @@ export class McpClient {
         const { file, args, shell } = resolveCommand(config.command, config.args ?? []);
         this.child = spawn(file, args, {
           cwd: config.cwd,
-          env: { ...process.env, ...(config.env ?? {}) },
+          env: childEnv({ ...process.env, ...(config.env ?? {}) }),
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true,
           shell,

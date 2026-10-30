@@ -112,14 +112,17 @@ export class AcpClient {
     return () => this.closeListeners.delete(listener);
   }
 
-  /** Start the process and do the handshake (once). */
-  start(): Promise<InitializeResult> {
+  /**
+   * Start the process and do the handshake (once). Aborting `signal` stops waiting for it at once;
+   * the handshake itself goes on for other callers (the pool stops a process nobody waits for).
+   */
+  start(signal?: AbortSignal): Promise<InitializeResult> {
     if (this.init) return Promise.resolve(this.init);
     this.starting ??= this.doStart().catch((error: unknown) => {
       this.close();
       throw error;
     });
-    return this.starting;
+    return signal ? untilAborted(this.starting, signal) : this.starting;
   }
 
   private async doStart(): Promise<InitializeResult> {
@@ -138,11 +141,11 @@ export class AcpClient {
     return init;
   }
 
-  /** Open a session in `cwd`; its requests go to `handlers` until forgetSession. */
-  async newSession(cwd: string, handlers: AcpSessionHandlers): Promise<string> {
-    await this.start();
+  /** Open a session in `cwd`; its requests go to `handlers` until forgetSession. Aborting `signal` stops waiting at once. */
+  async newSession(cwd: string, handlers: AcpSessionHandlers, signal?: AbortSignal): Promise<string> {
+    await this.start(signal);
     // No MCP servers are passed on: the agent uses the ones its own configuration names.
-    const result = await this.rpc.request<{ sessionId?: unknown }>('session/new', { cwd, mcpServers: [] }, { timeoutMs: this.options.startTimeoutMs ?? START_TIMEOUT_MS });
+    const result = await this.rpc.request<{ sessionId?: unknown }>('session/new', { cwd, mcpServers: [] }, { timeoutMs: this.options.startTimeoutMs ?? START_TIMEOUT_MS, signal });
     const sessionId = result?.sessionId;
     if (typeof sessionId !== 'string' || !sessionId) throw new Error(`${this.spec.label} did not return a session id.`);
     this.sessions.set(sessionId, handlers);
@@ -253,6 +256,26 @@ export function safeEnv(env: Record<string, string> | undefined): Record<string,
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(env ?? {})) if (!CREDENTIAL_NAME.test(name) && typeof value === 'string') out[name] = value;
   return out;
+}
+
+/** `promise`, or an AbortError as soon as `signal` aborts. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  const aborted = () => Object.assign(new Error('Aborted'), { name: 'AbortError' });
+  if (signal.aborted) return Promise.reject(aborted());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(aborted());
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function terminalParams(params: any): TerminalParams {

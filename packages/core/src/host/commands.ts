@@ -8,12 +8,16 @@ import * as path from 'node:path';
 
 /**
  * Full path of an executable on PATH, or undefined. On Windows only PATHEXT files run (npm puts
- * an extensionless shell script for Git Bash next to "freebuff.cmd"; that one cannot be started).
+ * an extensionless shell script for Git Bash next to "freebuff.cmd"; that one cannot be started);
+ * a name that already has one ("node.exe", "agent.cmd") is found as it is. Relative PATH entries
+ * are skipped: they would find a program in the current folder (a workspace) before PATH.
  */
 export function findExecutable(command: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
-  const exts = platform === 'win32' ? (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean) : [''];
+  const pathExts = (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  const hasExt = pathExts.some((ext) => command.toLowerCase().endsWith(ext.toLowerCase()));
+  const exts = platform === 'win32' ? [...(hasExt ? [''] : []), ...pathExts] : [''];
   for (const dir of (env.PATH ?? env.Path ?? '').split(path.delimiter)) {
-    if (!dir) continue;
+    if (!dir || !path.isAbsolute(dir)) continue;
     for (const ext of exts) {
       for (const name of new Set([command + ext.toLowerCase(), command + ext])) {
         const full = path.join(dir, name);
@@ -22,6 +26,16 @@ export function findExecutable(command: string, env: NodeJS.ProcessEnv = process
     }
   }
   return undefined;
+}
+
+/**
+ * The environment for a program Orka starts. On Windows, cmd.exe (which runs .cmd shims) and the
+ * "node" an npm shim starts by bare name would look in the current folder, the workspace, before
+ * PATH: a node.cmd a repository ships would run. NoDefaultCurrentDirectoryInExePath turns that
+ * lookup off for the program and everything it starts.
+ */
+export function childEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
+  return platform === 'win32' ? { ...env, NoDefaultCurrentDirectoryInExePath: '1' } : env;
 }
 
 /**

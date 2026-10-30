@@ -139,6 +139,8 @@ const ORGANIZER_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const APP_UPDATE_STATE = 'orka.appUpdate';
 /** How often a running app looks again whether the daily update check is due. */
 const APP_UPDATE_POLL_MS = 6 * 60 * 60 * 1000;
+/** How long a new task waits for a stopped request to end (an agent CLI is stopped after 5 s). */
+const STOP_WAIT_MS = 8_000;
 
 /** The last answer about Orka releases, and the version the user was already told about. */
 interface AppUpdateState {
@@ -197,6 +199,8 @@ export class AppController implements Disposable {
   private readonly agentStatus = new Map<string, AgentCliView['status']>();
   /** "No Supervisor next to this agent" was said once already. */
   private supervisorSkipNoted = false;
+  /** The request that runs now: a new task waits for it to end in its own task. */
+  private running?: Promise<unknown>;
 
   constructor(private readonly shell: AppShell) {
     this.settings = readSettings(shell.settings);
@@ -510,7 +514,13 @@ export class AppController implements Disposable {
     const invoked = [...new Set(skillNames)].map((name) => this.skills.find((s) => s.name === name)).filter((s): s is Skill => !!s);
     await this.confirmWorkspaceHooks();
     const attachments = await this.readAttachments(files);
-    await orchestrator.run(trimmed, this.shell.editorContext(this.host!.workspaceRoot), attachments, { skills: invoked, images: validImages(images) });
+    const run = orchestrator.run(trimmed, this.shell.editorContext(this.host!.workspaceRoot), attachments, { skills: invoked, images: validImages(images) });
+    this.running = run;
+    try {
+      await run;
+    } finally {
+      if (this.running === run) this.running = undefined;
+    }
   }
 
   private noFolderText(): string {
@@ -583,7 +593,14 @@ export class AppController implements Disposable {
         return;
       }
     }
-    if (this.orchestrator?.isRunning) this.orchestrator.stop();
+    if (this.orchestrator?.isRunning) {
+      this.orchestrator.stop();
+      // The stopped request ends in its own task and is saved there (an agent CLI gets a few
+      // seconds to end its turn); a request that does not end in time is left out of both.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([this.running?.catch(() => undefined), new Promise<void>((resolve) => (timer = setTimeout(resolve, STOP_WAIT_MS)))]);
+      clearTimeout(timer);
+    }
     await this.saveTask();
     this.task = { id: newTaskId(), createdAt: new Date().toISOString() };
     this.orchestrator?.reset();

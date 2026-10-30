@@ -1,5 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
-import { resolveCommand } from '../host/commands';
+import { childEnv, resolveCommand } from '../host/commands';
 import { killTree } from '../host/processes';
 
 /**
@@ -79,7 +79,8 @@ export class JsonRpcStdio {
     try {
       child = spawn(file, args, {
         cwd: this.command.cwd,
-        env: this.command.env ?? process.env,
+        // The cwd is the workspace: on Windows, programs started by bare name must not come from it.
+        env: childEnv(this.command.env ?? process.env),
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
         shell,

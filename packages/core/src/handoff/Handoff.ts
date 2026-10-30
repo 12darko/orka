@@ -1,3 +1,4 @@
+import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type { ChangeTracker } from '../changes/ChangeTracker';
 import type { CommandChange, ShadowGit } from '../changes/ShadowGit';
@@ -76,8 +77,10 @@ export function handoffBrief(input: { requests: readonly string[]; plan?: Plan; 
 
 /**
  * Files changed since a snapshot, recorded in the change tracker with their earlier content so
- * they can be diffed and reverted. Files the tracker already follows keep their older original and
- * are only reported with `includeTracked`.
+ * they can be diffed and reverted. Files the tracker already follows keep their older original
+ * (the current rewind point still captures their content from the snapshot) and are only reported
+ * with `includeTracked`. Once `current` says no (the tracker now holds another task), nothing more
+ * is recorded.
  */
 export async function recordChangesSince(
   snapshots: ShadowGit,
@@ -85,19 +88,20 @@ export async function recordChangesSince(
   changes: ChangeTracker,
   root: string,
   includeTracked = false,
+  current: () => boolean = () => true,
 ): Promise<CommandChange[]> {
   const changed = await snapshots.changedSince(before);
   const recorded: CommandChange[] = [];
   for (const change of changed) {
     const abs = path.join(root, change.path);
-    if (changes.isTracked(abs)) {
-      if (includeTracked) recorded.push(change);
-      continue;
-    }
+    const tracked = changes.isTracked(abs);
+    if (tracked && includeTracked) recorded.push(change);
+    if (tracked && changes.capturedInEpoch(abs)) continue;
     const original = change.status === 'added' ? null : await snapshots.fileAt(before, change.path);
     if (original === undefined) continue; // binary: not revertible as text
+    if (!current()) return [];
     changes.recordOriginal(abs, original);
-    recorded.push(change);
+    if (!tracked) recorded.push(change);
   }
   if (recorded.length) changes.notify();
   return recorded;
@@ -133,16 +137,44 @@ export class Handoff<A extends { id: string; label: string } = ExternalAgent> {
     return !!this.baseline;
   }
 
-  /** Record what changed since begin() (and start over from now, for a hand-off that goes on). */
-  async collect(continueTracking = false): Promise<CommandChange[]> {
+  /**
+   * Record a file's original before the agent writes it through Orka. The agent may already have
+   * changed it unseen (its own tools, a command), so the original is the file as it was at begin(),
+   * from the snapshot. The file on disk serves only where the snapshot cannot tell: a binary file,
+   * one the snapshots leave out (.gitignore), or no snapshot.
+   */
+  async recordBefore(absPath: string): Promise<void> {
+    if (this.changes.isTracked(absPath) && this.changes.capturedInEpoch(absPath)) return;
+    let original: string | null | undefined;
+    if (this.baseline && this.snapshots) {
+      original = await this.snapshots.contentAt(this.baseline, path.relative(this.root, absPath).split(path.sep).join('/'));
+      // Not in the snapshot but on disk: new since begin(), or left out of the snapshots; only the disk can say.
+      if (original === null && (await exists(absPath))) original = undefined;
+    }
+    if (original === undefined) await this.changes.recordBefore(absPath);
+    else this.changes.recordOriginal(absPath, original);
+  }
+
+  /**
+   * Record what changed since begin() (and start over from now, for a hand-off that goes on).
+   * `current`: false once the change tracker holds another task, which must not get these changes.
+   */
+  async collect(continueTracking = false, current?: () => boolean): Promise<CommandChange[]> {
     const before = this.baseline;
     if (!before || !this.snapshots) return [];
     let changed: CommandChange[] = [];
     try {
-      changed = await recordChangesSince(this.snapshots, before, this.changes, this.root, true);
+      changed = await recordChangesSince(this.snapshots, before, this.changes, this.root, true, current);
     } finally {
       this.baseline = continueTracking ? await this.snapshots.snapshot().catch(() => undefined) : undefined;
     }
     return changed;
   }
+}
+
+async function exists(p: string): Promise<boolean> {
+  return fs.lstat(p).then(
+    () => true,
+    () => false,
+  );
 }

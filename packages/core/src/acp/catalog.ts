@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
-import { findExecutable, resolveCommand } from '../host/commands';
+import { childEnv, findExecutable, resolveCommand } from '../host/commands';
 import { killTree } from '../host/processes';
 import { t } from '../i18n';
 import type { AcpLaunchSpec } from './AcpClient';
@@ -216,7 +216,7 @@ export async function checkAgentCli(entry: AgentCliEntry, overridePath?: string,
   const { file, args, shell } = resolveCommand(executable, [...entry.versionArgs]);
   // An npm shim starts "node" through cmd.exe, which looks in the current folder first: run the
   // check in the home folder, and tell cmd.exe not to look there at all.
-  const env: NodeJS.ProcessEnv = { ...process.env, ...(shell ? { NoDefaultCurrentDirectoryInExePath: '1' } : {}) };
+  const env = childEnv({ ...process.env });
   delete env.ELECTRON_RUN_AS_NODE;
   return new Promise((resolve) => {
     let output = '';
