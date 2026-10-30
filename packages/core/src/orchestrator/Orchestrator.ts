@@ -33,7 +33,13 @@ import {
   type Usage,
 } from '../types';
 import type { AgentEvent, AgentPhase, AgentUsage, RunEndReason, ToolCallView } from './events';
-import { recordChangesSince } from '../handoff/Handoff';
+import { Handoff, handoffBrief, recordChangesSince, userRequests } from '../handoff/Handoff';
+import type { AcpClient } from '../acp/AcpClient';
+import { AcpAgentSession, type AcpSessionContext, type AcpTurnResult } from '../acp/AcpAgentSession';
+import type { ExternalAgentRuntime } from '../acp/pool';
+import { ACP_AUTH_REQUIRED, type ContentBlock } from '../acp/types';
+import { SECRET_FILE } from '../permissions/secrets';
+import { JsonRpcError } from '../rpc/JsonRpcStdio';
 import { appendLessons, LESSONS_FILE, MEMORY_DIR, parseLessons } from '../memory/ProjectMemory';
 import { describeHookResult, type HookCommand, type HookResult, hooksForFile, type HooksConfig, runHook } from '../hooks/Hooks';
 import { toRelative } from '../tools/workspace';
@@ -118,6 +124,15 @@ export interface OrchestratorOptions {
   commandSnapshots?: ShadowGit;
   /** More tools for new tasks, e.g. from MCP servers; loaded when a task starts and frozen with it. */
   getExtraTools?: () => Promise<Tool[]>;
+  /**
+   * A third-party coding agent (Gemini CLI, Codex, ...) as the main agent, over ACP; read when a
+   * request starts. While it returns a runtime, requests run in the agent's own loop and
+   * getProvider is not called for the main agent. Work that needs a plain model is then skipped:
+   * light-model routing, the fallback provider, compaction, learning lessons and the
+   * ask_supervisor tool. The Supervisor keeps its own provider and reviews the final result.
+   * Needs commandSnapshots: without them the agent does not start.
+   */
+  getExternalAgent?: () => ExternalAgentRuntime | undefined;
 }
 
 const MAX_TOOL_RESULT_CHARS = 40_000;
@@ -146,6 +161,15 @@ interface RewindPoint {
   plan?: Plan;
   requests: number;
   corrections: number;
+}
+
+/** What one request has done so far (verify nudge, project checks, lessons). */
+interface RequestState {
+  codeChangedSinceCheck: boolean;
+  verifyNudged: boolean;
+  changedSinceHooks: boolean;
+  hookRounds: number;
+  changedCode: boolean;
 }
 
 /** Per-request supervisor state. */
@@ -208,6 +232,10 @@ export class Orchestrator {
   private rewindPoints: RewindPoint[] = [];
   /** Workers of the running side-by-side batch, by tool call id: their copy and, once done, what they changed. */
   private isolated = new Map<string, { copy: WorkspaceCopy; changes?: CommandChange[] }>();
+  /** The external agent's ACP session in this task; stale after a rewind (the next request opens a fresh one). */
+  private acp?: { agentId: string; session: AcpAgentSession; stale: boolean };
+  /** Notices shown once per task (what an external agent cannot do). */
+  private shownNotices = new Set<string>();
 
   private messages: ChatMessage[] = [];
   private systemPrompt?: string;
@@ -234,6 +262,7 @@ export class Orchestrator {
 
   dispose(): void {
     this.stop();
+    this.dropAcpSession();
     this.unsubscribeChanges?.();
     this.listeners.clear();
   }
@@ -271,12 +300,14 @@ export class Orchestrator {
     return [...this.agentUsage.values()].sort((a, b) => rank(a.agent) - rank(b.agent));
   }
 
-  private recordUsage(agent: string, provider: string, model: string, usage: Usage, calls = 1): void {
+  /** `unreported`: the calls came from an agent that does not report its tokens (they count as 0). */
+  private recordUsage(agent: string, provider: string, model: string, usage: Usage, calls = 1, unreported = false): void {
     const entry = this.agentUsage.get(agent) ?? { agent, provider, model, calls: 0, usage: emptyUsage() };
     entry.provider = provider;
     entry.model = model || entry.model;
     entry.calls += calls;
     entry.usage = addUsage(entry.usage, usage);
+    if (unreported) entry.unreported = true;
     this.agentUsage.set(agent, entry);
   }
 
@@ -322,6 +353,9 @@ export class Orchestrator {
     this.userRequests = [];
     this.corrections = [];
     this.rewindPoints = [];
+    // An external agent starts a fresh session with a brief of the task.
+    this.dropAcpSession();
+    this.shownNotices.clear();
     this.supervisor?.reset();
     this.options.permissions.resetSession();
     if (!this.options.changes) this.changes.importCheckpoint(state.checkpoint ?? []);
@@ -402,6 +436,8 @@ export class Orchestrator {
     this.secretFile = undefined;
     this.extraTools = [];
     this.extraLoaded = false;
+    this.dropAcpSession();
+    this.shownNotices.clear();
     this.supervisor?.reset();
     this.options.permissions.resetSession();
     // The previous task's pending changes stay with that task (see snapshot/restore).
@@ -455,6 +491,11 @@ export class Orchestrator {
     images: readonly AttachedImage[],
   ): Promise<RunEndReason> {
     const settings = this.options.getSettings();
+    // A third-party agent as the main agent runs its own loop; Orka answers its requests.
+    const external = this.options.role ? undefined : this.options.getExternalAgent?.();
+    if (external) return this.externalLoop(external, userText, editor, signal, attachments, invokedSkills, images);
+    // The agent's session would miss what a model does now: it gets a fresh one with a brief if it comes back.
+    if (this.acp) this.acp.stale = true;
     // Resolve the provider first so a missing API key fails before anything is recorded.
     let provider = this.options.getProvider();
 
@@ -480,42 +521,9 @@ export class Orchestrator {
       // A restored task keeps its frozen prompt; rescan only for the supervisor's project context.
       await this.context.buildSystemPrompt(settings.customInstructions, { subagents: this.taskProfiles });
     }
-    const turnContext = await this.context.buildTurnContext(editor, this.options.permissions.getMode(), this.notes);
-    this.notes = [];
-    const attached = [
-      ...invokedSkills.map(invokedSkillBlock),
-      ...attachments.map((a) => `<attached_file path="${a.path}">\n${truncateMiddle(a.content, 60_000)}\n</attached_file>`),
-    ].join('\n\n');
-    const userMessageId = this.nextId('u');
-    if (!this.options.role) {
-      this.rewindPoints.push({
-        id: userMessageId,
-        text: userText,
-        messageIndex: this.messages.length,
-        epoch: this.changes.startEpoch(),
-        plan: this.plan && structuredClone(this.plan),
-        requests: this.userRequests.length,
-        corrections: this.corrections.length,
-      });
-    }
-    this.messages.push({
-      role: 'user',
-      content: [
-        { type: 'text', text: `${turnContext}\n\n${userText}${attached ? `\n\n${attached}` : ''}` },
-        ...images.map((i): ImageBlock => ({ type: 'image', mediaType: i.mediaType, data: i.data })),
-      ],
-    });
-    this.emit({
-      type: 'user_message',
-      id: userMessageId,
-      text: userText,
-      attachments: attachments.length ? attachments.map((a) => a.path) : undefined,
-      skills: invokedSkills.length ? invokedSkills.map((s) => s.name) : undefined,
-      images: images.length ? images.map((i) => ({ name: i.name, thumb: i.thumb })) : undefined,
-    });
-    this.userRequests.push(userText);
+    await this.recordRequest(userText, editor, attachments, invokedSkills, images);
 
-    const task = { codeChangedSinceCheck: false, verifyNudged: false, changedSinceHooks: false, hookRounds: 0, changedCode: false };
+    const task: RequestState = { codeChangedSinceCheck: false, verifyNudged: false, changedSinceHooks: false, hookRounds: 0, changedCode: false };
     const oversight = this.supervisor ? this.options.supervisor!.getSettings() : undefined;
     const watch: Watch = {
       active: !!oversight?.enabled,
@@ -649,52 +657,12 @@ export class Orchestrator {
           this.emit({ type: 'notice', level: 'warning', message: t('The response hit the output limit. Send "continue" to resume.') });
           return 'completed';
         }
-        // A correction from the review of the previous step takes precedence over finishing.
-        const late = await this.takeIntervention(watch);
-        if (late) {
-          this.messages.push({ role: 'user', content: [{ type: 'text', text: interventionText(late) }] });
+        const next = await this.afterFinalAnswer(describeTurn(response.message), task, watch, oversight, settings, signal);
+        if (next !== undefined) {
+          this.messages.push({ role: 'user', content: [{ type: 'text', text: next }] });
           continue;
         }
-        // The user's own checks run before the agent may finish; failures go back to it.
-        const finishHooks = this.options.role ? [] : (settings.hooks?.beforeFinish ?? []);
-        if (finishHooks.length && task.changedSinceHooks) {
-          task.changedSinceHooks = false;
-          if (task.hookRounds >= MAX_HOOK_ROUNDS) {
-            this.emit({ type: 'notice', level: 'warning', message: t('The project checks (hooks) still fail after {n} rounds; the agent stops trying.', { n: MAX_HOOK_ROUNDS }) });
-          } else {
-            task.hookRounds++;
-            const failed = (await this.runHooks('beforeFinish', finishHooks, signal)).filter((r) => !r.ok);
-            if (signal.aborted) return 'stopped';
-            if (failed.length) {
-              this.messages.push({ role: 'user', content: [{ type: 'text', text: hookFailureText(failed) }] });
-              continue;
-            }
-            // Passing project checks count as verification.
-            task.codeChangedSinceCheck = false;
-          }
-        }
-        if (settings.autoVerify && task.codeChangedSinceCheck && !task.verifyNudged) {
-          task.verifyNudged = true;
-          this.messages.push({ role: 'user', content: [{ type: 'text', text: this.verifyNudge() }] });
-          this.emit({ type: 'notice', level: 'info', message: t('Changes were not verified yet - asking the agent to build/test before finishing.') });
-          continue;
-        }
-        if (this.canIntervene(watch, oversight!)) {
-          let final: SupervisorReview | undefined;
-          if (watch.checkpoints || oversight!.frequency === 'final_only') {
-            // One stateless review of a compact brief: the requests, plan, diff, and the agent's answer.
-            final = await this.checkpoint('final', `# The agent's final answer\n${describeTurn(response.message)}`, watch, signal);
-          } else {
-            const diff = await this.changes.unifiedDiffs(FINAL_REVIEW_DIFF_CHARS).catch(() => '');
-            const changed = diff ? `Net changes of this task (unified diff):\n${diff}` : 'Files changed in this task: none';
-            watch.pending = this.startReview('final', `${describeTurn(response.message)}\n\n${changed}`, signal);
-            final = await this.takeIntervention(watch);
-          }
-          if (final) {
-            this.messages.push({ role: 'user', content: [{ type: 'text', text: interventionText(final) }] });
-            continue;
-          }
-        }
+        if (signal.aborted) return 'stopped';
         if (!this.options.role && task.changedCode && settings.learnLessons !== false) await this.learnLessons(provider, signal);
         return 'completed';
       }
@@ -788,6 +756,321 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * Record a user request: a rewind point, the message (with the turn context, attached files and
+   * invoked skills) and its user_message event. Returns the message.
+   */
+  private async recordRequest(
+    userText: string,
+    editor: EditorContext | undefined,
+    attachments: Array<{ path: string; content: string }>,
+    invokedSkills: readonly Skill[],
+    images: readonly AttachedImage[],
+  ): Promise<ChatMessage> {
+    const turnContext = await this.context.buildTurnContext(editor, this.options.permissions.getMode(), this.notes);
+    this.notes = [];
+    const attached = [
+      ...invokedSkills.map(invokedSkillBlock),
+      ...attachments.map((a) => `<attached_file path="${a.path}">\n${truncateMiddle(a.content, 60_000)}\n</attached_file>`),
+    ].join('\n\n');
+    const userMessageId = this.nextId('u');
+    if (!this.options.role) {
+      this.rewindPoints.push({
+        id: userMessageId,
+        text: userText,
+        messageIndex: this.messages.length,
+        epoch: this.changes.startEpoch(),
+        plan: this.plan && structuredClone(this.plan),
+        requests: this.userRequests.length,
+        corrections: this.corrections.length,
+      });
+    }
+    const message: ChatMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: `${turnContext}\n\n${userText}${attached ? `\n\n${attached}` : ''}` },
+        ...images.map((i): ImageBlock => ({ type: 'image', mediaType: i.mediaType, data: i.data })),
+      ],
+    };
+    this.messages.push(message);
+    this.emit({
+      type: 'user_message',
+      id: userMessageId,
+      text: userText,
+      attachments: attachments.length ? attachments.map((a) => a.path) : undefined,
+      skills: invokedSkills.length ? invokedSkills.map((s) => s.name) : undefined,
+      images: images.length ? images.map((i) => ({ name: i.name, thumb: i.thumb })) : undefined,
+    });
+    this.userRequests.push(userText);
+    return message;
+  }
+
+  /**
+   * The agent says it is done. A correction from the review of the previous step comes first,
+   * then the user's beforeFinish hooks, the verify nudge and the supervisor's final review.
+   * Returns what to send back to the agent (it continues), or undefined when the request is done
+   * or was stopped (the caller checks the signal). `answer` is the agent's final turn as
+   * describeTurn writes it; `finalOnly` reviews from a compact brief whatever the frequency.
+   */
+  private async afterFinalAnswer(
+    answer: string,
+    task: RequestState,
+    watch: Watch,
+    oversight: SupervisorSettings | undefined,
+    settings: OrchestratorSettings,
+    signal: AbortSignal,
+    finalOnly = false,
+  ): Promise<string | undefined> {
+    // A correction from the review of the previous step takes precedence over finishing.
+    const late = await this.takeIntervention(watch);
+    if (late) return interventionText(late);
+    // The user's own checks run before the agent may finish; failures go back to it.
+    const finishHooks = this.options.role ? [] : (settings.hooks?.beforeFinish ?? []);
+    if (finishHooks.length && task.changedSinceHooks) {
+      task.changedSinceHooks = false;
+      if (task.hookRounds >= MAX_HOOK_ROUNDS) {
+        this.emit({ type: 'notice', level: 'warning', message: t('The project checks (hooks) still fail after {n} rounds; the agent stops trying.', { n: MAX_HOOK_ROUNDS }) });
+      } else {
+        task.hookRounds++;
+        const failed = (await this.runHooks('beforeFinish', finishHooks, signal)).filter((r) => !r.ok);
+        if (signal.aborted) return undefined;
+        if (failed.length) return hookFailureText(failed);
+        // Passing project checks count as verification.
+        task.codeChangedSinceCheck = false;
+      }
+    }
+    if (settings.autoVerify && task.codeChangedSinceCheck && !task.verifyNudged) {
+      task.verifyNudged = true;
+      this.emit({ type: 'notice', level: 'info', message: t('Changes were not verified yet - asking the agent to build/test before finishing.') });
+      return this.verifyNudge();
+    }
+    if (oversight && this.canIntervene(watch, oversight)) {
+      let final: SupervisorReview | undefined;
+      if (finalOnly || watch.checkpoints || oversight.frequency === 'final_only') {
+        // One stateless review of a compact brief: the requests, plan, diff, and the agent's answer.
+        final = await this.checkpoint('final', `# The agent's final answer\n${answer}`, watch, signal);
+      } else {
+        const diff = await this.changes.unifiedDiffs(FINAL_REVIEW_DIFF_CHARS).catch(() => '');
+        const changed = diff ? `Net changes of this task (unified diff):\n${diff}` : 'Files changed in this task: none';
+        watch.pending = this.startReview('final', `${answer}\n\n${changed}`, signal);
+        final = await this.takeIntervention(watch);
+      }
+      if (final) return interventionText(final);
+    }
+    return undefined;
+  }
+
+  /**
+   * One request handled by a third-party agent over ACP. The agent runs its own loop; Orka answers
+   * its permission requests, file reads and writes and terminal commands (AcpAgentSession),
+   * snapshots the workspace around each prompt so whatever the agent changed with its own tools is
+   * listed and revertible, and keeps the end-of-request checks (hooks, verify nudge, the
+   * Supervisor's final review), whose corrections go to the agent as its next prompt.
+   *
+   * The history gets plain text only (the request, then the agent's answer with a short activity
+   * summary), so the task can continue on an API model later.
+   */
+  private async externalLoop(
+    agent: ExternalAgentRuntime,
+    userText: string,
+    editor: EditorContext | undefined,
+    signal: AbortSignal,
+    attachments: Array<{ path: string; content: string }>,
+    invokedSkills: readonly Skill[],
+    images: readonly AttachedImage[],
+  ): Promise<RunEndReason> {
+    const settings = this.options.getSettings();
+    this.setPhase('thinking');
+    // The safety net comes first: without snapshots, what the agent changes with its own tools
+    // could be neither reviewed nor reverted, so it does not start at all.
+    const snapshots = this.options.commandSnapshots;
+    const net = new Handoff({ id: agent.id, label: agent.label }, this.options.host.workspaceRoot, snapshots, this.changes);
+    const noSnapshots = () =>
+      new Error(
+        snapshots
+          ? t('{agent} cannot start: Orka cannot snapshot this folder ({reason}), so the files it changes could not be reviewed or reverted.', { agent: agent.label, reason: net.untrackedReason ?? '?' })
+          : t('{agent} cannot start: turn on "Make command changes revertible" in the settings, so every file it changes can be reviewed and reverted.', { agent: agent.label }),
+      );
+    if (!(await net.begin())) throw noSnapshots();
+    // The supervisor's briefs and the verify nudge need the project scan; no system prompt is
+    // frozen (that happens if the task continues on a model).
+    if (!this.context.projectSummary) await this.context.buildSystemPrompt(settings.customInstructions, { subagents: [] });
+    const earlier = userRequests(this.messages);
+    const request = await this.recordRequest(userText, editor, attachments, invokedSkills, images);
+
+    const task: RequestState = { codeChangedSinceCheck: false, verifyNudged: false, changedSinceHooks: false, hookRounds: 0, changedCode: false };
+    const oversight = this.supervisor ? this.options.supervisor!.getSettings() : undefined;
+    const watch: Watch = { active: !!oversight?.enabled, checkpoints: true, interventions: 0, consultations: 0, planChecks: 0, stepsSinceProgress: 0, recent: [] };
+    this.watch = watch;
+    if (watch.active && oversight!.frequency !== 'final_only') {
+      this.noticeOnce('supervisor', t('With {agent} as the main agent, the Supervisor reviews only the final result: an outside agent cannot be corrected in the middle of its turn.', { agent: agent.label }));
+    }
+    if (settings.tokenBudget && settings.tokenBudget > 0) {
+      this.noticeOnce('budget', t('{agent} does not report its token use, so the token budget cannot pause it.', { agent: agent.label }));
+    }
+    // A switch between a model and an agent mid-task is announced, either way.
+    const agentKey = `agent:${agent.id}`;
+    if (this.lastProviderKey && this.lastProviderKey !== agentKey) {
+      this.emit({ type: 'notice', level: 'info', message: t('{agent} takes over as the main agent, with a summary of this task so far.', { agent: agent.label }) });
+    }
+    this.lastProviderKey = agentKey;
+
+    let client: AcpClient;
+    try {
+      client = await agent.acquire();
+    } catch (error) {
+      throw this.agentError(agent, error);
+    }
+    try {
+      const { session, fresh } = await this.acpSessionFor(agent, client);
+      let blocks = await this.firstAcpPrompt(agent, session, request, fresh ? earlier : []);
+      for (let round = 0; ; round++) {
+        if (signal.aborted) return 'stopped';
+        if (round >= settings.maxIterations) {
+          this.emit({ type: 'notice', level: 'warning', message: t('Paused after {n} steps. Send "continue" to let the agent keep going.', { n: settings.maxIterations }) });
+          return 'max_iterations';
+        }
+        if (round > 0 && !(await net.begin())) throw noSnapshots();
+        this.setPhase('thinking');
+        // The agent does not report tokens: the call is counted, its usage is marked unreported.
+        this.recordUsage('main', `agent:${agent.id}`, agent.label, emptyUsage(), 1, true);
+        this.lastModel = agent.label;
+        this.emitUsage();
+        let result: AcpTurnResult;
+        let changed: CommandChange[] = [];
+        try {
+          result = await session.prompt(blocks, signal);
+        } catch (error) {
+          throw this.agentError(agent, error);
+        } finally {
+          // Also after a failure: what the agent wrote before it stopped stays reviewable.
+          changed = await net.collect().catch(() => []);
+        }
+        const files = changed.map((c) => `${c.path} (${c.status})`);
+        this.activity = [...this.activity, ...result.activity, ...(files.length ? [`- files changed: ${files.slice(0, 20).join(', ')}`] : [])].slice(-ACTIVITY_LINES);
+        if (result.changedCode || changed.some((c) => !NON_CODE_EXTENSIONS.has(path.extname(c.path).toLowerCase()))) {
+          task.changedCode = true;
+          task.changedSinceHooks = true;
+          task.codeChangedSinceCheck = !result.ranCommandAfterChange;
+        } else if (result.ranCommandAfterChange) task.codeChangedSinceCheck = false;
+        this.messages.push({ role: 'assistant', content: [{ type: 'text', text: agentTurnText(agent.label, result.text.trim(), result.activity, files) }] });
+
+        if (signal.aborted || result.stopReason === 'cancelled') return 'stopped';
+        if (result.stopReason === 'refusal') {
+          this.emit({ type: 'notice', level: 'error', message: t('The model declined this request. Try rephrasing it.') });
+          return 'refusal';
+        }
+        if (result.stopReason === 'max_turn_requests') {
+          this.emit({ type: 'notice', level: 'warning', message: t('{agent} reached its own limit of model requests for one turn. Send "continue" to let it keep going.', { agent: agent.label }) });
+          return 'max_iterations';
+        }
+        if (result.stopReason === 'max_tokens') {
+          this.emit({ type: 'notice', level: 'warning', message: t('The response hit the output limit. Send "continue" to resume.') });
+          return 'completed';
+        }
+        const answer = describeTurn({ role: 'assistant', content: [{ type: 'text', text: (result.lastText || result.text).trim() }] });
+        const next = await this.afterFinalAnswer(answer, task, watch, oversight, settings, signal, true);
+        if (next === undefined) return signal.aborted ? 'stopped' : 'completed';
+        this.messages.push({ role: 'user', content: [{ type: 'text', text: next }] });
+        blocks = [{ type: 'text', text: withNotes(session.takeNotes(), next) }];
+      }
+    } finally {
+      agent.release(client);
+    }
+  }
+
+  /**
+   * The task's ACP session with this agent process; a fresh one after a rewind, a restored task,
+   * another agent, or when the process was restarted.
+   */
+  private async acpSessionFor(agent: ExternalAgentRuntime, client: AcpClient): Promise<{ session: AcpAgentSession; fresh: boolean }> {
+    const current = this.acp;
+    if (current && !current.stale && current.agentId === agent.id && current.session.client === client && client.alive) return { session: current.session, fresh: false };
+    this.dropAcpSession();
+    const context: AcpSessionContext = {
+      host: this.options.host,
+      permissions: this.options.permissions,
+      changes: this.changes,
+      emit: (event) => this.emit(event),
+      setPlan: (plan) => {
+        this.plan = plan;
+        this.emit({ type: 'plan', plan });
+      },
+      nextId: (prefix) => this.nextId(prefix),
+      afterEdit: (absPath, signal) => this.afterEditHooks(absPath, signal),
+      secretFile: () => this.secretFile,
+      noteSecret: (relPath) => {
+        this.secretFile ??= relPath;
+      },
+      label: agent.label,
+      commandTimeoutMs: this.options.getSettings().commandTimeoutMs,
+    };
+    const session = new AcpAgentSession(client, context);
+    try {
+      await session.start();
+    } catch (error) {
+      session.dispose();
+      throw this.agentError(agent, error);
+    }
+    this.acp = { agentId: agent.id, session, stale: false };
+    return { session, fresh: true };
+  }
+
+  /**
+   * The request as the agent's prompt: the same text the history has (turn context, request,
+   * attached files and skills), images when the agent takes them, notes from its last turn, and
+   * for a fresh session in a task already under way, a brief of where the task stands.
+   */
+  private async firstAcpPrompt(agent: ExternalAgentRuntime, session: AcpAgentSession, request: ChatMessage, earlier: readonly string[]): Promise<ContentBlock[]> {
+    let brief = '';
+    if (earlier.length) {
+      const changed = await this.changes.list().catch(() => []);
+      brief = handoffBrief({
+        requests: earlier,
+        plan: this.plan,
+        changedFiles: changed.map((c) => c.relPath),
+        note: '[Orka] You are taking over a task that is already under way; its earlier conversation is not available to you. This is where it stands.',
+      });
+    }
+    const text = request.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n\n');
+    const images = request.content.filter((b): b is ImageBlock => b.type === 'image');
+    if (images.length && !session.acceptsImages) {
+      this.emit({ type: 'notice', level: 'warning', message: t('{agent} does not accept images, so the attached images were not sent.', { agent: agent.label }) });
+    }
+    const prompt = withNotes(session.takeNotes(), brief ? `${brief}\n\n# New request\n${text}` : text);
+    return [
+      { type: 'text', text: prompt },
+      ...(session.acceptsImages ? images.map((i): ContentBlock => ({ type: 'image', mimeType: i.mediaType, data: i.data })) : []),
+    ];
+  }
+
+  /** A failure of the external agent as the user should see it; a missing sign-in names the vendor's login command. */
+  private agentError(agent: ExternalAgentRuntime, error: unknown): Error {
+    if (isAbortError(error)) return error as Error;
+    const message = errorMessage(error);
+    const authRequired = (error instanceof JsonRpcError && error.code === ACP_AUTH_REQUIRED) || AUTH_FAILURE.test(message);
+    if (authRequired) {
+      return new ProviderError(
+        agent.loginCommand
+          ? t('{agent} is not signed in. Run "{command}" in a terminal and sign in there, then send your message again.', { agent: agent.label, command: agent.loginCommand })
+          : t('{agent} is not signed in. Sign in with its own login, then send your message again.', { agent: agent.label }),
+        'auth',
+      );
+    }
+    return new Error(message.startsWith(agent.label) ? message : `${agent.label}: ${message}`);
+  }
+
+  private dropAcpSession(): void {
+    this.acp?.session.dispose();
+    this.acp = undefined;
+  }
+
+  private noticeOnce(key: string, message: string): void {
+    if (this.shownNotices.has(key)) return;
+    this.shownNotices.add(key);
+    this.emit({ type: 'notice', level: 'info', message });
+  }
+
   /** User messages this task can go back to, oldest first. */
   get rewindTargets(): ReadonlyArray<{ id: string; text: string }> {
     return this.rewindPoints.map(({ id, text }) => ({ id, text }));
@@ -805,6 +1088,8 @@ export class Orchestrator {
     if (index === -1) return undefined;
     const point = this.rewindPoints[index];
     const restored = await this.changes.rewindTo(point.epoch);
+    // An ACP agent's conversation cannot be cut back: the next request starts a fresh session with a brief.
+    if (this.acp) this.acp.stale = true;
     this.rewindPoints = this.rewindPoints.slice(0, index);
     this.messages = this.messages.slice(0, point.messageIndex);
     this.plan = point.plan;
@@ -822,6 +1107,17 @@ export class Orchestrator {
   /** Compact the conversation now (e.g. the user's /compact). */
   async compact(): Promise<boolean> {
     if (this.abort) throw new Error('The agent is running; stop it or wait before compacting.');
+    let external: ExternalAgentRuntime | undefined;
+    try {
+      external = this.options.getExternalAgent?.();
+    } catch {
+      external = undefined;
+    }
+    if (external) {
+      // Its context lives in the agent; Orka's copy of the conversation is plain text and stays as it is.
+      this.emit({ type: 'notice', level: 'info', message: t('{agent} keeps its own context; there is nothing for Orka to compact.', { agent: external.label }) });
+      return false;
+    }
     if (this.messages.length < 3) {
       this.emit({ type: 'notice', level: 'info', message: t('Nothing to compact yet.') });
       return false;
@@ -1539,6 +1835,26 @@ function hostAt(host: Host, root: string): Host {
 
 const LESSONS_REQUEST =`[Orchestrator] The request is done. Is there anything from it a future session in this project should know? List at most 3 durable, project-specific lessons: for example the build or test command that works, a pitfall and how to avoid it, or a convention or decision the user confirmed. Only facts that stay true - not what you did in this task, not general programming advice, nothing already in the project memory. One short line each, starting with "- ". If there is nothing worth keeping, reply with exactly NONE. Do not call tools; do not repeat your answer to the user.`;
 
+/** An external agent's error that means it is not signed in (wording differs per agent). */
+const AUTH_FAILURE = /not (logged|signed) in|\b(log ?in|sign ?in|authenticat\w*|auth)\b[^.\n]{0,40}\b(required|needed|missing|expired)\b|\bunauthori[sz]ed\b/i;
+
+/** Notes from the agent's previous turn (declined actions, hook results) ahead of its next prompt. */
+function withNotes(notes: readonly string[], text: string): string {
+  if (!notes.length) return text;
+  return `[Orka] Notes from your previous turn:\n${notes.map((n) => `- ${n}`).join('\n')}\n\n${text}`;
+}
+
+/** An external agent's turn in the history: its answer and what it did, as plain text any model can read. */
+function agentTurnText(label: string, text: string, activity: readonly string[], files: readonly string[]): string {
+  const lines = [text || '(no answer)'];
+  if (activity.length || files.length) {
+    lines.push('', `<agent_activity agent="${label}">`, ...activity.slice(-ACTIVITY_LINES));
+    if (files.length) lines.push(`- files changed: ${files.slice(0, 30).join(', ')}`);
+    lines.push('</agent_activity>');
+  }
+  return lines.join('\n');
+}
+
 /** What the agent is told when the user's beforeFinish checks fail. */
 function hookFailureText(failed: readonly HookResult[]): string {
   return [
@@ -1566,9 +1882,6 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return results;
 }
-
-/** Files that commonly hold credentials or keys. */
-const SECRET_FILE = /(^|[\\/])(\.env(\.[\w.-]+)?|[\w.-]*\.(pem|key|p12|pfx|jks|keystore|tfstate|tfvars)(\.backup)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|credentials(\.json)?|secrets?\.(json|ya?ml|toml|env)|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.htpasswd|service-account[\w.-]*\.json|firebase-adminsdk[\w.-]*\.json|google-services\.json|GoogleService-Info\.plist|appsettings(\.[\w-]+)?\.json|local\.settings\.json|wp-config\.php|kubeconfig)$/i;
 
 /** The secret-looking file a read / search / command touched, if any (workspace-relative). */
 function secretTouched(call: ToolCallBlock): string | undefined {

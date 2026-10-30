@@ -1,9 +1,10 @@
-import { existsSync } from 'node:fs';
 import * as path from 'node:path';
 import type { ChangeTracker } from '../changes/ChangeTracker';
 import type { CommandChange, ShadowGit } from '../changes/ShadowGit';
 import { formatPlan, type Plan } from '../planning/Plan';
 import type { ChatMessage } from '../types';
+
+export { findExecutable } from '../host/commands';
 
 /**
  * A coding agent that runs on its own in a terminal (no API to call it from Orka). Orka hands a
@@ -35,24 +36,6 @@ export const EXTERNAL_AGENTS: readonly ExternalAgent[] = [
 
 export function externalAgent(id: string): ExternalAgent | undefined {
   return EXTERNAL_AGENTS.find((a) => a.id === id);
-}
-
-/**
- * Full path of an executable on PATH, or undefined. On Windows only PATHEXT files run (npm puts
- * an extensionless shell script for Git Bash next to "freebuff.cmd"; that one cannot be started).
- */
-export function findExecutable(command: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
-  const exts = platform === 'win32' ? (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean) : [''];
-  for (const dir of (env.PATH ?? env.Path ?? '').split(path.delimiter)) {
-    if (!dir) continue;
-    for (const ext of exts) {
-      for (const name of new Set([command + ext.toLowerCase(), command + ext])) {
-        const full = path.join(dir, name);
-        if (existsSync(full)) return full;
-      }
-    }
-  }
-  return undefined;
 }
 
 const MAX_REQUEST_CHARS = 1500;
@@ -120,12 +103,15 @@ export async function recordChangesSince(
   return recorded;
 }
 
-/** One hand-off: a snapshot when it starts, and the files changed since when it ends. */
-export class Handoff {
+/**
+ * One hand-off: a snapshot when it starts, and the files changed since when it ends. An ACP agent
+ * (acp/) uses the same pair around each prompt, so it only needs the agent's id and label.
+ */
+export class Handoff<A extends { id: string; label: string } = ExternalAgent> {
   private baseline?: string;
 
   constructor(
-    readonly agent: ExternalAgent,
+    readonly agent: A,
     private readonly root: string,
     private readonly snapshots: ShadowGit | undefined,
     private readonly changes: ChangeTracker,

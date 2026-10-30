@@ -1,9 +1,9 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type { ApprovalRequest, ApprovalResponse, CommandOptions, CommandResult, DirEntry, Host } from './Host';
 import { closeBrowser } from '../browser/HeadlessBrowser';
-import { BackgroundProcess } from './processes';
+import { BackgroundProcess, killTree } from './processes';
 import { isViewableFile } from '../tools/workspace';
 
 export interface NodeHostOptions {
@@ -205,21 +205,4 @@ function resolveShell(explicit?: string): { file: string; args: (command: string
   }
   if (name === 'cmd.exe' || name === 'cmd') return { file, args: (command) => ['/d', '/s', '/c', command] };
   return { file, args: (command) => ['-c', command] };
-}
-
-function killTree(pid: number | undefined): void {
-  if (!pid) return;
-  try {
-    if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
-    } else {
-      process.kill(-pid, 'SIGKILL');
-    }
-  } catch {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      /* already gone */
-    }
-  }
 }

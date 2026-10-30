@@ -2,6 +2,7 @@ import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from 'node:chil
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import * as path from 'node:path';
+import { killTree } from '../host/processes';
 import { t } from '../i18n';
 import { addUsage, type AssistantMessage, type ChatMessage, type ImageBlock, type Usage } from '../types';
 import {
@@ -430,12 +431,3 @@ export function resolveClaudeExecutable(explicit?: string): string {
   return candidates.find((c) => c && existsSync(c)) ?? '';
 }
 
-function killTree(pid: number | undefined): void {
-  if (!pid) return;
-  try {
-    if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
-    else process.kill(pid, 'SIGKILL');
-  } catch {
-    /* already gone */
-  }
-}

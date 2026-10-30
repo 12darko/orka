@@ -763,6 +763,45 @@ export const TR: Record<string, string> = {
   '/undo asks first, so it needs an interactive terminal.': '/undo önce sorar, bu yüzden etkileşimli terminal gerekir.',
   'Continue in Freebuff (free); Orka then shows what it changed': 'Freebuff ile devam et (ücretsiz); sonra Orka neyi değiştirdiğini gösterir',
 
+  // Agent CLIs over ACP (Gemini CLI, Codex, Copilot, Cursor, custom) as the main agent
+  '{n} agent processes are already working. Wait for one to finish or stop it, then try again.':
+    '{n} agent süreci zaten çalışıyor. Birinin bitmesini bekleyin ya da birini durdurun, sonra tekrar deneyin.',
+  'Outside the workspace: {paths}': 'Çalışma alanının dışında: {paths}',
+  '{agent} was not found. Install it ({command}) or set its path in the settings.': '{agent} bulunamadı. Kurun ({command}) ya da yolunu ayarlardan belirtin.',
+  '{agent} was not found at "{path}".': '{agent} "{path}" konumunda bulunamadı.',
+  '{agent} did not answer within {n} seconds.': '{agent} {n} saniye içinde yanıt vermedi.',
+  '{agent} cannot start: Orka cannot snapshot this folder ({reason}), so the files it changes could not be reviewed or reverted.':
+    "{agent} başlatılamıyor: Orka bu klasörün snapshot'ını alamıyor ({reason}); bu yüzden değiştirdiği dosyalar incelenemez ve geri alınamaz.",
+  '{agent} cannot start: turn on "Make command changes revertible" in the settings, so every file it changes can be reviewed and reverted.':
+    '{agent} başlatılamıyor: değiştirdiği her dosyanın incelenip geri alınabilmesi için ayarlardan "Komut değişikliklerini geri alınabilir yap" seçeneğini açın.',
+  'With {agent} as the main agent, the Supervisor reviews only the final result: an outside agent cannot be corrected in the middle of its turn.':
+    'Ana agent {agent} olduğunda Supervisor yalnızca son sonucu inceler: dışarıdan bir agent turunun ortasında düzeltilemez.',
+  '{agent} does not report its token use, so the token budget cannot pause it.': '{agent} token kullanımını bildirmiyor; bu yüzden token bütçesi onu duraklatamaz.',
+  '{agent} reached its own limit of model requests for one turn. Send "continue" to let it keep going.':
+    '{agent} bir tur için kendi model isteği sınırına ulaştı. Devam etmesi için "devam" yazın.',
+  '{agent} does not accept images, so the attached images were not sent.': '{agent} görsel kabul etmiyor; eklenen görseller gönderilmedi.',
+  '{agent} is not signed in. Run "{command}" in a terminal and sign in there, then send your message again.':
+    '{agent} oturum açmamış. Bir terminalde "{command}" çalıştırıp orada giriş yapın, sonra mesajınızı tekrar gönderin.',
+  '{agent} is not signed in. Sign in with its own login, then send your message again.':
+    '{agent} oturum açmamış. Kendi giriş yöntemiyle giriş yapın, sonra mesajınızı tekrar gönderin.',
+  '{agent} keeps its own context; there is nothing for Orka to compact.': "{agent} kendi bağlamını kendisi tutuyor; Orka'nın compact edeceği bir şey yok.",
+  '{agent} takes over as the main agent, with a summary of this task so far.': '{agent} ana agent olarak devralıyor; bu görevin şu ana kadarki özetiyle birlikte.',
+  // Agent policy notes and catalog exclusions (dynamic keys)
+  "Runs your installed Gemini CLI in its ACP mode. Orka never uses Gemini CLI's sign-in itself: Google's terms forbid other software from using it. Google moved unpaid and Google One accounts from Gemini CLI to Antigravity.":
+    "Kurulu Gemini CLI'ınızı ACP modunda çalıştırır. Orka, Gemini CLI'ın oturumunu asla kendisi kullanmaz: Google'ın koşulları başka yazılımların bunu kullanmasını yasaklar. Google, ücretsiz ve Google One hesaplarını Gemini CLI'dan Antigravity'ye taşıdı.",
+  'Runs the codex-acp adapter (Apache-2.0) you installed. Sign in with Codex itself, with a ChatGPT plan or an API key.':
+    "Kurduğunuz codex-acp adaptörünü (Apache-2.0) çalıştırır. Codex'in kendisiyle, bir ChatGPT planı ya da API key ile giriş yapın.",
+  'Runs your installed GitHub Copilot CLI as an ACP server. GitHub documents this mode for other clients; it is a public preview and may change.':
+    "Kurulu GitHub Copilot CLI'ınızı ACP sunucusu olarak çalıştırır. GitHub bu modu diğer istemciler için belgeliyor; herkese açık önizlemededir ve değişebilir.",
+  'Runs your installed Cursor CLI ("agent acp"), which Cursor documents for custom clients.':
+    'Kurulu Cursor CLI\'ınızı ("agent acp") çalıştırır; Cursor bu modu özel istemciler için belgeliyor.',
+  "An ACP agent you added yourself. Orka runs exactly the command you entered; make sure your use follows that agent's terms.":
+    "Kendi eklediğiniz bir ACP agent'ı. Orka tam olarak girdiğiniz komutu çalıştırır; kullanımınızın o agent'ın koşullarına uygun olduğundan emin olun.",
+  "Google's terms do not allow using Antigravity through third-party software on consumer plans.":
+    "Google'ın koşulları, bireysel planlarda Antigravity'nin üçüncü taraf yazılımlar üzerinden kullanılmasına izin vermiyor.",
+  "The Claude ACP adapter's licence is unclear. Claude stays available through the Claude API provider and the opt-in Claude Code provider.":
+    "Claude ACP adaptörünün lisansı belirsiz. Claude, Claude API provider'ı ve isteğe bağlı Claude Code provider'ı üzerinden kullanılabilir olmaya devam ediyor.",
+
   // Shared controller and the desktop app
   'No API key set for {provider}. Add one (kept in secure storage on this machine), or pick another provider for the main agent.':
     '{provider} için API key yok. Ekleyin (bu bilgisayarda güvenli depolamada tutulur) ya da ana agent için başka bir provider seçin.',
