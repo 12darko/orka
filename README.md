@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/12darko/orka/actions/workflows/ci.yml"><img src="https://github.com/12darko/orka/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Enophia-Studio/orka/actions/workflows/ci.yml"><img src="https://github.com/Enophia-Studio/orka/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg" alt="Node.js 22+">
 </p>
@@ -63,7 +63,7 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 
 ## Install
 
-**VS Code extension (quickest):** download `orka-vscode-<version>.vsix` from the [latest release](https://github.com/12darko/orka/releases/latest), then run **Extensions: Install from VSIX…** in VS Code (1.101 or newer), or:
+**VS Code extension (quickest):** download `orka-vscode-<version>.vsix` from the [latest release](https://github.com/Enophia-Studio/orka/releases/latest), then run **Extensions: Install from VSIX…** in VS Code (1.101 or newer), or:
 
 ```bash
 code --install-extension orka-vscode-0.2.0.vsix
@@ -74,7 +74,7 @@ code --install-extension orka-vscode-0.2.0.vsix
 **CLI:** with **Node.js 22+**, install the `orka` command from the release (it is not on npm yet):
 
 ```bash
-npm install -g https://github.com/12darko/orka/releases/download/v0.2.0/orka-agent-0.2.0.tgz
+npm install -g https://github.com/Enophia-Studio/orka/releases/download/v0.2.0/orka-agent-0.2.0.tgz
 ```
 
 The extension, the desktop app and the CLI package each include a `THIRD_PARTY_NOTICES.txt` with the licenses of the open-source software inside them.
@@ -84,7 +84,7 @@ The extension, the desktop app and the CLI package each include a `THIRD_PARTY_N
 **From source** (the desktop app on other systems, or to change Orka): you need **Node.js 22+** and **git**. The browser tool and the desktop app use an installed **Chrome or Edge**.
 
 ```bash
-git clone https://github.com/12darko/orka.git
+git clone https://github.com/Enophia-Studio/orka.git
 cd orka
 npm install
 npm run build

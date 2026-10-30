@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const ORKA = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'orka.js');
 const DAY = 24 * 60 * 60 * 1000;
-const NOTICE = 'Orka 99.0.0 is available: https://github.com/12darko/orka/releases/tag/v99.0.0';
+const NOTICE = 'Orka 99.0.0 is available: https://github.com/Enophia-Studio/orka/releases/tag/v99.0.0';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const plain = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\r/g, '');
@@ -96,7 +96,7 @@ describe('orka CLI update check', { skip: !existsSync(ORKA) && 'build the CLI fi
     }
   };
   const saveState = (value) => writeFileSync(stateFile, JSON.stringify(value));
-  const newer = (age) => ({ checkedAt: Date.now() - age, etag: '"r99"', latest: '99.0.0', url: 'https://github.com/12darko/orka/releases/tag/v99.0.0' });
+  const newer = (age) => ({ checkedAt: Date.now() - age, etag: '"r99"', latest: '99.0.0', url: 'https://github.com/Enophia-Studio/orka/releases/tag/v99.0.0' });
 
   /** One session: start, let `during` run while it is open, then /exit. Returns everything it printed. */
   async function session(term, during = () => sleep(300)) {
@@ -112,7 +112,7 @@ describe('orka CLI update check', { skip: !existsSync(ORKA) && 'build the CLI fi
     const first = await session(terminal(), () => until(() => state()?.latest, 'the saved answer'));
     assert.doesNotMatch(first, /is available/, 'nothing is known yet at the first start');
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, 'https://api.github.com/repos/12darko/orka/releases/latest');
+    assert.equal(calls[0].url, 'https://api.github.com/repos/Enophia-Studio/orka/releases/latest');
     assert.match(calls[0].headers.get('user-agent'), /^Orka\/\d+\.\d+\.\d+/);
     assert.equal(calls[0].headers.get('if-none-match'), null);
     assert.deepEqual({ ...state(), checkedAt: 0 }, { ...newer(0), checkedAt: 0 });
@@ -132,7 +132,7 @@ describe('orka CLI update check', { skip: !existsSync(ORKA) && 'build the CLI fi
   });
 
   it('says nothing about a release it already runs, or about a saved link it did not build', async () => {
-    saveState({ ...newer(0), latest: '0.0.1', url: 'https://github.com/12darko/orka/releases/tag/v0.0.1' });
+    saveState({ ...newer(0), latest: '0.0.1', url: 'https://github.com/Enophia-Studio/orka/releases/tag/v0.0.1' });
     assert.doesNotMatch(await session(terminal()), /is available/);
     saveState({ ...newer(0), url: 'https://evil.example/orka-99.0.0.exe' });
     assert.doesNotMatch(await session(terminal()), /is available/);

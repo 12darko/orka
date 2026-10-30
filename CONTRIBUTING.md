@@ -7,7 +7,7 @@ Thanks for your interest! Bug reports, ideas and pull requests are all welcome.
 You need Node.js 22 or newer, git, and VS Code 1.101 or newer (for the extension). Chrome or Edge is needed for the browser tool and the desktop app tests.
 
 ```bash
-git clone https://github.com/12darko/orka.git
+git clone https://github.com/Enophia-Studio/orka.git
 cd orka
 npm install
 npm run build

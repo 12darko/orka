@@ -77,6 +77,8 @@ import type {
   McpServerView,
   ProviderView,
   SessionGroup,
+  SessionOrganizeOp,
+  SessionOrganizerView,
   SettingsTab,
   SkillView,
 } from './protocol';
@@ -115,6 +117,10 @@ const MAX_HUNKS = 40;
 const MAX_HUNK_LINES = 80;
 /** Tasks per folder in the desktop app's session list. */
 const MAX_SESSION_TASKS = 30;
+/** The user's own groups of sessions and the sessions they hid (desktop session list). */
+const SESSION_ORGANIZER_STATE = 'orka.sessionOrganizer';
+const MAX_SESSION_GROUPS = 50;
+const ORGANIZER_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const APP_UPDATE_STATE = 'orka.appUpdate';
 /** How often a running app looks again whether the daily update check is due. */
 const APP_UPDATE_POLL_MS = 6 * 60 * 60 * 1000;
@@ -312,6 +318,9 @@ export class AppController implements Disposable {
         break;
       case 'listSessions':
         await this.postSessions();
+        break;
+      case 'organizeSessions':
+        await this.organizeSessions(message);
         break;
       case 'openTask':
         await this.openTask(message.id, message.folder);
@@ -904,7 +913,88 @@ export class AppController implements Disposable {
         tasks: (await new FileTaskStore(this.shell.storage(folder.path).tasks).list().catch(() => [])).slice(0, MAX_SESSION_TASKS),
       })),
     );
-    this.shell.post({ type: 'sessions', groups, taskId: this.orchestrator ? this.task.id : undefined });
+    this.shell.post({ type: 'sessions', groups, taskId: this.orchestrator ? this.task.id : undefined, organizer: this.sessionOrganizer() });
+  }
+
+  /** The user's groups and hidden sessions, as saved (anything malformed is dropped). */
+  private sessionOrganizer(): SessionOrganizerView {
+    const raw = this.shell.globalState.get<Partial<SessionOrganizerView>>(SESSION_ORGANIZER_STATE) ?? {};
+    const groups = (Array.isArray(raw.groups) ? raw.groups : [])
+      .filter((g): g is { id: string; name: string } => !!g && typeof g.id === 'string' && ORGANIZER_ID.test(g.id) && typeof g.name === 'string')
+      .slice(0, MAX_SESSION_GROUPS)
+      .map((g) => ({ id: g.id, name: g.name.slice(0, 60) }));
+    const ids = new Set(groups.map((g) => g.id));
+    const assigned: Record<string, string> = {};
+    for (const [taskId, groupId] of Object.entries(raw.assigned && typeof raw.assigned === 'object' ? raw.assigned : {})) {
+      if (ORGANIZER_ID.test(taskId) && typeof groupId === 'string' && ids.has(groupId)) assigned[taskId] = groupId;
+    }
+    const hidden = (Array.isArray(raw.hidden) ? raw.hidden : []).filter((id): id is string => typeof id === 'string' && ORGANIZER_ID.test(id)).slice(0, 5000);
+    return { groups, assigned, hidden };
+  }
+
+  private async saveSessionOrganizer(organizer: SessionOrganizerView): Promise<void> {
+    await this.shell.globalState.update(SESSION_ORGANIZER_STATE, organizer);
+    await this.postSessions();
+  }
+
+  /** Groups and hidden sessions in the desktop session list; ids from the UI are checked, names asked here. */
+  private async organizeSessions(message: SessionOrganizeOp): Promise<void> {
+    if (this.shell.kind !== 'desktop') return;
+    const organizer = this.sessionOrganizer();
+    const groupName = async (value?: string) => {
+      const name = await this.shell.input({
+        title: value === undefined ? t('New group') : t('Rename group'),
+        placeHolder: t('e.g. Lobby work'),
+        value,
+        validate: (v) => (!v.trim() ? t('Enter a name.') : v.trim().length > 60 ? t('At most {n} characters.', { n: 60 }) : undefined),
+      });
+      return name?.trim() || undefined;
+    };
+    const taskId = 'taskId' in message && typeof message.taskId === 'string' && ORGANIZER_ID.test(message.taskId) ? message.taskId : undefined;
+    const named = 'groupId' in message && message.groupId !== undefined;
+    const groupId = named && typeof message.groupId === 'string' && organizer.groups.some((g) => g.id === message.groupId) ? message.groupId : undefined;
+    // A group the UI names but that does not exist (any more) changes nothing.
+    if (named && !groupId) return;
+    switch (message.op) {
+      case 'createGroup': {
+        if (organizer.groups.length >= MAX_SESSION_GROUPS) {
+          void this.shell.message('info', t('At most {n} groups.', { n: MAX_SESSION_GROUPS }));
+          return;
+        }
+        const name = await groupName();
+        if (!name) return;
+        const id = `g-${newTaskId()}`;
+        organizer.groups.push({ id, name });
+        if (taskId) organizer.assigned[taskId] = id;
+        break;
+      }
+      case 'renameGroup': {
+        const group = organizer.groups.find((g) => g.id === groupId);
+        if (!group) return;
+        const name = await groupName(group.name);
+        if (!name) return;
+        group.name = name;
+        break;
+      }
+      case 'deleteGroup':
+        if (!groupId) return;
+        organizer.groups = organizer.groups.filter((g) => g.id !== groupId);
+        for (const [task, group] of Object.entries(organizer.assigned)) if (group === groupId) delete organizer.assigned[task];
+        break;
+      case 'moveToGroup':
+        if (!taskId) return;
+        if (groupId) organizer.assigned[taskId] = groupId;
+        else delete organizer.assigned[taskId];
+        break;
+      case 'hide':
+        if (!taskId) return;
+        organizer.hidden = organizer.hidden.filter((id) => id !== taskId);
+        if (message.hidden === true) organizer.hidden.push(taskId);
+        break;
+      default:
+        return;
+    }
+    await this.saveSessionOrganizer(organizer);
   }
 
   /** A folder named by the UI, if it is one of the recent folders (never any other path). */
@@ -968,6 +1058,13 @@ export class AppController implements Disposable {
     if (!elsewhere && id === this.task.id) {
       this.task = { id: newTaskId(), createdAt: new Date().toISOString() };
       if (!this.orchestrator?.isRunning) this.orchestrator?.reset();
+    }
+    // A deleted session leaves its group and the hidden list too.
+    const organizer = this.sessionOrganizer();
+    if (organizer.assigned[id] || organizer.hidden.includes(id)) {
+      delete organizer.assigned[id];
+      organizer.hidden = organizer.hidden.filter((h) => h !== id);
+      await this.shell.globalState.update(SESSION_ORGANIZER_STATE, organizer);
     }
     await this.postHistory();
   }

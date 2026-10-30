@@ -5,14 +5,14 @@
   "description": "Orka's chat UI and the controller behind it, shared by the VS Code extension and the desktop app.",
   "license": "MIT",
   "author": "Enophia Software",
-  "homepage": "https://github.com/12darko/orka#readme",
+  "homepage": "https://github.com/Enophia-Studio/orka#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/12darko/orka.git",
+    "url": "git+https://github.com/Enophia-Studio/orka.git",
     "directory": "packages/app"
   },
   "bugs": {
-    "url": "https://github.com/12darko/orka/issues"
+    "url": "https://github.com/Enophia-Studio/orka/issues"
   },
   "main": "./src/index.ts",
   "types": "./src/index.ts",

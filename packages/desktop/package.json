@@ -5,14 +5,14 @@
   "description": "Orka as a desktop app: the same chat UI and agents as the VS Code extension, in its own window.",
   "license": "MIT",
   "author": "Enophia Software",
-  "homepage": "https://github.com/12darko/orka#readme",
+  "homepage": "https://github.com/Enophia-Studio/orka#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/12darko/orka.git",
+    "url": "git+https://github.com/Enophia-Studio/orka.git",
     "directory": "packages/desktop"
   },
   "bugs": {
-    "url": "https://github.com/12darko/orka/issues"
+    "url": "https://github.com/Enophia-Studio/orka/issues"
   },
   "bin": {
     "orka-desktop": "dist/orka-desktop.js"

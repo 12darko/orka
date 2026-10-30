@@ -22,7 +22,7 @@ describe('Update check', () => {
   it('reports a newer release with a link built from the tag, never from html_url', async () => {
     const { fetchImpl, calls } = release({ tag_name: 'v0.2.0' });
     const result = await checkAppUpdate({ currentVersion: '0.1.1', fetchImpl });
-    assert.deepEqual(result, { status: 'newer', latest: '0.2.0', url: 'https://github.com/12darko/orka/releases/tag/v0.2.0', etag: 'W/"abc123"' });
+    assert.deepEqual(result, { status: 'newer', latest: '0.2.0', url: 'https://github.com/Enophia-Studio/orka/releases/tag/v0.2.0', etag: 'W/"abc123"' });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, LATEST_RELEASE_API);
     assert.equal(calls[0].headers.get('accept'), 'application/vnd.github+json');
@@ -128,7 +128,7 @@ describe('Update check', () => {
     assert.equal(isNewerVersion('0.3.0-rc.1', '0.2.0'), false, 'a pre-release never counts as newer');
     assert.equal(isNewerVersion('latest', '0.1.0'), false);
     assert.equal(isNewerVersion('0.2.0', 'garbage'), false);
-    assert.equal(releasePageUrl('v0.2.0'), 'https://github.com/12darko/orka/releases/tag/v0.2.0');
+    assert.equal(releasePageUrl('v0.2.0'), 'https://github.com/Enophia-Studio/orka/releases/tag/v0.2.0');
     assert.equal(releasePageUrl('v0.2.0/../../evil'), undefined);
   });
 });

@@ -4,14 +4,14 @@
   "description": "Orka runs a pod of AI agents in your project: a main agent that plans, edits, runs and verifies, sub-agents, and a supervisor that keeps it on track. Works with Claude, GPT, Gemini and any OpenAI-compatible model.",
   "license": "MIT",
   "author": "Enophia Software",
-  "homepage": "https://github.com/12darko/orka#readme",
+  "homepage": "https://github.com/Enophia-Studio/orka#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/12darko/orka.git",
+    "url": "git+https://github.com/Enophia-Studio/orka.git",
     "directory": "packages/vscode-extension"
   },
   "bugs": {
-    "url": "https://github.com/12darko/orka/issues"
+    "url": "https://github.com/Enophia-Studio/orka/issues"
   },
   "keywords": [
     "ai",

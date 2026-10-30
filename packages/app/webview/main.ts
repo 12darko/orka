@@ -3,13 +3,26 @@ import { getLocale, setLocale, t, tn } from '@orka/core/src/i18n';
 import { applyEvent, emptySession } from '@orka/core/src/ui/transcript';
 import { estimateCost } from '@orka/core/src/usage/pricing';
 import orkaLogo from '../media/orka-logo.svg';
-import type { AgentView, ConfigView, HunkView, ImageAttachment, McpServerView, ProviderView, SessionGroup, SettingsTab, SettingsView, SkillView, ToWebview } from '../src/protocol';
+import type {
+  AgentView,
+  ConfigView,
+  HunkView,
+  ImageAttachment,
+  McpServerView,
+  ProviderView,
+  SessionGroup,
+  SessionOrganizerView,
+  SettingsTab,
+  SettingsView,
+  SkillView,
+  ToWebview,
+} from '../src/protocol';
 import { post, saveUiState, uiState } from './core/bridge';
 import { attr, escapeHtml, icon, renderMarkdown } from './core/dom';
 import { ago, applyWidths, fmt } from './core/format';
 import { answerDialog, closeDialog, modalOpen, showDialog } from './features/dialogs';
 import { appSkeleton, layout } from './ide/layout';
-import { sessionListHtml, sidebarFrame, themeSwitchHtml } from './ide/sidebar';
+import { sessionListHtml, sessionMenuHtml, sidebarFrame, themeSwitchHtml } from './ide/sidebar';
 
 let session: SessionView = emptySession();
 let config: ConfigView | undefined;
@@ -26,6 +39,10 @@ const ui: {
   asideClosed: boolean;
   sessions: SessionGroup[];
   sessionQuery: string;
+  /** The user's groups and hidden sessions; folded sections; whether hidden ones show. */
+  organizer: SessionOrganizerView;
+  collapsed: Set<string>;
+  showHidden: boolean;
   /** The task shown, as the app reported it with the session. */
   taskId?: string;
 } = {
@@ -39,6 +56,9 @@ const ui: {
   asideClosed: !!uiState().asideClosed,
   sessions: [],
   sessionQuery: '',
+  organizer: { groups: [], assigned: {}, hidden: [] },
+  collapsed: new Set((uiState().collapsedSections ?? []).filter((k) => typeof k === 'string').slice(0, 200)),
+  showHidden: false,
 };
 
 // ------------------------------------------------------------------ icons
@@ -131,8 +151,12 @@ function renderSidebar(): void {
   el.sidebar.classList.toggle('collapsed', ui.sidebarClosed);
   const list = document.getElementById('side-list');
   if (list) {
+    closeSessionMenu();
     list.innerHTML = sessionListHtml({
       groups: ui.sessions,
+      organizer: ui.organizer,
+      collapsed: ui.collapsed,
+      showHidden: ui.showHidden,
       folder: config?.folder,
       taskId: ui.taskId,
       draftTitle: sessionTitle(),
@@ -164,6 +188,41 @@ function updateAside(): void {
 function toggleSidebar(): void {
   ui.sidebarClosed = !ui.sidebarClosed;
   saveUiState({ sidebarClosed: ui.sidebarClosed });
+  renderSidebar();
+}
+
+/** The … menu of one session, under its button (one at a time, closed by any re-render of the list). */
+let sessionMenu: HTMLElement | undefined;
+
+function openSessionMenu(button: HTMLElement): void {
+  closeSessionMenu();
+  const { id, folder } = button.dataset;
+  if (!id || !folder) return;
+  sessionMenu = document.createElement('div');
+  sessionMenu.className = 'composer-menu session-menu';
+  sessionMenu.setAttribute('role', 'menu');
+  sessionMenu.innerHTML = sessionMenuHtml(id, folder, ui.organizer);
+  document.body.appendChild(sessionMenu);
+  const at = button.getBoundingClientRect();
+  const menu = sessionMenu.getBoundingClientRect();
+  const top = at.bottom + menu.height + 8 > innerHeight ? Math.max(8, at.top - menu.height - 4) : at.bottom + 4;
+  sessionMenu.style.top = `${top}px`;
+  sessionMenu.style.left = `${Math.min(at.left, innerWidth - menu.width - 8)}px`;
+  button.setAttribute('aria-expanded', 'true');
+  sessionMenu.querySelector<HTMLElement>('.menu-item')?.focus();
+}
+
+function closeSessionMenu(): void {
+  if (!sessionMenu) return;
+  sessionMenu.remove();
+  sessionMenu = undefined;
+  document.querySelector('.side-more[aria-expanded="true"]')?.setAttribute('aria-expanded', 'false');
+}
+
+function toggleSection(key: string): void {
+  if (ui.collapsed.has(key)) ui.collapsed.delete(key);
+  else ui.collapsed.add(key);
+  saveUiState({ collapsedSections: [...ui.collapsed] });
   renderSidebar();
 }
 
@@ -280,7 +339,8 @@ if (layout === 'ide') {
   document.addEventListener('keydown', (e) => {
     // An Escape that closed a dialog is used up.
     if (e.key === 'Escape' && !e.defaultPrevented && !modalOpen()) {
-      if (el.composerMenu && !el.composerMenu.hidden) {
+      if (sessionMenu) closeSessionMenu();
+      else if (el.composerMenu && !el.composerMenu.hidden) {
         renderComposerMenu(false);
         el.input.focus();
       } else if (ui.agentsOpen) {
@@ -657,6 +717,7 @@ document.addEventListener('click', (e) => {
   // IDE layout: the + menu and the agents panel open over the message box and close on a click elsewhere.
   const clicked = e.target as HTMLElement;
   if (el.composerMenu && !el.composerMenu.hidden && !clicked.closest('#composer-menu, .composer-add')) renderComposerMenu(false);
+  if (sessionMenu && !clicked.closest('.session-menu, .side-more')) closeSessionMenu();
   if (layout === 'ide' && ui.agentsOpen && clicked.isConnected && !clicked.closest('#agents-panel, .agent-btn, .modal-backdrop, .dialogs')) {
     ui.agentsOpen = false;
     renderAgentsPanel();
@@ -826,6 +887,42 @@ document.addEventListener('click', (e) => {
     case 'search-sessions':
       searchSessions();
       break;
+    case 'toggle-section':
+      if (target.dataset.key) toggleSection(target.dataset.key);
+      break;
+    case 'toggle-hidden':
+      ui.showHidden = !ui.showHidden;
+      renderSidebar();
+      break;
+    case 'session-menu':
+      if (target.getAttribute('aria-expanded') === 'true') closeSessionMenu();
+      else openSessionMenu(target);
+      break;
+    case 'new-group':
+      post({ type: 'organizeSessions', op: 'createGroup' });
+      break;
+    case 'session-new-group':
+      closeSessionMenu();
+      post({ type: 'organizeSessions', op: 'createGroup', taskId: id! });
+      break;
+    case 'session-to-group':
+      closeSessionMenu();
+      post({ type: 'organizeSessions', op: 'moveToGroup', taskId: id!, groupId: target.dataset.group });
+      break;
+    case 'session-ungroup':
+      closeSessionMenu();
+      post({ type: 'organizeSessions', op: 'moveToGroup', taskId: id! });
+      break;
+    case 'session-hide':
+      closeSessionMenu();
+      post({ type: 'organizeSessions', op: 'hide', taskId: id!, hidden: target.dataset.hidden === 'true' });
+      break;
+    case 'group-rename':
+      if (target.dataset.group) post({ type: 'organizeSessions', op: 'renameGroup', groupId: target.dataset.group });
+      break;
+    case 'group-delete':
+      if (target.dataset.group) post({ type: 'organizeSessions', op: 'deleteGroup', groupId: target.dataset.group });
+      break;
     case 'to-bottom':
       el.transcript.scrollTo({ top: el.transcript.scrollHeight, behavior: 'smooth' });
       break;
@@ -852,6 +949,7 @@ document.addEventListener('click', (e) => {
       renderView();
       break;
     case 'delete-session':
+      closeSessionMenu();
       post({ type: 'deleteTask', id: id!, folder: target.dataset.folder || undefined });
       break;
     case 'check-app-update':
@@ -2511,6 +2609,7 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
     case 'sessions':
       ui.sessions = message.groups;
       ui.taskId = message.taskId;
+      ui.organizer = message.organizer;
       renderSidebar();
       break;
     case 'showAgents':

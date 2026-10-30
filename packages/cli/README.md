@@ -1,13 +1,13 @@
 # Orka CLI
 
-Orka in the terminal: an AI coding orchestrator with a main agent, a Supervisor that reviews its work, sub-agents, Skills, MCP servers, permissions, `/diff` and `/undo`, and task history. It is the same core as the [Orka VS Code extension and desktop app](https://github.com/12darko/orka).
+Orka in the terminal: an AI coding orchestrator with a main agent, a Supervisor that reviews its work, sub-agents, Skills, MCP servers, permissions, `/diff` and `/undo`, and task history. It is the same core as the [Orka VS Code extension and desktop app](https://github.com/Enophia-Studio/orka).
 
 ## Install
 
-Node.js 22 or newer. The CLI is not on the npm registry yet; install the `orka` command from the [GitHub release](https://github.com/12darko/orka/releases/latest):
+Node.js 22 or newer. The CLI is not on the npm registry yet; install the `orka` command from the [GitHub release](https://github.com/Enophia-Studio/orka/releases/latest):
 
 ```bash
-npm install -g https://github.com/12darko/orka/releases/download/v0.2.0/orka-agent-0.2.0.tgz
+npm install -g https://github.com/Enophia-Studio/orka/releases/download/v0.2.0/orka-agent-0.2.0.tgz
 ```
 
 Or build it from source: clone the repository, run `npm install` and `npm run build`, then `node packages/cli/dist/orka.js` (or `npm link` in `packages/cli`).
@@ -54,11 +54,11 @@ Settings live in `~/.orka/config.json` (or `$ORKA_HOME/config.json`); `orka conf
 
 ## Update check
 
-Once a day, an interactive session asks GitHub in the background whether a newer Orka release is out (one request to `api.github.com`, nothing else is sent) and mentions it at the next start, under the banner: `Orka 0.2.0 is available: https://github.com/12darko/orka/releases/tag/v0.2.0`. It never downloads or installs anything, never delays startup, and does not run with `-p` or when the output is not a terminal. The last answer is kept in `~/.orka/update-check.json`.
+Once a day, an interactive session asks GitHub in the background whether a newer Orka release is out (one request to `api.github.com`, nothing else is sent) and mentions it at the next start, under the banner: `Orka 0.2.0 is available: https://github.com/Enophia-Studio/orka/releases/tag/v0.2.0`. It never downloads or installs anything, never delays startup, and does not run with `-p` or when the output is not a terminal. The last answer is kept in `~/.orka/update-check.json`.
 
 Turn it off with `"updateCheck": false` in the config, or `ORKA_NO_UPDATE_CHECK=1` in the environment.
 
 ## Links
 
-- Source, issues and the other Orka apps: https://github.com/12darko/orka
+- Source, issues and the other Orka apps: https://github.com/Enophia-Studio/orka
 - License: MIT. The bundled open-source packages and their licenses are listed in `dist/THIRD_PARTY_NOTICES.txt`.

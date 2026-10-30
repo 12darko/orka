@@ -143,6 +143,25 @@ export interface SessionGroup {
   tasks: TaskSummary[];
 }
 
+/** How the user arranged the session list: their own groups, which task is in which, hidden tasks. */
+export interface SessionOrganizerView {
+  groups: Array<{ id: string; name: string }>;
+  /** Task id -> group id. */
+  assigned: Record<string, string>;
+  /** Task ids kept out of the list. */
+  hidden: string[];
+}
+
+export type SessionOrganizeOp =
+  /** Asks for a name; with taskId, that task moves into the new group. */
+  | { op: 'createGroup'; taskId?: string }
+  | { op: 'renameGroup'; groupId: string }
+  /** The group's sessions go back under their folders. */
+  | { op: 'deleteGroup'; groupId: string }
+  /** Without groupId, the task leaves its group. */
+  | { op: 'moveToGroup'; taskId: string; groupId?: string }
+  | { op: 'hide'; taskId: string; hidden: boolean };
+
 export interface ExternalAgentView {
   id: string;
   label: string;
@@ -198,7 +217,7 @@ export type ToWebview =
   | { type: 'showHistory' }
   | { type: 'history'; tasks: TaskSummary[]; currentId?: string }
   /** Desktop: the tasks of the recent folders, for the session list; taskId: the task open now (saved or not). */
-  | { type: 'sessions'; groups: SessionGroup[]; taskId?: string }
+  | { type: 'sessions'; groups: SessionGroup[]; taskId?: string; organizer: SessionOrganizerView }
   | { type: 'fileMatches'; query: string; files: string[] }
   | { type: 'hunks'; path: string; hunks: HunkView[] }
   | { type: 'dialog'; id: string; dialog: DialogView }
@@ -241,6 +260,8 @@ export type FromWebview =
   | { type: 'openSettings' }
   | { type: 'listTasks' }
   | { type: 'listSessions' }
+  /** Desktop session list: the user's own groups and hidden sessions. */
+  | ({ type: 'organizeSessions' } & SessionOrganizeOp)
   /** folder: a recent folder the task belongs to (desktop session list); default the current one. */
   | { type: 'openTask'; id: string; folder?: string }
   | { type: 'deleteTask'; id: string; folder?: string }

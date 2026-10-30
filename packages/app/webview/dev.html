@@ -127,7 +127,7 @@
         ] }), 60);
         if (message.type === 'setSetting' && message.key === 'language') setTimeout(() => { lang = message.value === 'tr' ? 'tr' : 'en'; deliver({ type: 'config', config: makeConfig(false) }); }, 0);
         if (message.type === 'setSetting' && message.key === 'desktop.theme') setTimeout(() => { theme = message.value; deliver({ type: 'config', config: makeConfig(false) }); }, 0);
-        if (message.type === 'listSessions') setTimeout(() => deliver({ type: 'sessions', taskId: 't-now', groups: [
+        if (message.type === 'listSessions') setTimeout(() => deliver({ type: 'sessions', taskId: 't-now', organizer: { groups: [{ id: 'g-1', name: L('Release 1.2', 'Sürüm 1.2') }], assigned: { 't-2': 'g-1', 's-1': 'g-1' }, hidden: ['t-4'] }, groups: [
           { folder: root, name: 'LobbyDemo', tasks: [
             task('t-now', L('Rework the lobby in my Unity project: add a ready state and a 4-player limit.', 'Unity projemde lobby sistemini yeniden düzenle: hazır (ready) durumu ekle ve 4 oyuncu sınırı koy.'), 120, 3),
             task('t-2', L('Fix the jitter when the camera follows the player', 'Kamera oyuncuyu takip ederken oluşan titremeyi düzelt'), 5400),

@@ -4,7 +4,7 @@ Orka runs AI agents that edit files and execute commands on your machine, so sec
 
 ## Reporting a vulnerability
 
-Please **do not open a public issue** for security problems. Report them privately through GitHub's [private vulnerability reporting](https://github.com/12darko/orka/security/advisories/new) instead. Include:
+Please **do not open a public issue** for security problems. Report them privately through GitHub's [private vulnerability reporting](https://github.com/Enophia-Studio/orka/security/advisories/new) instead. Include:
 
 - what an attacker can do and under which conditions,
 - the steps or a proof of concept to reproduce it,

@@ -96,7 +96,13 @@
 }
 
 :root[data-layout='ide'] .aside .panel-head {
+  flex-wrap: wrap;
+  row-gap: 4px;
   font-size: var(--fs-13);
+}
+
+:root[data-layout='ide'] .aside .panel-head .muted {
+  white-space: nowrap;
 }
 
 :root[data-layout='ide'] .aside .steps li,
@@ -287,7 +293,7 @@
   padding-right: 22px;
 }
 
-.side-del {
+.side-more {
   position: absolute;
   right: 4px;
   width: 24px;
@@ -295,9 +301,146 @@
   opacity: 0;
 }
 
-.side-item:hover .side-del,
-.side-del:focus-visible {
+.side-item:hover .side-more,
+.side-more:focus-visible,
+.side-more[aria-expanded='true'] {
   opacity: 1;
+}
+
+/* A session in one of the user's groups names its folder. */
+.side-meta {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-11-5);
+  color: var(--muted);
+}
+
+/* Section headings fold their section away. */
+.side-fold {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 4px 0 2px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+}
+
+.side-fold:hover {
+  color: var(--fg);
+}
+
+.fold-chevron {
+  width: 12px;
+  height: 12px;
+  opacity: 0.7;
+  transition: transform 0.12s;
+}
+
+.side-group.folded .fold-chevron {
+  transform: rotate(-90deg);
+}
+
+.side-count {
+  flex: none;
+  font-size: var(--fs-11);
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.side-group.user-group .side-group-head {
+  color: var(--fg);
+}
+
+.side-group-actions {
+  display: inline-flex;
+  opacity: 0;
+}
+
+.side-group-head:hover .side-group-actions,
+.side-group-actions:focus-within {
+  opacity: 1;
+}
+
+.side-group-actions .icon-btn {
+  width: 22px;
+  height: 22px;
+}
+
+.side-search-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.side-search-row .side-search {
+  flex: 1;
+  min-width: 0;
+}
+
+.side-search-row > .icon-btn {
+  width: 32px;
+  height: 32px;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+
+.side-hidden-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: var(--fs-12);
+  color: var(--muted);
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+}
+
+.side-hidden-toggle:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+
+.side-group.hidden-group .side-open {
+  color: var(--muted);
+}
+
+/* The … menu of a session floats next to its button. */
+.session-menu {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  z-index: 40;
+  min-width: 230px;
+}
+
+.menu-label {
+  padding: 6px 10px 2px;
+  font-size: var(--fs-11-5);
+  color: var(--muted);
+}
+
+.composer-menu hr {
+  width: 100%;
+  margin: 4px 0;
+  border: none;
+  border-top: 1px solid var(--hairline);
+}
+
+.menu-item.danger {
+  color: var(--err);
 }
 
 .run-dot {

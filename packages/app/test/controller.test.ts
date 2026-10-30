@@ -123,6 +123,49 @@ describe('desktop session list', () => {
   });
 });
 
+describe('session groups', () => {
+  it('creates, fills, renames and removes groups, and hides sessions', async () => {
+    const { shell, controller } = await start('desktop');
+    await saveTask(shell, folderB, 'task-b1', 'Fix the beta build');
+    // A name is asked in a dialog: the fake shell answers none, so nothing is created.
+    await controller.handleMessage({ type: 'organizeSessions', op: 'createGroup', taskId: 'task-b1' });
+    assert.deepEqual(shell.globalState.get('orka.sessionOrganizer'), undefined);
+
+    shell.input = async () => 'Release work';
+    await controller.handleMessage({ type: 'organizeSessions', op: 'createGroup', taskId: 'task-b1' });
+    let organizer = shell.last('sessions')!.organizer;
+    assert.equal(organizer.groups.length, 1);
+    const id = organizer.groups[0].id;
+    assert.deepEqual([organizer.groups[0].name, organizer.assigned['task-b1']], ['Release work', id]);
+
+    shell.input = async () => '  Shipping  ';
+    await controller.handleMessage({ type: 'organizeSessions', op: 'renameGroup', groupId: id });
+    await controller.handleMessage({ type: 'organizeSessions', op: 'hide', taskId: 'task-b1', hidden: true });
+    organizer = shell.last('sessions')!.organizer;
+    assert.equal(organizer.groups[0].name, 'Shipping');
+    assert.deepEqual(organizer.hidden, ['task-b1']);
+
+    // Unknown groups and malformed ids from the UI change nothing.
+    await controller.handleMessage({ type: 'organizeSessions', op: 'moveToGroup', taskId: 'task-b1', groupId: 'g-nope' });
+    await controller.handleMessage({ type: 'organizeSessions', op: 'hide', taskId: '../etc', hidden: true });
+    organizer = shell.last('sessions')!.organizer;
+    assert.equal(organizer.assigned['task-b1'], id, 'still in its group');
+    assert.deepEqual(organizer.hidden, ['task-b1']);
+
+    await controller.handleMessage({ type: 'organizeSessions', op: 'moveToGroup', taskId: 'task-b1' });
+    assert.equal(shell.last('sessions')!.organizer.assigned['task-b1'], undefined, 'taken out of the group');
+    await controller.handleMessage({ type: 'organizeSessions', op: 'moveToGroup', taskId: 'task-b1', groupId: id });
+    await controller.handleMessage({ type: 'organizeSessions', op: 'deleteGroup', groupId: id });
+    organizer = shell.last('sessions')!.organizer;
+    assert.deepEqual([organizer.groups, organizer.assigned], [[], {}], 'its sessions go back to their folders');
+
+    // Deleting the session clears it from the hidden list.
+    shell.answer = 'Delete';
+    await controller.handleMessage({ type: 'deleteTask', id: 'task-b1', folder: folderB });
+    assert.deepEqual(shell.last('sessions')!.organizer.hidden, []);
+  });
+});
+
 describe('desktop appearance settings', () => {
   it('are offered and saved only in the desktop app', async () => {
     const vscode = await start('vscode');
@@ -167,7 +210,7 @@ describe('Orka update check', () => {
     const notice = shell.asked.find((a) => a.text.startsWith('Orka 99.0.0 is available'));
     assert.ok(notice, 'the user was told');
     assert.deepEqual(notice.actions, ['Download']);
-    const url = 'https://github.com/12darko/orka/releases/tag/v99.0.0';
+    const url = 'https://github.com/Enophia-Studio/orka/releases/tag/v99.0.0';
     assert.deepEqual(shell.last('config')?.config.app.update, { version: '99.0.0', url });
 
     // Within a day nothing is asked again; a check on request is, without telling twice.

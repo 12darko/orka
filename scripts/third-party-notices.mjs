@@ -51,7 +51,7 @@ export function writeThirdPartyNotices(outFile, product, metafiles, { cwd = proc
   const parts = [...sections.keys()].sort().map((key) => sections.get(key));
   const header =
     `Third-party software in ${product}\n\n` +
-    'Orka is released under the MIT License (https://github.com/12darko/orka/blob/main/LICENSE). ' +
+    'Orka is released under the MIT License (https://github.com/Enophia-Studio/orka/blob/main/LICENSE). ' +
     `${product[0].toUpperCase()}${product.slice(1)} also contains the following software, under the licenses that follow.\n`;
   writeFileSync(outFile, [header, ...parts].join(`\n${rule}\n\n`) + '\n');
   return parts.length;
