@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.0
+
+The desktop app gets Radar: it watches what other AI coding tools ship and, when you ask, proposes what Orka could add. See [Radar (desktop)](README.md#radar-desktop).
+
+**Radar (desktop app)**
+
+- **A tab next to the plan and changes** on the right of the window, also reachable from the session list and its rail. The classic single-column window has its switches in **Settings → Control → Radar**. The VS Code extension and the CLI have no Radar.
+- **Off until you turn it on.** Before that, the tab lists every site it would contact (GitHub release feeds and the changelogs of Claude Code, Cursor, Kiro, VS Code, GitHub Copilot and ChatGPT Codex), and nothing is fetched.
+- **While it is on**, it checks the public feeds 30 seconds after the start and then every hour (each feed at most every 6 to 24 hours, with conditional requests), never with a model call. The tab shows the count of new entries, when it last looked and which feeds failed. Turning it off stops the timer and any running check. The requests carry only Orka's name and version; nothing about you or your projects is sent, and there is no telemetry.
+- **Analysis only on request:** **Analyze** runs on a provider and model you pick for Radar (or the main agent's, when that is a model API with a key), never on an agent CLI or Claude Code, on your own key and tokens: at most 40 entries and 100 model calls a run, with progress, the calls used and a **Stop** button. `radar.autoAnalyze` (off by default) analyzes right after a check found something.
+- **The report** groups similar features across tools, shows Orka's status for each change (has it, has part of it, lacks it, not for Orka) and the decision with priority (P1–P3) and size (S/M/L), links the release notes (https pages only) and lets you retry entries the model could not read. Summaries, comparisons and proposals are written in the UI language (English or Turkish).
+- **Start a session** on a proposal opens a new session in the current folder with the proposal in the message box, and sends nothing; the session never sees release-note text.
+- **Files:** `~/.orka/radar/state.json` and `report.json` beside it (or under `ORKA_HOME`). A report that fails its checks is set aside and not used.
+- **Settings** (desktop only, from your own settings file): `radar.enabled`, `radar.provider`, `radar.model`, `radar.autoAnalyze`.
+
+**Core**
+
+- The radar engine behind it (`packages/core/src/radar`): a checked source list, conditional polling with no model calls, a five-stage analysis in which every model answer has no tools and is checked against a strict JSON format, and validated reports.
+- Its analysis takes a `language`: the text people read comes back in that language, while JSON keys, enum values and tags stay English and the check against copied release-note text still applies.
+
 ## 0.3.0
 
 Coding agents you installed yourself can now be Orka's main agent, and the desktop session list gets your own groups.

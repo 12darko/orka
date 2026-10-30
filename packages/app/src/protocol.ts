@@ -2,7 +2,22 @@
  * Messages between the app (VS Code extension or desktop app) and the chat UI. Type-only imports
  * keep the UI bundle free of Node code.
  */
-import type { AgentEvent, Locale, ModelInfo, PermissionMode, PriceTable, SessionView, TaskSummary } from '@orka/core';
+import type {
+  AgentEvent,
+  Locale,
+  ModelInfo,
+  PermissionMode,
+  PriceTable,
+  RadarComparison,
+  RadarDecision,
+  RadarItemKind,
+  RadarMatch,
+  RadarPollStatus,
+  RadarRunStats,
+  RadarStage,
+  SessionView,
+  TaskSummary,
+} from '@orka/core';
 
 export interface ProviderView {
   /** Built-in kind ("claude", "openai", "gemini", "claude-code") or "custom:<id>". */
@@ -237,6 +252,88 @@ export type DialogView =
 
 export type SettingsTab = 'agents' | 'providers' | 'skills' | 'mcp' | 'control';
 
+/** One feed Radar reads, and how its last poll went. */
+export interface RadarSourceView {
+  id: string;
+  vendor: string;
+  product: string;
+  /** The host its feed is read from. */
+  host: string;
+  lastPolledAt?: string;
+  lastStatus?: RadarPollStatus;
+  lastError?: string;
+}
+
+/** The desktop app's Radar: whether it is on, what it would contact, what is waiting, what runs now. */
+export interface RadarView {
+  enabled: boolean;
+  autoAnalyze: boolean;
+  /** Every host Radar may contact while it is on (its feeds and the redirects they may take), with what it reads there. */
+  hosts: Array<{ host: string; products: string[] }>;
+  sources: RadarSourceView[];
+  /** Sources left out as invalid. */
+  sourceErrors: string[];
+  polling: boolean;
+  /** The newest poll of any source. */
+  lastPollAt?: string;
+  /** New entries waiting for an analysis. */
+  pending: number;
+  /** Entries the model could not read validly twice. */
+  quarantined: number;
+  /** Radar's own provider setting ('' = none chosen) and model ('' = the provider's default). */
+  choice: { provider: string; model: string };
+  /** What an analysis would run on: the choice, or the main agent's provider; undefined when the user has to pick one. */
+  model?: { provider: string; model: string; label: string; inherited: boolean };
+  /** Why no analysis can run now (no provider chosen, a missing key). */
+  modelProblem?: string;
+  /** Model calls one analysis may make at most. */
+  maxCalls: number;
+  /** The analysis running now: its stage, and the model calls used of the cap. */
+  analysis?: { stage: RadarStage; done: number; total: number; calls: number; maxCalls: number };
+  /** Why the last analysis or poll failed, until the next one. */
+  error?: string;
+}
+
+export interface RadarItemView {
+  id: string;
+  vendor: string;
+  product: string;
+  title: string;
+  summary: string;
+  kind: RadarItemKind;
+  relevance: number;
+  /** How Orka relates to it: have, partial, gap or not_for_orka. */
+  match?: RadarMatch;
+  /** The release notes: an https page only. */
+  url?: string;
+  published?: string;
+}
+
+export interface RadarClusterView {
+  key: string;
+  title: string;
+  vendors: string[];
+  tags: string[];
+  items: RadarItemView[];
+  comparison?: RadarComparison;
+  decision?: RadarDecision;
+  /** "Start a session" is offered: a gap with a valid proposal. */
+  canStart: boolean;
+}
+
+/** The merged Radar report as the panel shows it (validated on load, every value plain text). */
+export interface RadarReportView {
+  generatedAt: string;
+  provider: { id: string; model: string };
+  /** What Orka lacks first (by priority), then undecided, then what Orka has or does not want. */
+  clusters: RadarClusterView[];
+  /** Changes not grouped into a cluster (less relevant), newest first. */
+  others: RadarItemView[];
+  needsHuman: number;
+  /** The last analysis. */
+  stats: RadarRunStats;
+}
+
 export type ToWebview =
   | { type: 'init'; session: SessionView; config: ConfigView; taskId?: string }
   | { type: 'event'; event: AgentEvent }
@@ -252,7 +349,10 @@ export type ToWebview =
   | { type: 'dialog'; id: string; dialog: DialogView }
   | { type: 'closeDialog'; id: string }
   /** Put text into the message box (e.g. a message the user went back to, to edit and resend). */
-  | { type: 'setInput'; text: string };
+  | { type: 'setInput'; text: string }
+  /** Desktop only: Radar's state, and its report when that changed (undefined: none yet). */
+  | { type: 'radar'; radar: RadarView }
+  | { type: 'radarReport'; report?: RadarReportView };
 
 export type FromWebview =
   | { type: 'ready' }
@@ -328,4 +428,10 @@ export type FromWebview =
   /** The answer to a dialog: the action, the text entered or the index picked; undefined = cancelled. */
   | { type: 'dialogResult'; id: string; value?: string | number }
   /** Desktop: work in another folder (a recent one, or pick one when path is empty). */
-  | { type: 'openFolder'; path?: string };
+  | { type: 'openFolder'; path?: string }
+  /** Radar (desktop): check the feeds that are due, analyze what is waiting, stop the analysis, retry quarantined entries. */
+  | { type: 'radar'; action: 'poll' | 'analyze' | 'stop' | 'retry' }
+  /** A new session in the current folder with the proposal of this cluster in the message box (never sent). */
+  | { type: 'radarStartSession'; cluster: string }
+  /** Open a release note the report links to (only a link that is in the report). */
+  | { type: 'radarOpenLink'; url: string };

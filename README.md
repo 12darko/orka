@@ -44,6 +44,7 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 - [Tasks, history and tokens](#tasks-history-and-tokens)
 - [Orka CLI](#orka-cli)
 - [Orka Desktop](#orka-desktop)
+  - [Radar (desktop)](#radar-desktop)
 - [Configuration](#configuration)
 - [Development](#development)
 - [License and disclaimer](#license-and-disclaimer)
@@ -60,6 +61,7 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 - **Learns your project:** after a task, lasting lessons (the command that works, a pitfall, a convention) are kept in `.project-ai/lessons.md` for the next task.
 - **Skills and MCP:** built-in playbooks (Unity, debugging, testing, security, ...), your own skills, and tools from MCP servers (Unity Editor, Blender, databases, ...).
 - **Long tasks that stay cheap:** append-only conversations for prompt caching, a token-friendly Supervisor, compaction with an exact handoff note, a token budget, a light model for simple questions and a fallback model when a provider hits its limit.
+- **Radar (desktop, off until you turn it on):** watches the public release notes of other AI coding tools and, when you ask, compares what they shipped with Orka and proposes what to add.
 - **English and Turkish** UI.
 
 ## Install
@@ -67,7 +69,7 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 **VS Code extension (quickest):** download `orka-vscode-<version>.vsix` from the [latest release](https://github.com/Enophia-Studio/orka/releases/latest), then run **Extensions: Install from VSIX…** in VS Code (1.101 or newer), or:
 
 ```bash
-code --install-extension orka-vscode-0.3.0.vsix
+code --install-extension orka-vscode-0.4.0.vsix
 ```
 
 **Desktop app for Windows:** download `orka-desktop.exe` from the same release and run it; it needs no Node.js, only Edge or Chrome for its window. Only the Orka window opens; closing it quits Orka. If it does not start, the reason is in `~/.orka/desktop/desktop.log`. The file is not code-signed yet, so Windows SmartScreen may ask you to confirm the first start (**More info → Run anyway**), and on PCs where Windows' Smart App Control is on, it is blocked; use the CLI or run it from source there.
@@ -75,7 +77,7 @@ code --install-extension orka-vscode-0.3.0.vsix
 **CLI:** with **Node.js 22+**, install the `orka` command from the release (it is not on npm yet):
 
 ```bash
-npm install -g https://github.com/Enophia-Studio/orka/releases/download/v0.3.0/orka-agent-0.3.0.tgz
+npm install -g https://github.com/Enophia-Studio/orka/releases/download/v0.4.0/orka-agent-0.4.0.tgz
 ```
 
 The extension, the desktop app and the CLI package each include a `THIRD_PARTY_NOTICES.txt` with the licenses of the open-source software inside them.
@@ -98,7 +100,7 @@ npm run package
 ```
 
 ```bash
-code --install-extension packages/vscode-extension/dist/orka-vscode-0.3.0.vsix
+code --install-extension packages/vscode-extension/dist/orka-vscode-0.4.0.vsix
 ```
 
 **Desktop app** — run it, or build the single executable yourself (`packages/desktop/dist/orka-desktop.exe`, or `orka-desktop` on Linux):
@@ -315,8 +317,8 @@ Orka in its own window, without VS Code: the same chat, Agents panel, settings, 
 - **Sessions on the left:** the tasks of your recent project folders, newest first, with a search box. **New session** starts one in the open folder (the **+** next to a folder starts one there), clicking a session opens it (switching folders when needed), and the bin deletes it.
 - **The conversation in the middle**, in a readable column. Tool calls are quiet one-line entries that open to show their result; approvals, sub-agents and the Supervisor keep their cards.
 - **The message box holds its controls:** **+** attaches a file (`@`), adds an image or picks a skill or command (`/`); next to it the permission mode, on the right the main agent's model and the send button. A new session starts with the box in the middle of the window and a few suggestions under it.
-- **The plan and the changes on the right**, in their own panel while a task has them; keep or revert files and parts of files there.
-- **Shortcuts:** Ctrl+B shows or hides the sessions (closed, they become a narrow rail of icons), Ctrl+K searches them, Ctrl+Alt+B shows or hides the plan and changes, Ctrl+Alt+N starts a new session. A finished reply has a copy button, and while you scroll back a button takes you to the newest message.
+- **The plan and the changes on the right**, in their own panel while a task has them; keep or revert files and parts of files there. [Radar](#radar-desktop) has a tab next to them.
+- **Shortcuts:** Ctrl+B shows or hides the sessions (closed, they become a narrow rail of icons), Ctrl+K searches them, Ctrl+Alt+B shows or hides the panel on the right (plan, changes and Radar), Ctrl+Alt+N starts a new session. A finished reply has a copy button, and while you scroll back a button takes you to the newest message.
 - **Orka's own light and dark theme**: it follows the system, or pick one at the bottom of the session list or in **Settings → Control → Appearance** (setting `desktop.theme`). The single-column window of earlier versions is still there: **Layout → Single column** (`desktop.layout`).
 - Open a project with **Open folder…** (recent folders are listed), or start with a folder: `orka-desktop.exe D:\Projects\Game` (from source: `node packages/desktop/dist/orka-desktop.js D:\Projects\Game`).
 - `orka-desktop.exe` is a windowed program: only the Orka window opens. If it cannot start, it says why in a message box, and `~/.orka/desktop/desktop.log` has the details. Run from a terminal, it prints nothing (`--version`, `--help`) unless its output is redirected; `node packages/desktop/dist/orka-desktop.js` prints as usual.
@@ -326,12 +328,34 @@ Orka in its own window, without VS Code: the same chat, Agents panel, settings, 
 - **API keys are kept in the operating system's protected storage:** DPAPI on Windows (only your user account can decrypt them), Keychain on macOS, Secret Service on Linux.
 - Task history and snapshots are shared with the CLI (`~/.orka/tasks`), so `orka -c` can continue a task started in Desktop.
 
+### Radar (desktop)
+
+Radar keeps an eye on what other AI coding tools ship. It reads their **public release notes** (GitHub release feeds, changelogs and RSS feeds), and when you ask, a model of your choice summarizes the new entries, groups similar features across tools, compares them with Orka's features and proposes what Orka could add. It lives in a **Radar** tab next to the plan and changes on the right of the window (the top bar's panel button, **Radar** at the bottom of the session list, or its icon in the closed session rail); the classic single-column window only has its switches, in **Settings → Control**.
+
+- **Off until you turn it on.** Turning it on is a click in the Radar tab (or **Settings → Control → Radar**). Before that, the tab lists every site it would contact, and nothing is fetched.
+- **The sites it reads:** `github.com` (the release feeds of Codex CLI, Gemini CLI, Antigravity CLI, Zed, Copilot CLI, Cline, Kilo Code and OpenCode), `raw.githubusercontent.com` (Claude Code's changelog), `cursor.com` and `www.cursor.com` (Cursor), `kiro.dev` (Kiro), `code.visualstudio.com` (VS Code), `github.blog` (the Copilot changelog) and `learn.chatgpt.com` (the ChatGPT Codex changelog). Only HTTPS, only these hosts (redirects elsewhere are refused); `openai.com` and `chatgpt.com` are never fetched.
+- **While it is on**, it checks the feeds about 30 seconds after Orka starts and then every hour; each feed is fetched at most every 6 to 24 hours, with a conditional request, so a check usually costs a few "not modified" answers. A check never calls a model. New entries wait in the tab, with their count on it, and the tab shows when it last looked and which feeds failed. Turning it off stops the timer and any check that is running.
+- **Nothing about you leaves your machine.** The requests carry only Orka's name and version (`User-Agent: OrkaRadar/<version>`): no cookies, no account, no project data, no telemetry.
+- **Analysis runs only when you click Analyze**, on your own provider and API key, so it uses your tokens: at most 40 entries and 100 model calls per run, shown as it goes, with a **Stop** button. Pick its provider and model in the tab; without a choice it uses the main agent's provider when that is a model API with a key. It never runs on an agent CLI or on Claude Code. The summaries, comparisons and proposals are written in the UI language. Every model answer is checked against a strict format; release-note text is passed to the model as data only, and summaries may not copy it.
+- **The report** shows each group of similar features with the tools that have it, Orka's status for each change (has it, has part of it, lacks it, not for Orka), the decision with its priority (P1 to P3) and size (S, M, L), the proposal, and links to the release notes (https pages only, opened in your browser). Entries the model could not read twice can be retried. A report is written by a model from release notes only and can be wrong.
+- **Start a session** on a proposal opens a new session in the current folder with the proposal (problem, acceptance criteria and Orka's rules, never the release-note text) in the message box. Nothing is sent: you read it, change it and send it yourself, and the agent then works under your permission mode as usual.
+- **Where it keeps its files:** `~/.orka/radar/state.json` (what each feed last answered and the entries waiting) and `~/.orka/radar/report.json` (the report), or under `ORKA_HOME`. A report that fails its checks when it is read is set aside as `report.broken-<time>.json` and not used.
+
+| Setting (desktop `settings.json`) | Default | |
+|---|---|---|
+| `radar.enabled` | `false` | Check the feeds every hour |
+| `radar.provider` | `""` | Its own provider (`claude`, `openai`, `gemini` or `custom:<id>`); empty = the main agent's when it is a model API |
+| `radar.model` | `""` | Its model; empty = the provider's default model |
+| `radar.autoAnalyze` | `false` | Analyze right after a check found something (within the same caps) |
+
+These are read from your own settings file only, and the VS Code extension and the CLI have no Radar.
+
 ## Configuration
 
 | App | Where settings live |
 |---|---|
 | VS Code | `orka.*` in VS Code settings, or the extension's own **Settings** screen (gear icon in the chat) |
-| Desktop | `~/.orka/desktop/settings.json` (same keys without the `orka.` prefix; edits apply immediately) |
+| Desktop | `~/.orka/desktop/settings.json` (same keys without the `orka.` prefix, plus the desktop-only `desktop.*` and [`radar.*`](#radar-desktop) keys; edits apply immediately) |
 | CLI | `~/.orka/config.json` (`orka config` prints an example) |
 
 Example CLI config:
@@ -351,7 +375,7 @@ Example CLI config:
 }
 ```
 
-**Language:** `orka.language` is `auto`, `en` or `tr`. On `auto`, the VS Code display language (if a language pack is installed) or the operating system's language is used. Prompts to the models are always in English; the agent replies in the language you write in.
+**Language:** `orka.language` is `auto`, `en` or `tr`. On `auto`, the VS Code display language (if a language pack is installed) or the operating system's language is used. Prompts to the models are always in English; the agent replies in the language you write in, and Radar writes its summaries and proposals in the UI language.
 
 ## Development
 

@@ -124,6 +124,12 @@ export interface AppSettings {
   agentClis: { enabled: string[]; paths: Record<string, string>; custom: CustomAgentSetting[] };
   /** The desktop app's window: sessions and side panels ("ide") or one column ("classic"), and its colors. */
   desktop: { layout: 'ide' | 'classic'; theme: 'system' | 'light' | 'dark' };
+  /**
+   * Radar (desktop only): off until the user turns it on. Its own model provider ('' = the main
+   * agent's, when that is a plain model provider), never an agent CLI or Claude Code. Read from the
+   * user's own settings only: a folder's settings can neither turn it on nor pick its provider.
+   */
+  radar: { enabled: boolean; provider: ProviderRef | ''; model: string; autoAnalyze: boolean };
 }
 
 export function isCustomRef(ref: string): ref is `custom:${string}` {
@@ -152,6 +158,11 @@ export function readSettings(c: SettingsStore): AppSettings {
     const choice = configured[profile.name] ?? {};
     agents[profile.name] = { provider: valid(choice.provider) ?? 'inherit', model: (choice.model ?? '').trim() };
   }
+
+  // Settings only the user's own settings may set (a folder's are ignored).
+  const userOnly = (key: string): unknown => (c.scopeOf?.(key) === 'workspace' ? undefined : c.get<unknown>(key, undefined));
+  const radarProvider = valid(String(userOnly('radar.provider') ?? ''));
+  const radarModel = userOnly('radar.model');
 
   // Only the main agent can be an agent CLI, and only one the user turned on.
   const mainRef = c.get<string>('provider', 'claude');
@@ -232,6 +243,13 @@ export function readSettings(c: SettingsStore): AppSettings {
       layout: c.get<string>('desktop.layout', '') === 'classic' ? 'classic' : 'ide',
       theme: (['light', 'dark'] as const).find((v) => v === c.get<string>('desktop.theme', '')) ?? 'system',
     },
+    radar: {
+      enabled: userOnly('radar.enabled') === true,
+      // A model provider only: valid() never returns an agent CLI, and Claude Code is left out here.
+      provider: radarProvider && radarProvider !== 'claude-code' ? radarProvider : '',
+      model: typeof radarModel === 'string' && MODEL_ID.test(radarModel.trim()) ? radarModel.trim() : '',
+      autoAnalyze: userOnly('radar.autoAnalyze') === true,
+    },
   };
 }
 
@@ -300,6 +318,9 @@ function readCustomProviders(raw: unknown[] | undefined): CustomProviderDef[] {
   return out;
 }
 
+/** A model id as the pickers write it. */
+const MODEL_ID = /^[\w.:/@-]{1,160}$/;
+
 const int = (min: number, max: number) => (v: unknown) => Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
 
 /** Shells offered in the settings UI ('' = platform default). Other values only via the settings file. */
@@ -346,10 +367,18 @@ export const WEBVIEW_SETTINGS: Record<string, (value: unknown) => boolean> = {
   // Desktop only (the VS Code extension ignores them).
   'desktop.layout': (v) => v === 'ide' || v === 'classic',
   'desktop.theme': (v) => v === 'system' || v === 'light' || v === 'dark',
+  'radar.enabled': (v) => typeof v === 'boolean',
+  'radar.autoAnalyze': (v) => typeof v === 'boolean',
+  // '' = the main agent's provider. Never an agent CLI or Claude Code: Radar runs on a model API.
+  'radar.provider': (v) => v === '' || (typeof v === 'string' && /^(?:claude|openai|gemini|custom:[a-z0-9][a-z0-9-]{0,39})$/.test(v)),
+  'radar.model': (v) => v === '' || (typeof v === 'string' && MODEL_ID.test(v)),
 };
 
+/** Radar's settings: desktop only, never registered in VS Code. */
+export const RADAR_SETTINGS = new Set(['radar.enabled', 'radar.provider', 'radar.model', 'radar.autoAnalyze']);
+
 /** Settings only the desktop app has. */
-export const DESKTOP_SETTINGS = new Set(['desktop.layout', 'desktop.theme']);
+export const DESKTOP_SETTINGS = new Set(['desktop.layout', 'desktop.theme', ...RADAR_SETTINGS]);
 
 /**
  * Settings a folder's own settings must not change: programs Orka starts, where API keys are sent,

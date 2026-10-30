@@ -63,6 +63,8 @@ export interface AppShell {
   readonly appLanguage?: string;
   /** Private per-folder storage for task history and command snapshots. */
   storage(root: string): { tasks: string; snapshots: string };
+  /** Orka's own folder (~/.orka, or ORKA_HOME), where the desktop app keeps Radar's files. */
+  readonly orkaHome?: string;
 
   // ---- chat UI
   setMessageHandler(handler: (message: FromWebview) => void): void;

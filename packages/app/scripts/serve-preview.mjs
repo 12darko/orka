@@ -10,7 +10,12 @@ const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/cs
 
 createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
-  const pathname = url.pathname === '/' ? '/webview/dev.html' : decodeURIComponent(url.pathname);
+  // The page's relative links (desktop-theme.css) need its own folder in the address.
+  if (url.pathname === '/') {
+    res.writeHead(302, { location: `/webview/dev.html${url.search}` }).end();
+    return;
+  }
+  const pathname = decodeURIComponent(url.pathname);
   const file = path.resolve(root, `.${pathname}`);
   if (!file.startsWith(root) || !existsSync(file) || !statSync(file).isFile()) {
     res.writeHead(404).end('Not found');

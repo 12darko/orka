@@ -68,6 +68,7 @@ const ICON: Record<string, string> = {
   sun: '<circle cx="8" cy="8" r="2.6"/><path d="M8 1.8v1.4M8 12.8v1.4M1.8 8h1.4M12.8 8h1.4M3.6 3.6l1 1M11.4 11.4l1 1M3.6 12.4l1-1M11.4 4.6l1-1"/>',
   moon: '<path d="M13 9.6A5.5 5.5 0 016.4 3a5.5 5.5 0 106.6 6.6z"/>',
   monitor: '<rect x="2" y="3" width="12" height="8" rx="1.2"/><path d="M6 13.5h4M8 11v2.5"/>',
+  radar: '<circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2.5"/><path d="M8 8l3.9-3.9"/>',
 };
 
 export function icon(name: string, cls = ''): string {

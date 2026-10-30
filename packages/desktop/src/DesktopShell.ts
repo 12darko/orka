@@ -30,6 +30,8 @@ export class DesktopShell implements AppShell, Disposable {
   readonly globalState: StateStore;
   readonly workspaceState: StateStore;
   readonly builtinSkillsDir: string;
+  /** ~/.orka or ORKA_HOME: Radar keeps its state and report in radar/ here. */
+  readonly orkaHome: string;
   private readonly state: JsonState;
   private folder?: string;
   private handler: (message: FromWebview) => void = () => {};
@@ -44,6 +46,7 @@ export class DesktopShell implements AppShell, Disposable {
     options: { folder?: string; skillsDir: string },
   ) {
     const dir = path.join(home, 'desktop');
+    this.orkaHome = home;
     this.settings = new JsonSettings(path.join(dir, 'settings.json'));
     this.secrets = new OsSecretStore(path.join(dir, 'keys.json'));
     this.state = new JsonState(path.join(dir, 'state.json'));

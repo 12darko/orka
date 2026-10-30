@@ -4,7 +4,9 @@
   theme variables and replays a scripted agent session. Build first (npm run build), then open
   this file in a browser. Append ?light for the light theme, ?empty for the empty state, ?tr for Turkish,
   ?settings=skills (or agents/providers/control) to open a settings tab, ?ide for the desktop app's
-  window (its IDE layout and its own theme), with ?collapsed for its sidebar closed.
+  window (its IDE layout and its own theme), with ?collapsed for its sidebar closed. With ?ide,
+  ?radar=off, ?radar=pending or ?radar=report opens the Radar tab in that state (the panel's
+  buttons work: turn it on, Analyze, Stop, Start a session).
 -->
 <html lang="en">
 <head>
@@ -140,8 +142,9 @@
           ] },
         ] }), 0);
         if (message.type === 'searchFiles') setTimeout(() => deliver({ type: 'fileMatches', query: message.query, files: ['Assets/Scripts/Net/LobbyManager.cs', 'Assets/Scripts/UI/LobbyView.cs'].filter((f) => f.toLowerCase().includes(message.query.toLowerCase())) }), 0);
+        if (ide) radarMock(message);
       },
-      getState: () => (params.has('collapsed') ? { sidebarClosed: true } : undefined),
+      getState: () => ({ ...(params.has('collapsed') ? { sidebarClosed: true } : {}), ...(params.has('radar') ? { asideTab: 'radar' } : {}) }),
       setState: () => {},
     });
 
@@ -158,6 +161,103 @@
       m('claude-sonnet-5-5', 'Sonnet 5.5', 'Claude Sonnet', 'fast'), m('claude-sonnet-5', 'Sonnet 5', 'Claude Sonnet'), m('claude-sonnet-4-6', 'Sonnet 4.6', 'Claude Sonnet'),
       m('claude-haiku-4-5', 'Haiku 4.5', 'Claude Haiku', 'fastest'),
     ];
+    // ---- Radar (desktop app only): a scripted engine behind the panel.
+    const radarMode = params.get('radar') || 'report';
+    const RADAR_SOURCES = [
+      ['codex', 'OpenAI', 'Codex CLI', 'github.com'], ['gemini-cli', 'Google', 'Gemini CLI', 'github.com'], ['antigravity-cli', 'Google', 'Antigravity CLI', 'github.com'],
+      ['zed', 'Zed Industries', 'Zed', 'github.com'], ['copilot-cli', 'GitHub', 'Copilot CLI', 'github.com'], ['cline', 'Cline', 'Cline', 'github.com'],
+      ['kilocode', 'Kilo Code', 'Kilo Code', 'github.com'], ['opencode', 'Anomaly', 'OpenCode', 'github.com'], ['claude-code', 'Anthropic', 'Claude Code', 'raw.githubusercontent.com'],
+      ['cursor', 'Anysphere', 'Cursor', 'cursor.com'], ['kiro', 'AWS', 'Kiro', 'kiro.dev'], ['vscode', 'Microsoft', 'VS Code', 'code.visualstudio.com'],
+      ['github-copilot', 'GitHub', 'Copilot', 'github.blog'], ['chatgpt-codex', 'OpenAI', 'ChatGPT Codex', 'learn.chatgpt.com'],
+    ];
+    const RADAR_HOSTS = [
+      ['github.com', ['Codex CLI', 'Gemini CLI', 'Antigravity CLI', 'Zed', 'Copilot CLI', 'Cline', 'Kilo Code', 'OpenCode', 'Claude Code']],
+      ['raw.githubusercontent.com', ['Claude Code']], ['cursor.com', ['Cursor']], ['www.cursor.com', ['Cursor']], ['kiro.dev', ['Kiro']],
+      ['code.visualstudio.com', ['VS Code']], ['github.blog', ['Copilot']], ['learn.chatgpt.com', ['ChatGPT Codex']],
+    ].map(([host, products]) => ({ host, products }));
+    const radar = {
+      enabled: radarMode !== 'off', autoAnalyze: false, hosts: RADAR_HOSTS, sourceErrors: [], polling: false, maxCalls: 100,
+      sources: RADAR_SOURCES.map(([id, vendor, product, host]) => ({ id, vendor, product, host, lastPolledAt: ago(25 * 60), lastStatus: id === 'kiro' ? 'error' : 'not_modified', ...(id === 'kiro' ? { lastError: 'The server answered 404.' } : {}) })),
+      lastPollAt: radarMode === 'off' ? undefined : ago(25 * 60),
+      pending: radarMode === 'pending' ? 4 : 0, quarantined: radarMode === 'pending' ? 1 : 0,
+      choice: { provider: '', model: '' },
+      model: { provider: 'claude', model: 'claude-opus-5-5', label: 'Claude API · Opus 5.5', inherited: true },
+    };
+    const item = (id, vendor, product, title, summary, match, tag, kind = 'feature') => ({ id, vendor, product, title, summary, kind, relevance: 3, match, url: `https://github.com/example/${product.toLowerCase().replace(/\W+/g, '-')}/releases/tag/${tag}`, published: ago(2 * 86400) });
+    const radarReport = {
+      generatedAt: ago(2 * 3600), provider: { id: 'claude', model: 'claude-opus-5-5' }, needsHuman: 1,
+      stats: { entries: 9, calls: 27, inputTokens: 61200, outputTokens: 5400, left: 0 },
+      clusters: [
+        { key: 'background-agents', title: L('Background agents', 'Arka plan agentları'), vendors: ['OpenAI', 'Anysphere', 'GitHub'], tags: ['agents', 'sessions'], canStart: true,
+          items: [
+            item('a1', 'OpenAI', 'Codex CLI', L('Tasks keep running in the background', 'Görevler arka planda çalışmaya devam ediyor'), L('Agents continue while the user starts another task; a list shows their progress.', 'Kullanıcı başka bir görev başlatırken agentlar devam ediyor; bir liste ilerlemelerini gösteriyor.'), 'gap', 'rust-v0.92.0'),
+            item('a2', 'Anysphere', 'Cursor', L('Background agents in the editor', 'Editörde arka plan agentları'), L('Several agents work in parallel and report back when they finish.', 'Birkaç agent paralel çalışıyor ve bitince haber veriyor.'), 'partial', '2.4'),
+            item('a3', 'GitHub', 'Copilot CLI', L('Delegate a task and come back later', 'Bir görevi devret, sonra dön'), L('A task runs on its own and asks for approvals in a queue.', 'Bir görev kendi başına çalışıyor ve onayları bir kuyrukta istiyor.'), 'gap', 'v1.8.0'),
+          ],
+          comparison: { confidence: 'medium', basis: 'public release notes only', assessment: L('All three let a task continue while the user does something else; they differ in how approvals reach the user.', 'Üçü de kullanıcı başka bir şey yaparken görevin sürmesine izin veriyor; onayların kullanıcıya nasıl ulaştığında ayrışıyorlar.'), approaches: [
+            { vendor: 'OpenAI', approach: L('A task list in the terminal; approvals pause the task.', 'Terminalde bir görev listesi; onaylar görevi duraklatıyor.') },
+            { vendor: 'Anysphere', approach: L('Parallel agents with a status panel.', 'Durum paneli olan paralel agentlar.') },
+            { vendor: 'GitHub', approach: L('Delegated tasks with an approval queue.', 'Onay kuyruğu olan devredilmiş görevler.') },
+            { vendor: 'Orka', approach: L('Parallel workers inside one task; the task itself runs in the foreground.', 'Bir görev içinde paralel workerlar; görevin kendisi ön planda çalışıyor.') },
+          ] },
+          decision: { clusterKey: 'background-agents', decision: 'gap', priority: 'P1', effort: 'M', fitsPrinciples: true, decidedBy: 'model',
+            rationale: L('Orka runs one task at a time in the foreground; users wait before starting another.', 'Orka bir seferde bir görevi ön planda çalıştırıyor; kullanıcılar bir başkasını başlatmadan önce bekliyor.'),
+            proposal: { title: L('Background tasks', 'Arka plan görevleri'), problem: L('Users wait for a task to finish before they can start another one.', 'Kullanıcılar bir görev bitmeden başka birini başlatamıyor.'), acceptanceCriteria: [L('A task keeps running while another session is open', 'Başka bir oturum açıkken görev çalışmaya devam ediyor'), L('Approvals of a background task show a badge on its session', 'Arka plan görevinin onayları oturumunda bir rozet gösteriyor')], areas: ['agents', 'sessions'] } } },
+        { key: 'checkpoints', title: L('Restore points per message', 'Mesaj başına geri yükleme noktaları'), vendors: ['Cline', 'Kilo Code'], tags: ['checkpoints'], canStart: true,
+          items: [item('c1', 'Cline', 'Cline', L('Restore files to any message', 'Dosyaları herhangi bir mesaja geri yükle'), L('Each message keeps a snapshot the user can return to.', 'Her mesaj, kullanıcının dönebileceği bir anlık görüntü tutuyor.'), 'partial', 'v3.40.0')],
+          decision: { clusterKey: 'checkpoints', decision: 'gap', priority: 'P3', effort: 'S', fitsPrinciples: true, decidedBy: 'model', rationale: L('Orka can go back to a message already; a list of restore points would make it easier to find.', 'Orka zaten bir mesaja geri dönebiliyor; geri yükleme noktalarının listesi bunu bulmayı kolaylaştırır.'),
+            proposal: { title: L('A list of restore points', 'Geri yükleme noktaları listesi'), problem: L('Going back is only offered on the message itself.', 'Geri dönüş yalnızca mesajın kendisinde sunuluyor.'), acceptanceCriteria: [L('The session lists its restore points', 'Oturum geri yükleme noktalarını listeliyor')], areas: ['checkpoints'] } } },
+        { key: 'voice-input', title: L('Voice input', 'Sesli giriş'), vendors: ['Zed Industries'], tags: ['editor'], canStart: false,
+          items: [item('v1', 'Zed Industries', 'Zed', L('Dictate to the agent', "Agent'a dikte et"), L('A microphone button turns speech into a request.', 'Bir mikrofon düğmesi konuşmayı isteğe çeviriyor.'), undefined, 'v0.210.0')] },
+        { key: 'plan-mode', title: L('Plan before acting', 'Uygulamadan önce planla'), vendors: ['Google'], tags: ['planning'], canStart: false,
+          items: [item('p1', 'Google', 'Gemini CLI', L('Plan mode', 'Plan modu'), L('The agent proposes a plan and waits for approval.', 'Agent bir plan öneriyor ve onay bekliyor.'), 'have', 'v0.71.0')],
+          decision: { clusterKey: 'plan-mode', decision: 'already_have', priority: 'P3', effort: 'S', fitsPrinciples: true, rationale: '', decidedBy: 'inventory' } },
+        { key: 'cloud-workspaces', title: L('Hosted cloud workspaces', 'Barındırılan bulut çalışma alanları'), vendors: ['OpenAI'], tags: ['remote'], canStart: false,
+          items: [item('w1', 'OpenAI', 'ChatGPT Codex', L('Tasks in a cloud container', 'Bulut konteynerinde görevler'), L('Tasks run in a hosted environment tied to the vendor account.', 'Görevler, satıcı hesabına bağlı barındırılan bir ortamda çalışıyor.'), 'not_for_orka', 'cloud-1')],
+          decision: { clusterKey: 'cloud-workspaces', decision: 'not_for_orka', priority: 'P3', effort: 'L', fitsPrinciples: false, decidedBy: 'model', rationale: L("A vendor's own cloud service; Orka runs on the user's machine.", 'Bir satıcının kendi bulut hizmeti; Orka kullanıcının bilgisayarında çalışıyor.') } },
+      ],
+      others: [
+        { ...item('o1', 'Microsoft', 'VS Code', L('Faster terminal rendering', 'Daha hızlı terminal çizimi'), L('The terminal draws large outputs faster.', 'Terminal büyük çıktıları daha hızlı çiziyor.'), 'not_for_orka', '1.112', 'improvement'), relevance: 1 },
+        { ...item('o2', 'Cline', 'Cline', L('Fixed a crash on Windows paths', 'Windows yollarında bir çökme düzeltildi'), L('Paths with spaces no longer break diffs.', 'Boşluk içeren yollar artık diffleri bozmuyor.'), undefined, 'v3.39.2', 'fix'), relevance: 1 },
+      ],
+    };
+    let radarShownReport = radarMode === 'report' ? radarReport : undefined;
+    let radarRun;
+    const radarPost = () => deliver({ type: 'radar', radar: JSON.parse(JSON.stringify(radar)) });
+    function radarMock(message) {
+      if (message.type === 'ready') setTimeout(() => { radarPost(); deliver({ type: 'radarReport', report: radarShownReport }); }, 10);
+      if (message.type === 'setSetting' && message.key === 'radar.enabled') {
+        radar.enabled = message.value === true;
+        if (!radar.enabled) { clearInterval(radarRun); radarRun = undefined; delete radar.analysis; radar.polling = false; return radarPost(); }
+        radar.polling = true;
+        radarPost();
+        setTimeout(() => { radar.polling = false; radar.lastPollAt = new Date().toISOString(); radar.pending = 4; radarPost(); }, 900);
+      }
+      if (message.type === 'setSetting' && message.key === 'radar.autoAnalyze') { radar.autoAnalyze = message.value === true; radarPost(); }
+      if (message.type === 'setSetting' && message.key === 'radar.provider') { radar.choice = { provider: message.value, model: '' }; radarPost(); }
+      if (message.type === 'setSetting' && message.key === 'radar.model') { radar.choice.model = message.value; if (message.value) radar.model = { ...radar.model, model: message.value, inherited: false }; radarPost(); }
+      if (message.type === 'radar' && message.action === 'poll') { radar.polling = true; radarPost(); setTimeout(() => { radar.polling = false; radar.lastPollAt = new Date().toISOString(); radarPost(); }, 700); }
+      if (message.type === 'radar' && message.action === 'retry') { radar.pending += radar.quarantined; radar.quarantined = 0; radarPost(); }
+      if (message.type === 'radar' && message.action === 'stop') { clearInterval(radarRun); radarRun = undefined; delete radar.analysis; radarPost(); }
+      if (message.type === 'radar' && message.action === 'analyze' && !radarRun && radar.pending) {
+        const steps = [['summarize', 4], ['map', 1], ['cluster', 1], ['compare', 5], ['decide', 5]].flatMap(([stage, total]) => Array.from({ length: total + 1 }, (_, done) => ({ stage, done, total })));
+        let calls = 0;
+        radarRun = setInterval(() => {
+          const step = steps.shift();
+          if (!step) {
+            clearInterval(radarRun); radarRun = undefined; delete radar.analysis; radar.pending = 0;
+            radarShownReport = { ...radarReport, generatedAt: new Date().toISOString(), stats: { ...radarReport.stats, calls } };
+            radarPost(); deliver({ type: 'radarReport', report: radarShownReport });
+            return;
+          }
+          if (step.done > 0) calls++;
+          radar.analysis = { ...step, calls, maxCalls: 100 };
+          radarPost();
+        }, 220);
+      }
+      if (message.type === 'radarStartSession') setTimeout(() => deliver({ type: 'setInput', text: `Implement this feature in Orka: ${radarReport.clusters.find((c) => c.key === message.cluster)?.decision?.proposal?.title ?? '?'}\n\nPriority P1, effort M. Areas: agents, sessions.\n\nProblem:\n…` }), 0);
+    }
+
     function makeConfig(empty) {
       const providers = [
         { kind: 'claude', label: 'Claude API', local: false, ready: !empty, models: CLAUDE, model: 'claude-opus-5-5', key: empty ? undefined : { source: 'stored', hint: 'sk-ant••••4f2a' } },
@@ -179,7 +279,7 @@
         folders: [{ name: 'LobbyDemo', path: root }, { name: 'SharedLib', path: 'D:/game/SharedLib' }],
         folder: root,
         canOpenFolder: ide,
-        app: { version: '0.3.0', checkUpdates: true, checkedAt: Date.now() - 3600e3 },
+        app: { version: '0.4.0', checkUpdates: true, checkedAt: Date.now() - 3600e3 },
         agentClis: [
           { id: 'gemini', label: 'Gemini CLI', vendor: 'Google', custom: false, enabled: true, status: { state: 'ready', version: '0.66.0', executable: 'C:/Users/you/AppData/Roaming/npm/gemini.cmd' }, path: '', note: "Runs your installed Gemini CLI in its ACP mode. Orka never uses Gemini CLI's sign-in itself: Google's terms forbid other software from using it. Google moved unpaid and Google One accounts from Gemini CLI to Antigravity.", termsUrl: 'https://geminicli.com/docs/resources/tos-privacy/', docsUrl: 'https://geminicli.com/docs/cli/acp-mode/', installHint: 'npm install -g @google/gemini-cli', loginCommand: 'gemini', preview: false },
           { id: 'codex', label: 'Codex (codex-acp)', vendor: 'OpenAI', custom: false, enabled: true, status: { state: 'not_found' }, path: '', note: 'Runs the codex-acp adapter (Apache-2.0) you installed. Sign in with Codex itself, with a ChatGPT plan or an API key.', termsUrl: 'https://openai.com/policies/terms-of-use/', docsUrl: 'https://github.com/agentclientprotocol/codex-acp', installHint: 'npm install -g @agentclientprotocol/codex-acp', loginCommand: 'codex login', preview: false },

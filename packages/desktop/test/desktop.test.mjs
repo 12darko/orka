@@ -103,11 +103,11 @@ describe('Orka desktop app', { skip: (!existsSync(APP) && 'build first (npm run 
   /** What the running app printed (for failure messages). */
   let appOutput = '';
 
-  /** Start the app without a window; resolves with its start URL. */
-  function launch(folder = work) {
-    app = spawn(process.execPath, [APP, folder, '--no-window'], {
+  /** Start the app without a window; resolves with its start URL. `node` is put before the app on Node's command line. */
+  function launch(folder = work, { node = [], env = {} } = {}) {
+    app = spawn(process.execPath, [...node, APP, folder, '--no-window'], {
       // No update check against GitHub from tests.
-      env: { ...process.env, ORKA_HOME: home, ORKA_DEBUG: '1', ORKA_NO_UPDATE_CHECK: '1', ANTHROPIC_BASE_URL: baseURL, ANTHROPIC_API_KEY: 'test-key-for-fake-server' },
+      env: { ...process.env, ORKA_HOME: home, ORKA_DEBUG: '1', ORKA_NO_UPDATE_CHECK: '1', ANTHROPIC_BASE_URL: baseURL, ANTHROPIC_API_KEY: 'test-key-for-fake-server', ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = '';
@@ -204,6 +204,54 @@ describe('Orka desktop app', { skip: (!existsSync(APP) && 'build first (npm run 
     await until(async () => (await text()).includes('All set.'), 'the chat after the reload');
     assert.equal(await browser.evaluate('!!document.querySelector("#sidebar")'), false);
     assert.equal(await browser.evaluate('document.documentElement.dataset.theme'), 'light', 'the theme stays');
+  });
+
+  it('shows Radar in a tab next to the plan and changes: off, naming every site it would contact, fetching nothing', async () => {
+    // Every fetch the app makes is written down.
+    const probe = path.join(home, 'fetch-probe.cjs');
+    const fetchLog = path.join(home, 'fetches.log');
+    writeFileSync(
+      probe,
+      `const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(fetchLog)}, 'probe loaded\\n');
+const real = globalThis.fetch;
+globalThis.fetch = (input, init) => {
+  fs.appendFileSync(${JSON.stringify(fetchLog)}, (typeof input === 'string' ? input : input.url ?? String(input)) + '\\n');
+  return real(input, init);
+};
+`,
+    );
+    const url = await launch(work, { node: ['--require', probe] });
+    await browser.navigate(url);
+    await until(async () => (await text()).includes('What should we build?'), 'the chat UI');
+    // A new session has no plan or changes: the side panel opens on Radar.
+    await until(() => browser.evaluate('!!document.querySelector(".topbar .aside-btn")'), 'the side panel switch');
+    assert.equal(await browser.evaluate('document.querySelector("#aside").hidden'), true, 'closed until asked for');
+    await browser.clickSelector('.topbar .aside-btn');
+    await until(() => browser.evaluate('!document.querySelector("#radar-panel").hidden'), 'the Radar tab');
+    assert.equal(await browser.evaluate('document.querySelector("#aside-tab-radar").getAttribute("aria-selected")'), 'true');
+    assert.equal(await browser.evaluate('document.querySelector("#aside-tab-task").disabled'), true, 'no plan or changes to show yet');
+    const panel = await browser.evaluate('document.querySelector("#radar-panel").textContent');
+    assert.match(panel, /It is off: nothing is fetched\./);
+    const hosts = await browser.evaluate('[...document.querySelectorAll("#radar-panel .radar-hosts code")].map((c) => c.textContent)');
+    assert.deepEqual(
+      [...hosts].sort(),
+      ['code.visualstudio.com', 'cursor.com', 'github.blog', 'github.com', 'kiro.dev', 'learn.chatgpt.com', 'raw.githubusercontent.com', 'www.cursor.com'],
+    );
+    assert.equal(await browser.evaluate('!!document.querySelector("#radar-panel [data-action=radar-switch][data-on=true]")'), true, 'turning it on is a click away');
+    // The session list offers it too (and its rail, when closed).
+    assert.equal(await browser.evaluate('!!document.querySelector("#side-radar [data-action=open-radar]")'), true);
+
+    // Nothing was fetched from any of them, and Radar wrote nothing.
+    await sleep(1500);
+    const [loaded, ...fetched] = readFileSync(fetchLog, 'utf8').split('\n').filter(Boolean);
+    assert.equal(loaded, 'probe loaded', 'the app ran with the probe');
+    assert.deepEqual(
+      fetched.filter((u) => hosts.includes(new URL(u).hostname)),
+      [],
+    );
+    assert.equal(existsSync(path.join(home, 'radar')), false);
+    assert.equal(JSON.parse(readFileSync(path.join(home, 'desktop', 'settings.json'), 'utf8'))['radar.enabled'], undefined);
   });
 
   it('only lets its own window in', async () => {

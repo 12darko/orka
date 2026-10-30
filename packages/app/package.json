@@ -1,6 +1,6 @@
 {
   "name": "@orka/app",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Orka's chat UI and the controller behind it, shared by the VS Code extension and the desktop app.",
   "license": "MIT",

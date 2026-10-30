@@ -17,7 +17,7 @@ npm test
 - **VS Code extension:** open the folder in VS Code and press **F5** (*Run Extension*).
 - **Desktop app:** `npm run desktop`; `npm run desktop:exe` builds it as a single executable that needs no Node (`packages/desktop/dist/orka-desktop.exe`)
 - **CLI:** `node packages/cli/dist/orka.js`
-- **Chat UI in a browser** with a sample session: `npm run preview -w @orka/app`, then open <http://localhost:5178> (`?light`, `?empty`, `?tr`, `?nocc`, `?settings=providers`; `?ide` shows the desktop app's window with its session list and theme).
+- **Chat UI in a browser** with a sample session: `npm run preview -w @orka/app`, then open <http://localhost:5178> (`?light`, `?empty`, `?tr`, `?nocc`, `?settings=providers`; `?ide` shows the desktop app's window with its session list and theme, and `?ide&radar=off`, `pending` or `report` opens its Radar tab with sample data).
 
 ## Project layout
 

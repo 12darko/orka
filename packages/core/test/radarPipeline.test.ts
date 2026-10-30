@@ -294,6 +294,35 @@ describe('Radar analysis', () => {
     assert.equal(sharesVerbatim('The Agent, can NOW pause a running task and resume it!', notes), true, 'case and punctuation do not hide a copy');
   });
 
+  it('asks for the text a person reads in the UI language, keeps the rest English, and still rejects copies', async () => {
+    const notes = 'The agent can now pause a running task and resume it later from the history panel without losing context.';
+    const turkish = 'Agent, kullanıcı başka bir şey yaparken arka planda çalışmaya devam edebiliyor.';
+    const provider = new FakeRadarProvider((stage, request) => {
+      if (stage !== 'summarize') return validReply(stage, request);
+      // First a copy of the notes, then a Turkish paraphrase.
+      const summary = request.messages.length === 1 ? 'The agent can now pause a running task and resume it later.' : turkish;
+      return JSON.stringify({ items: [{ title: 'Arka plan agentları', summary, kind: 'feature', relevance: 3, tags: ['agents'] }] });
+    });
+    const { report } = await analyzeEntries([entry(1, { text: notes })], provider, BUILTIN_INVENTORY, { language: 'tr' });
+    for (const stage of ['summarize', 'cluster', 'compare', 'decide'] as const) {
+      const system = provider.requests.find((r) => r.stage === stage)!.system;
+      assert.match(system, /\n\nLanguage: write .+ in Turkish\. Keep the JSON keys, the enum values, the tags, the ids and the vendor and product names exactly as specified above, in English\.$/, stage);
+    }
+    assert.doesNotMatch(provider.requests.find((r) => r.stage === 'map')!.system, /Language: /, 'the map stage writes no text for people');
+    assert.match(provider.requests[0].system, /write title and summary in Turkish/);
+    assert.equal(provider.calls('summarize'), 2, 'the verbatim guard still applies');
+    assert.match(textOf(provider.requests[1].messages[2]), /copies 10 or more consecutive words/);
+    assert.equal(report.items[0].summary, turkish);
+    assert.deepEqual([report.items[0].kind, report.items[0].tags], ['feature', ['agents']], 'enum values and tags stay English');
+
+    // English (the default, or asked for) leaves the prompts as they are.
+    for (const language of [undefined, 'en'] as const) {
+      const english = new FakeRadarProvider();
+      await analyzeEntries([entry(1)], english, BUILTIN_INVENTORY, { language });
+      assert.ok(english.requests.every((r) => !/Language: | in Turkish\./.test(r.system)), String(language));
+    }
+  });
+
   it('stops at the entry and call caps and leaves the rest pending', async () => {
     const entries = [1, 2, 3, 4, 5].map((n) => entry(n));
     const capped = await analyzeEntries(entries, new FakeRadarProvider(), BUILTIN_INVENTORY, { maxEntries: 3 });

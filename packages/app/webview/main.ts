@@ -11,6 +11,8 @@ import type {
   ImageAttachment,
   McpServerView,
   ProviderView,
+  RadarReportView,
+  RadarView,
   SessionGroup,
   SessionOrganizerView,
   SettingsTab,
@@ -22,11 +24,15 @@ import { post, saveUiState, uiState } from './core/bridge';
 import { attr, escapeHtml, icon, renderMarkdown } from './core/dom';
 import { ago, applyWidths, fmt } from './core/format';
 import { answerDialog, closeDialog, modalOpen, showDialog } from './features/dialogs';
+import { radarBadge, radarPanelHtml, radarSettingsCard } from './features/radar';
 import { appSkeleton, layout } from './ide/layout';
-import { sessionListHtml, sessionMenuHtml, sidebarFrame, themeSwitchHtml } from './ide/sidebar';
+import { radarEntryHtml, sessionListHtml, sessionMenuHtml, sidebarFrame, themeSwitchHtml } from './ide/sidebar';
 
 let session: SessionView = emptySession();
 let config: ConfigView | undefined;
+/** The desktop app's Radar and its report (undefined in VS Code, and until the app reports in). */
+let radar: RadarView | undefined;
+let radarReport: RadarReportView | undefined;
 const ui: {
   planCollapsed: boolean;
   agentsOpen: boolean;
@@ -44,6 +50,8 @@ const ui: {
   organizer: SessionOrganizerView;
   collapsed: Set<string>;
   showHidden: boolean;
+  /** The side panel's tab: the task's plan and changes, or Radar. */
+  asideTab: 'task' | 'radar';
   /** The task shown, as the app reported it with the session. */
   taskId?: string;
 } = {
@@ -60,6 +68,7 @@ const ui: {
   organizer: { groups: [], assigned: {}, hidden: [] },
   collapsed: new Set((uiState().collapsedSections ?? []).filter((k) => typeof k === 'string').slice(0, 200)),
   showHidden: false,
+  asideTab: uiState().asideTab === 'radar' ? 'radar' : 'task',
 };
 
 // ------------------------------------------------------------------ icons
@@ -106,6 +115,9 @@ const el = {
   composerMenu: document.getElementById('composer-menu'),
   starters: document.getElementById('starters'),
   imageInput: document.getElementById('image-input') as HTMLInputElement | null,
+  asideTabs: document.getElementById('aside-tabs'),
+  asideTask: document.getElementById('aside-task'),
+  radarPanel: document.getElementById('radar-panel'),
 };
 
 el.input.value = uiState().draft ?? '';
@@ -167,6 +179,19 @@ function renderSidebar(): void {
   }
   const themes = document.getElementById('theme-switch');
   if (themes) themes.innerHTML = config?.ui ? themeSwitchHtml(config.ui.theme) : '';
+  renderRadarEntries();
+}
+
+/** Radar in the session list's footer and in the rail, with the count of new entries. */
+function renderRadarEntries(): void {
+  const badge = radarBadge(radar);
+  for (const [id, where] of [
+    ['side-radar', 'list'],
+    ['rail-radar', 'rail'],
+  ] as const) {
+    const slot = document.getElementById(id);
+    if (slot) slot.innerHTML = radarAvailable() ? radarEntryHtml(where, badge) : '';
+  }
 }
 
 /** The plan and the changes have their own panel on the right; it shows while there is either. */
@@ -174,15 +199,107 @@ function asideContent(): boolean {
   return !!session.plan?.steps.length || session.changes.length > 0;
 }
 
+/** Radar has a tab next to the plan and changes (desktop IDE layout, once the app reported it). */
+function radarAvailable(): boolean {
+  return !!el.radarPanel && !!radar;
+}
+
+/** The side panel shows while the task has a plan or changes, or while the user keeps Radar open in it. */
+function asideOpen(): boolean {
+  return ui.view === 'chat' && !ui.asideClosed && (asideContent() || (radarAvailable() && ui.asideTab === 'radar'));
+}
+
+/** Its tab: Radar when chosen, or when the task has nothing to show. */
+function shownTab(): 'task' | 'radar' {
+  return radarAvailable() && (ui.asideTab === 'radar' || !asideContent()) ? 'radar' : 'task';
+}
+
 let asideHadContent = false;
 
 function updateAside(): void {
   if (!el.aside) return;
-  el.aside.hidden = ui.view !== 'chat' || ui.asideClosed || !asideContent();
+  el.aside.hidden = !asideOpen();
+  const tab = shownTab();
+  if (el.asideTask) el.asideTask.hidden = tab !== 'task';
+  if (el.radarPanel) {
+    const wasHidden = el.radarPanel.hidden;
+    el.radarPanel.hidden = el.aside.hidden || tab !== 'radar';
+    if (wasHidden && !el.radarPanel.hidden) renderRadar();
+  }
+  renderAsideTabs();
   // The top bar offers to show or hide it once there is something in it.
   if (asideContent() !== asideHadContent) {
     asideHadContent = asideContent();
     renderTopbar();
+  }
+}
+
+function renderAsideTabs(): void {
+  if (!el.asideTabs) return;
+  el.asideTabs.hidden = !radarAvailable();
+  if (el.asideTabs.hidden) return;
+  el.asideTabs.setAttribute('aria-label', t('Side panel'));
+  const current = shownTab();
+  const tab = (id: 'task' | 'radar', label: string, extra: string, disabled: boolean) =>
+    `<button role="tab" id="aside-tab-${id}" aria-selected="${current === id}" aria-controls="${id === 'task' ? 'aside-task' : 'radar-panel'}" tabindex="${current === id ? 0 : -1}" class="${
+      current === id ? 'on' : ''
+    }" data-action="aside-tab" data-tab="${id}"${disabled ? ' disabled' : ''}>${label}${extra}</button>`;
+  const changes = Number(session.changes.length) || 0;
+  const html =
+    tab('task', escapeHtml(t('Plan and changes')), changes ? `<span class="count">${changes}</span>` : '', !asideContent()) + tab('radar', `${icon('radar')}<span>Radar</span>`, radarBadge(radar), false);
+  // Rebuilt only when it changed, so a focused tab keeps its focus.
+  if (el.asideTabs.dataset.html !== html) {
+    el.asideTabs.dataset.html = html;
+    el.asideTabs.innerHTML = html;
+  }
+}
+
+/** Show a tab of the side panel (opening the panel). */
+function showAsideTab(tab: 'task' | 'radar', focus = false): void {
+  if (tab === 'radar' && !radarAvailable()) return;
+  if (tab === 'task' && !asideContent()) return;
+  if (ui.view !== 'chat') {
+    ui.view = 'chat';
+    renderView();
+  }
+  ui.asideClosed = false;
+  ui.asideTab = tab;
+  saveUiState({ asideClosed: false, asideTab: tab });
+  updateAside();
+  renderTopbar();
+  if (focus) document.getElementById(`aside-tab-${tab}`)?.focus();
+}
+
+/** Radar's panel; rendered while it shows. Open details, scroll and focus survive the frequent updates. */
+function renderRadar(): void {
+  const panel = el.radarPanel;
+  if (!panel || !radar || panel.hidden) return;
+  const open = new Set([...panel.querySelectorAll<HTMLDetailsElement>('details[data-open-key]')].filter((d) => d.open).map((d) => d.dataset.openKey!));
+  const active = document.activeElement;
+  const focused = active instanceof HTMLElement && panel.contains(active) ? focusSelector(active) : undefined;
+  panel.setAttribute('aria-labelledby', 'aside-tab-radar');
+  panel.innerHTML = radarPanelHtml(radar, radarReport, { providers: config?.providers ?? [], modelOptions });
+  panel.querySelectorAll<HTMLDetailsElement>('details[data-open-key]').forEach((d) => (d.open = open.has(d.dataset.openKey!)));
+  applyWidths(panel);
+  if (focused) panel.querySelector<HTMLElement>(focused)?.focus();
+}
+
+/** A selector that finds the same control after a re-render. */
+function focusSelector(node: HTMLElement): string | undefined {
+  const attrs = ['data-action', 'data-radar', 'data-setting', 'data-cluster', 'data-url'].filter((a) => node.hasAttribute(a));
+  return attrs.length ? attrs.map((a) => `[${a}="${CSS.escape(node.getAttribute(a)!)}"]`).join('') : undefined;
+}
+
+/** Radar's state changed: its panel, its tab and the places that show its count. */
+function radarChanged(): void {
+  renderRadar();
+  updateAside();
+  renderRadarEntries();
+  if (layout === 'ide') renderTopbar();
+  if (ui.view === 'settings' && ui.tab === 'control') {
+    const active = document.activeElement;
+    const typing = active instanceof HTMLTextAreaElement || (active instanceof HTMLInputElement && active.type !== 'checkbox' && active.type !== 'radio');
+    if (!(typing && el.settings.contains(active))) renderSettings();
   }
 }
 
@@ -242,11 +359,27 @@ function updateToBottom(): void {
 }
 
 function toggleAside(): void {
-  ui.asideClosed = !ui.asideClosed;
-  saveUiState({ asideClosed: ui.asideClosed });
+  if (asideOpen()) ui.asideClosed = true;
+  else {
+    ui.asideClosed = false;
+    // Nothing of the task to show: open on Radar.
+    if (!asideContent() && radarAvailable()) ui.asideTab = 'radar';
+  }
+  saveUiState({ asideClosed: ui.asideClosed, asideTab: ui.asideTab });
   updateAside();
   renderTopbar();
 }
+
+// The side panel's tabs: arrow keys move between them, as in any tab list.
+el.asideTabs?.addEventListener('keydown', (e) => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+  const tabs = [...el.asideTabs!.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)')];
+  if (tabs.length < 2) return;
+  e.preventDefault();
+  const at = tabs.indexOf(document.activeElement as HTMLButtonElement);
+  const next = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (at + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  showAsideTab(tabs[next].dataset.tab === 'radar' ? 'radar' : 'task', true);
+});
 
 /** IDE layout: the permission mode and the main agent's model sit in the message box. */
 function renderComposerTools(): void {
@@ -906,6 +1039,38 @@ document.addEventListener('click', (e) => {
     case 'toggle-aside':
       toggleAside();
       break;
+    case 'aside-tab':
+      showAsideTab(target.dataset.tab === 'radar' ? 'radar' : 'task');
+      break;
+    case 'open-radar':
+      showAsideTab('radar', true);
+      break;
+    case 'radar-switch':
+      // Turning Radar on is this click; the panel named the sites it contacts before it.
+      post({ type: 'setSetting', key: 'radar.enabled', value: target.dataset.on === 'true' });
+      break;
+    case 'radar-poll':
+      target.setAttribute('disabled', '');
+      post({ type: 'radar', action: 'poll' });
+      break;
+    case 'radar-analyze':
+      target.setAttribute('disabled', '');
+      post({ type: 'radar', action: 'analyze' });
+      break;
+    case 'radar-stop':
+      target.setAttribute('disabled', '');
+      post({ type: 'radar', action: 'stop' });
+      break;
+    case 'radar-retry':
+      post({ type: 'radar', action: 'retry' });
+      break;
+    case 'radar-start':
+      // The app puts the proposal in the message box of a new session; nothing is sent.
+      if (target.dataset.cluster) post({ type: 'radarStartSession', cluster: target.dataset.cluster });
+      break;
+    case 'radar-link':
+      if (target.dataset.url?.startsWith('https://')) post({ type: 'radarOpenLink', url: target.dataset.url });
+      break;
     case 'search-sessions':
       searchSessions();
       break;
@@ -1092,6 +1257,21 @@ document.addEventListener('change', (e) => {
     post({ type: 'toggleAgentCli', id: target.dataset.agentCli, enabled: target.checked });
     return;
   }
+  // Radar's own provider and model.
+  if (target instanceof HTMLSelectElement && target.dataset.radar) {
+    if (target.dataset.radar === 'provider') {
+      post({ type: 'setSetting', key: 'radar.provider', value: target.value });
+      post({ type: 'setSetting', key: 'radar.model', value: '' });
+    } else if (target.value === '__other__') {
+      post({ type: 'customModel', agent: 'radar' });
+      renderRadar();
+    } else {
+      // A model picked while Radar follows the main agent keeps that provider.
+      if (!radar?.choice.provider && radar?.model) post({ type: 'setSetting', key: 'radar.provider', value: radar.model.provider });
+      post({ type: 'setSetting', key: 'radar.model', value: target.value });
+    }
+    return;
+  }
   // Generic settings controls.
   const key = target.dataset.setting;
   if (key && (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) {
@@ -1263,12 +1443,22 @@ function ideTopbar(phase: AgentPhase, folderButton: string): string {
   const usage = tokens
     ? `<button class="usage-btn${ui.usageOpen ? ' open' : ''}" data-action="toggle-usage" title="${attr(t('Token usage per agent'))}">${escapeHtml(t('{n} tokens', { n: fmt(tokens) }))}</button>`
     : '';
-  const asideLabel = ui.asideClosed ? t('Show plan and changes') : t('Hide plan and changes');
-  const aside = asideContent()
-    ? `<button class="icon-btn aside-btn${ui.asideClosed ? '' : ' on'}" data-action="toggle-aside" aria-label="${attr(asideLabel)}" title="${attr(`${asideLabel} (Ctrl+Alt+B)`)}">${icon('aside')}${
-        session.changes.length ? `<span class="count">${Number(session.changes.length) || 0}</span>` : ''
-      }</button>`
-    : '';
+  const open = asideOpen();
+  const asideLabel = radarAvailable()
+    ? open
+      ? t('Hide the side panel')
+      : t('Show the side panel')
+    : open
+      ? t('Hide plan and changes')
+      : t('Show plan and changes');
+  // While Radar's tab is out of sight, a dot says it has something new.
+  const radarDot = radar?.pending && !(open && shownTab() === 'radar') ? `<span class="radar-dot" aria-hidden="true"></span>` : '';
+  const aside =
+    asideContent() || radarAvailable()
+      ? `<button class="icon-btn aside-btn${open ? ' on' : ''}" data-action="toggle-aside" aria-label="${attr(asideLabel)}" aria-expanded="${open}" title="${attr(`${asideLabel} (Ctrl+Alt+B)`)}">${icon('aside')}${
+          session.changes.length ? `<span class="count">${Number(session.changes.length) || 0}</span>` : ''
+        }${radarDot}</button>`
+      : '';
   return `<div class="phase session-head" data-phase="${attr(phase)}"><span class="dot"></span><span class="session-title" title="${attr(title)}">${escapeHtml(title)}</span>${
     session.running ? `<span class="phase-label">${escapeHtml(phaseLabel(phase))}</span>` : ''
   }</div>${folderButton}${usage}${aside}`;
@@ -2032,6 +2222,7 @@ function controlTab(s: SettingsView): string {
       )}<br><span class="muted">${escapeHtml(t('After a task that changed code, up to 3 lasting lessons (working commands, pitfalls, conventions) are added to .project-ai/lessons.md.'))}</span></span></label>
     </div>
     ${config?.ui ? appearanceCard(config.ui) : ''}
+    ${radar ? radarSettingsCard(radar, radarAvailable()) : ''}
     ${config ? aboutCard(config.app) : ''}
     <div class="card">
       <div class="row"><span class="grow"><strong>${escapeHtml(t('Language'))}</strong><br><span class="muted small">${escapeHtml(
@@ -2548,6 +2739,7 @@ function renderAll(): void {
   renderView();
   renderTranscript();
   renderSidebar();
+  renderRadar();
 }
 
 /** Keep what the user typed/toggled (approval notes, open <details>) across a re-render. */
@@ -2717,8 +2909,18 @@ window.addEventListener('message', (e: MessageEvent<ToWebview>) => {
       renderSidebar();
       if (!(typing && el.settings.contains(active))) renderSettings();
       if (!session.items.length) renderTranscript();
+      // Radar's model pickers list the providers.
+      renderRadar();
       break;
     }
+    case 'radar':
+      radar = message.radar;
+      radarChanged();
+      break;
+    case 'radarReport':
+      radarReport = message.report;
+      renderRadar();
+      break;
     case 'sessions':
       ui.sessions = message.groups;
       ui.taskId = message.taskId;

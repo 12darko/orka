@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { t } from '../i18n';
+import { type Locale, t } from '../i18n';
 import { isAbortError, type AIProvider, type ChatResponse } from '../providers/AIProvider';
 import { type ChatMessage, messageText } from '../types';
 import { fetchSource, type HostPacer } from './fetch';
@@ -118,6 +118,11 @@ export interface RadarAnalyzeOptions {
   onProgress?: (progress: RadarProgress) => void;
   /** The source list, recorded in the report. */
   sources?: readonly RadarSource[];
+  /**
+   * The language of the text a person reads (summaries, titles, comparisons, proposals); default
+   * English. JSON keys, enum values, tags and ids stay English whatever it is.
+   */
+  language?: Locale;
 }
 
 export interface RadarAnalysis {
@@ -215,6 +220,17 @@ ${JSON_ONLY}
 - rationale: at most ${LIMITS.rationale} characters.
 - proposal: only for gap. title at most ${LIMITS.title} characters; problem at most ${LIMITS.problem} characters (what users miss, not how a vendor built it); acceptanceCriteria: 1 to ${LIMITS.criteria} testable statements of at most ${LIMITS.criterion} characters; areas: 1 to ${LIMITS.areas} of: ${TAG_LIST}.
 - ${PLAIN}`;
+
+const LANGUAGE_NAMES: Record<Locale, string> = { en: 'English', tr: 'Turkish' };
+
+/**
+ * The line that asks for `fields` in the user's language. Nothing for English, so the English
+ * prompts stay exactly as they are; enum values, tags and ids are named as staying English.
+ */
+function languageRule(language: Locale | undefined, fields: string): string {
+  if (!language || language === 'en') return '';
+  return `\n\nLanguage: write ${fields} in ${LANGUAGE_NAMES[language]}. Keep the JSON keys, the enum values, the tags, the ids and the vendor and product names exactly as specified above, in English.`;
+}
 
 function repairPrompt(errors: string[]): string {
   return `Your reply was not valid:\n${errors.map((e) => `- ${e}`).join('\n')}\n\nReply again with the complete, corrected JSON object only.`;
@@ -330,6 +346,13 @@ export async function analyzeEntries(entries: readonly RadarEntry[], provider: A
   const needsHuman: RadarNeedsHuman[] = [];
   const quarantined: RadarAnalysis['quarantined'] = [];
   const processed = new Set<string>();
+  const language = opts.language;
+  const system = {
+    summarize: SUMMARIZE_SYSTEM + languageRule(language, 'title and summary'),
+    cluster: CLUSTER_SYSTEM + languageRule(language, 'each cluster title'),
+    compare: COMPARE_SYSTEM + languageRule(language, 'each approach and the assessment'),
+    decide: DECIDE_SYSTEM + languageRule(language, "the rationale and the proposal's title, problem and acceptanceCriteria"),
+  };
 
   // 1. Summarize and classify, one call per entry. Calls are held back for the later stages.
   const batch = entries.slice(0, maxEntries);
@@ -338,7 +361,7 @@ export async function analyzeEntries(entries: readonly RadarEntry[], provider: A
   let done = 0;
   progress('summarize', 0, batch.length);
   await pool(batch, concurrency, run, async (entry, index) => {
-    const result = await run.ask(SUMMARIZE_SYSTEM, summarizePrompt(entry), (v) => checkSummaries(v, `${entry.title}\n${entry.text}`), Math.max(1, summarizeLimit));
+    const result = await run.ask(system.summarize, summarizePrompt(entry), (v) => checkSummaries(v, `${entry.title}\n${entry.text}`), Math.max(1, summarizeLimit));
     if (result.status === 'skipped') return;
     processed.add(entry.id);
     if (result.status === 'invalid') {
@@ -395,7 +418,7 @@ export async function analyzeEntries(entries: readonly RadarEntry[], provider: A
     progress('cluster', 0, 1);
     const previous = new Map((opts.previous?.clusters ?? []).slice(0, 100).map((c) => [c.key, c]));
     const ids = toCluster.map((i) => i.id);
-    const result = await run.ask(CLUSTER_SYSTEM, clusterPrompt(toCluster, [...previous.values()]), (v) => checkClusters(v, ids, new Set(previous.keys())));
+    const result = await run.ask(system.cluster, clusterPrompt(toCluster, [...previous.values()]), (v) => checkClusters(v, ids, new Set(previous.keys())));
     let drafts: ClusterDraft[];
     if (result.status === 'ok') drafts = result.value.map((d) => ({ ...d, title: previous.get(d.key)?.title ?? d.title }));
     else {
@@ -415,7 +438,7 @@ export async function analyzeEntries(entries: readonly RadarEntry[], provider: A
       const members = cluster.itemIds.map((id) => byId.get(id)!);
       const orka = orkaFeatures(members, features);
       const earlier = opts.previous?.clusters.find((c) => c.key === cluster.key)?.comparison;
-      const result = await run.ask(COMPARE_SYSTEM, comparePrompt(cluster, members, orka, earlier?.approaches ?? []), (v) => checkComparison(v, cluster.vendors, orka.length > 0));
+      const result = await run.ask(system.compare, comparePrompt(cluster, members, orka, earlier?.approaches ?? []), (v) => checkComparison(v, cluster.vendors, orka.length > 0));
       if (result.status === 'skipped') return;
       if (result.status === 'invalid') needsHuman.push({ stage: 'compare', subject: cluster.key, title: cluster.title, reason: result.reason });
       else cluster.comparison = { ...result.value, basis: RADAR_BASIS };
@@ -434,7 +457,7 @@ export async function analyzeEntries(entries: readonly RadarEntry[], provider: A
         const decision = matches.has('have') ? 'already_have' : 'not_for_orka';
         cluster.decision = { clusterKey: cluster.key, decision, priority: 'P3', effort: 'S', fitsPrinciples: true, rationale: '', decidedBy: 'inventory' };
       } else {
-        const result = await run.ask(DECIDE_SYSTEM, decidePrompt(cluster, members, orkaFeatures(members, features)), (v) => checkDecision(v));
+        const result = await run.ask(system.decide, decidePrompt(cluster, members, orkaFeatures(members, features)), (v) => checkDecision(v));
         if (result.status === 'skipped') return;
         if (result.status === 'invalid') needsHuman.push({ stage: 'decide', subject: cluster.key, title: cluster.title, reason: result.reason });
         else {

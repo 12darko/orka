@@ -1,6 +1,6 @@
 {
   "name": "@orka/core",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Editor-agnostic AI orchestration core: providers, agent loop, tools, permissions, context.",
   "license": "MIT",

@@ -1,6 +1,7 @@
 // Two layouts for one chat UI. "panel": a single column (VS Code's side bar, the desktop app's
 // classic window). "ide": the desktop app's window with the sessions on the left, the conversation
-// in the middle and the task's plan and changes on the right. The desktop page sets it on <html>.
+// in the middle and, on the right, the task's plan and changes with Radar in a tab next to them.
+// The desktop page sets it on <html>.
 
 export type Layout = 'panel' | 'ide';
 
@@ -54,5 +55,9 @@ export function appSkeleton(): string {
       </footer>
       <div class="starters" id="starters" hidden></div>
     </div>
-    <aside class="aside" id="aside" hidden>${plan}${changes}</aside>`;
+    <aside class="aside" id="aside" hidden>
+      <div class="aside-tabs" id="aside-tabs" role="tablist" hidden></div>
+      <div class="aside-task" id="aside-task" role="tabpanel">${plan}${changes}</div>
+      <section class="panel radar-panel" id="radar-panel" role="tabpanel" hidden></section>
+    </aside>`;
 }

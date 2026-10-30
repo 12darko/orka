@@ -66,6 +66,8 @@ export class FakeShell implements AppShell {
   readonly globalState = new MemoryState();
   readonly workspaceState = new MemoryState();
   readonly builtinSkillsDir: string;
+  /** The test's home folder stands in for ~/.orka (Radar keeps its files in radar/ there). */
+  readonly orkaHome: string;
   readonly canOpenFolder: boolean;
   readonly visible = true;
   readonly posted: ToWebview[] = [];
@@ -86,6 +88,7 @@ export class FakeShell implements AppShell {
   ) {
     this.settings = new MemorySettings({ language: 'en', ...settings });
     this.builtinSkillsDir = path.join(home, 'builtin-skills');
+    this.orkaHome = home;
     this.canOpenFolder = kind === 'desktop';
     this.folder = recent[0];
   }

@@ -16,5 +16,5 @@ export {
   type RadarPollSourceResult,
   type RadarProgress,
 } from './pipeline';
-export { buildReport, escapeMarkdown, type MergeLimits, mergeReports, proposalSpec, renderReportMarkdown, validateReport } from './report';
+export { buildReport, escapeMarkdown, type MergeLimits, mergeReports, proposalSpec, radarLinkTarget, renderReportMarkdown, validateReport } from './report';
 export { cleanModelText, sharesVerbatim } from './validate';

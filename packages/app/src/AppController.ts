@@ -96,6 +96,7 @@ import type {
   SettingsTab,
   SkillView,
 } from './protocol';
+import { RadarController, type RadarHooks, type RadarModel } from './radar';
 import {
   type AgentChoice,
   type AppSettings,
@@ -156,6 +157,11 @@ interface AppUpdateState {
 /** Global skills folder shared by the VS Code extension, the desktop app and the CLI. */
 export const USER_SKILLS_DIR = path.join(homedir(), '.orka', 'skills');
 
+export interface AppControllerOptions {
+  /** Tests: Radar's network, clock, timers and feeds. */
+  radar?: RadarHooks;
+}
+
 /**
  * Owns the orchestrator for the current folder and connects it to the chat UI, settings, secret
  * storage, task history and diffs. The same controller runs in the VS Code extension and in the
@@ -202,11 +208,30 @@ export class AppController implements Disposable {
   /** The request that runs now: a new task waits for it to end in its own task. */
   private running?: Promise<unknown>;
   private startingTask?: Promise<void>;
+  /** The desktop app's Radar (VS Code and the CLI have none). */
+  private readonly radar?: RadarController;
 
-  constructor(private readonly shell: AppShell) {
+  constructor(
+    private readonly shell: AppShell,
+    options: AppControllerOptions = {},
+  ) {
     this.settings = readSettings(shell.settings);
     this.permissions = new PermissionManager(this.settings.mode, this.settings.overrides);
     this.applyLocale();
+    if (shell.kind === 'desktop' && shell.orkaHome) {
+      this.radar = new RadarController(
+        path.join(shell.orkaHome, 'radar'),
+        this.settings.radar,
+        {
+          post: (message) => this.shell.post(message),
+          model: () => this.radarModel(),
+          createProvider: (ref, model) => this.radarProvider(ref, model),
+          startSession: (text) => this.startRadarSession(text),
+          openExternal: (url) => this.shell.openExternal(url),
+        },
+        options.radar,
+      );
+    }
     shell.setMessageHandler((m) => void this.handleMessage(m).catch((e) => this.reportError(e)));
     this.disposables.push(
       shell.watch('skills', () => void this.reloadSkills()),
@@ -231,6 +256,7 @@ export class AppController implements Disposable {
     this.appUpdateTimer = setInterval(() => void this.checkAppUpdate(), APP_UPDATE_POLL_MS);
     this.appUpdateTimer.unref?.();
     for (const id of this.settings.agentClis.enabled) void this.checkAgent(id);
+    await this.radar?.initialize();
   }
 
   private updateSetting(key: string, value: unknown, options?: { preferGlobal?: boolean }): Promise<void> {
@@ -257,6 +283,7 @@ export class AppController implements Disposable {
     switch (message.type) {
       case 'ready':
         this.shell.post({ type: 'init', session: this.session, config: this.configView(), taskId: this.task.id });
+        this.radar?.postAll();
         break;
       case 'send':
         await this.send(message.text, message.files, message.skills, message.images);
@@ -445,6 +472,18 @@ export class AppController implements Disposable {
       case 'editMcpServers':
         await this.shell.openSettings('mcpServers');
         break;
+      case 'radar':
+        if (message.action === 'poll') await this.radar?.poll();
+        else if (message.action === 'analyze') await this.radar?.analyze();
+        else if (message.action === 'stop') this.radar?.stopAnalysis();
+        else if (message.action === 'retry') await this.radar?.retry();
+        break;
+      case 'radarStartSession':
+        if (typeof message.cluster === 'string') await this.radar?.startSession(message.cluster);
+        break;
+      case 'radarOpenLink':
+        if (typeof message.url === 'string') await this.radar?.openLink(message.url);
+        break;
       case 'dialogResult':
         // Answered inside the shell that asked.
         break;
@@ -459,6 +498,8 @@ export class AppController implements Disposable {
       return;
     }
     if (DESKTOP_SETTINGS.has(key) && this.shell.kind !== 'desktop') return;
+    // Radar runs on a provider the user set up (the validator already refuses agent CLIs and Claude Code).
+    if (key === 'radar.provider' && value !== '' && !this.allProviderRefs().includes(value as ProviderRef)) return;
     if (WEBVIEW_SETTINGS[key]?.(value)) await this.updateSetting(key, value);
   }
 
@@ -1369,6 +1410,51 @@ export class AppController implements Disposable {
     return provider;
   }
 
+  /**
+   * The model Radar analyzes with: the provider picked for Radar, else the main agent's when that is
+   * a model provider that is ready. Never an agent CLI or Claude Code (a subscription CLI is not
+   * meant to run automated analysis), and never one the user did not set up.
+   */
+  private radarModel(): RadarModel {
+    const plain = (ref: string) => !isAgentRef(ref) && ref !== 'claude-code' && this.allProviderRefs().includes(ref as ProviderRef);
+    const chosen = this.settings.radar.provider;
+    const label = (ref: string, model: string) => `${this.providerLabel(ref)} · ${this.modelLabel(ref, model)}`;
+    if (!chosen) {
+      const main = this.mainProvider();
+      const model = plain(main) && this.isReady(main) ? this.defaultModel(main) : '';
+      return model ? { provider: main, model, label: label(main, model), inherited: true } : { problem: t('Pick a provider and model for Radar.') };
+    }
+    if (!plain(chosen)) return { problem: t('Pick a provider and model for Radar.') };
+    if (!this.isReady(chosen)) return { problem: t('{provider} needs an API key.', { provider: this.providerLabel(chosen) }) };
+    const model = this.settings.radar.model || this.defaultModel(chosen);
+    if (!model) return { problem: t('Pick a model for {provider} (Settings > Providers).', { provider: this.providerLabel(chosen) }) };
+    return { provider: chosen, model, label: label(chosen, model), inherited: false };
+  }
+
+  /** A provider of its own for one analysis (disposed after it), on the user's own key. */
+  private radarProvider(ref: string, model: string): AIProvider {
+    if (isAgentRef(ref) || ref === 'claude-code') throw new Error(t('The radar needs an API provider; the Claude Code provider cannot run it.'));
+    return createProvider(this.providerConfig(ref, model));
+  }
+
+  /**
+   * "Start a session" on a Radar proposal: a new task in the current folder with the proposal in the
+   * message box. It is never sent: the user reads it, changes it and sends it under the usual
+   * permission rules. A running request is not stopped for it.
+   */
+  private async startRadarSession(text: string): Promise<void> {
+    if (!this.orchestrator) {
+      void this.shell.message('warning', this.noFolderText());
+      return;
+    }
+    if (this.orchestrator.isRunning) {
+      void this.shell.message('info', t('The agent is still working. Stop it first or wait until it finishes.'));
+      return;
+    }
+    await this.newTask();
+    this.shell.post({ type: 'setInput', text });
+  }
+
   private disposeProviders(): void {
     for (const provider of this.providers.values()) provider.dispose?.();
     this.providers.clear();
@@ -1503,6 +1589,19 @@ export class AppController implements Disposable {
   }
 
   private async promptCustomModel(agent: string): Promise<void> {
+    if (agent === 'radar') {
+      const current = this.radarModel();
+      if (!this.radar || 'problem' in current) return;
+      const value = await this.shell.input({
+        title: t('Model for Radar ({provider})', { provider: this.providerLabel(current.provider) }),
+        value: current.model,
+        prompt: t('Any model id the provider accepts.'),
+      });
+      if (!value?.trim() || !isModelId(value.trim())) return;
+      if (current.inherited) await this.updateSetting('radar.provider', current.provider);
+      await this.updateSetting('radar.model', value.trim());
+      return;
+    }
     if (agent.startsWith('provider:')) {
       const ref = agent.slice('provider:'.length);
       if (!this.allProviderRefs().includes(ref as ProviderRef)) return;
@@ -2269,6 +2368,7 @@ export class AppController implements Disposable {
     if (this.orchestrator?.isRunning) this.providersStale = true;
     else this.disposeProviders();
     if (previousShell !== this.settings.shell && !this.orchestrator?.isRunning) this.recreateOrchestrator();
+    this.radar?.apply(this.settings.radar);
     this.updateStatus();
     this.postConfig();
   }
@@ -2426,6 +2526,8 @@ export class AppController implements Disposable {
     this.pruneKeyNotices();
     this.updateStatus();
     this.shell.post({ type: 'config', config: this.configView() });
+    // Radar's model may have changed with the providers (a key added, a model list loaded).
+    this.radar?.postState();
   }
 
   private updateStatus(): void {
@@ -2466,6 +2568,7 @@ export class AppController implements Disposable {
 
   async dispose(): Promise<void> {
     clearInterval(this.appUpdateTimer);
+    this.radar?.dispose();
     this.acpPool.dispose();
     await this.saveTask();
     this.orchestrator?.dispose();

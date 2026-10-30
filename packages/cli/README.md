@@ -7,7 +7,7 @@ Orka in the terminal: an AI coding orchestrator with a main agent, a Supervisor 
 Node.js 22 or newer. The CLI is not on the npm registry yet; install the `orka` command from the [GitHub release](https://github.com/Enophia-Studio/orka/releases/latest):
 
 ```bash
-npm install -g https://github.com/Enophia-Studio/orka/releases/download/v0.3.0/orka-agent-0.3.0.tgz
+npm install -g https://github.com/Enophia-Studio/orka/releases/download/v0.4.0/orka-agent-0.4.0.tgz
 ```
 
 Or build it from source: clone the repository, run `npm install` and `npm run build`, then `node packages/cli/dist/orka.js` (or `npm link` in `packages/cli`).

@@ -15,6 +15,8 @@ export interface UiState {
   asideClosed?: boolean;
   /** Folded sections of the session list ("group:<id>", "folder:<path>"). */
   collapsedSections?: string[];
+  /** The tab of the side panel: the task's plan and changes, or Radar. */
+  asideTab?: 'task' | 'radar';
 }
 
 const initial = vscode.getState();

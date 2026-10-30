@@ -271,8 +271,8 @@ export function escapeMarkdown(value: string): string {
     .replace(/[\\`*_{}[\]()#+\-.!|~:]/g, '\\$&');
 }
 
-/** A link target we render: https only, normalized by the URL parser (no spaces or angle brackets). */
-function linkTarget(url: string | undefined): string | undefined {
+/** A link target the report renders (and the apps open): https only, no credentials, normalized by the URL parser (no spaces or angle brackets). */
+export function radarLinkTarget(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
     const parsed = new URL(url);
@@ -350,7 +350,7 @@ export function renderReportMarkdown(report: RadarReport): string {
     for (const vendor of vendors) {
       out.push('', `### ${e(vendor)}`, '');
       for (const item of shown.filter((i) => i.vendor === vendor)) {
-        const href = linkTarget(item.url);
+        const href = radarLinkTarget(item.url);
         const title = `${e(item.product)}: ${e(item.title)}`;
         out.push(`- ${href ? `[${title}](<${href}>)` : title}: ${e(item.summary)} _(${e(kindLabel(item.kind))}, ${e(t('relevance {n}', { n: item.relevance }))})_`);
       }
