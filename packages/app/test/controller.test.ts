@@ -220,18 +220,24 @@ describe('agent CLIs', () => {
   });
 
   it('a new task during a request stops it, keeps it in its own task, and starts empty', async () => {
-    process.env.FAKE_ACP_SCRIPT = JSON.stringify([[{ chunk: 'Working on it.' }, { hang: true }, { chunk: 'Too late.' }]]);
+    process.env.FAKE_ACP_SCRIPT = JSON.stringify([[{ chunk: 'Working on it.' }, { hang: true, afterCancel: ' Stopping now.' }]]);
     const { shell, controller } = await start('desktop', agentSettings);
     const sent = controller.send('First request');
     await until(() => shell.posted.some((m) => m.type === 'event' && m.event.type === 'assistant_delta'), 'the agent to start answering');
-    const before = shell.posted.length;
-    await controller.newTask();
+    // Two clicks: the second one waits for the first instead of starting yet another task.
+    await Promise.all([controller.newTask(), controller.newTask()]);
     await sent;
-    const tasks = await new FileTaskStore(shell.storage(folderA).tasks).list();
+    const store = new FileTaskStore(shell.storage(folderA).tasks);
+    const tasks = await store.list();
     assert.equal(tasks.length, 1, 'the stopped request was saved as its own task');
     assert.match(tasks[0].title, /First request/);
-    const later = shell.posted.slice(before).flatMap((m) => (m.type === 'event' ? [m.event] : []));
-    assert.ok(!JSON.stringify(later).includes('Too late.'), 'nothing of the old turn reaches the new task');
+    // The turn ended before the task was saved, so its answer (also what came after the stop) is in it.
+    const saved = JSON.stringify((await store.load(tasks[0].id))?.messages);
+    assert.match(saved, /Working on it\. Stopping now\./);
+    const events = shell.posted.flatMap((m) => (m.type === 'event' ? [m.event] : []));
+    const resets = events.flatMap((e, i) => (e.type === 'reset' ? [i] : []));
+    assert.equal(resets.length, 1, 'one new task');
+    assert.ok(!events.slice(resets[0]).some((e) => e.type === 'assistant_delta' || e.type === 'assistant_end'), 'nothing of the old turn reaches the new task');
   });
 
   it('opens the sign-in by its full path in the home folder, and shows it', async () => {

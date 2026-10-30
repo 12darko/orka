@@ -1495,6 +1495,7 @@ function supervisorCard(): string {
     ${
       s.enabled
         ? `${pickers(config.supervisor, true)}
+    ${config.supervisor.unavailable ? `<div class="hint warn">${icon('warn')}<span>${escapeHtml(config.supervisor.unavailable)}</span></div>` : ''}
     <div class="field"><span class="field-label">${escapeHtml(t('Reviews'))}</span>
       ${segmented(
         'supervisor.frequency',
@@ -2256,7 +2257,7 @@ function renderEmptyState(): string {
   // IDE layout: the examples are offered under the message box instead (renderStarters).
   const examples = layout === 'ide' ? [] : starterPrompts();
   const main = providerView(config.main.effective.provider);
-  const sup = config.settings.supervisor.enabled ? shortModel(config.supervisor.effective.provider, config.supervisor.effective.model) : '';
+  const sup = config.settings.supervisor.enabled && !config.supervisor.unavailable ? shortModel(config.supervisor.effective.provider, config.supervisor.effective.model) : '';
   const skills = config.skillsEnabled ? config.skills.filter((s) => s.enabled).length : 0;
   return `<div class="empty">
     ${logoImg()}

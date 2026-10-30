@@ -162,6 +162,8 @@ async function runTurn(sessionId, steps) {
         log({ event: 'terminal_answer', exit: exit.result, output: output.result });
       } else if (step.hang) {
         await new Promise((resolve) => (wake = resolve));
+        // { hang: true, afterCancel: "text" }: a slow agent still says something after the cancel.
+        if (step.afterCancel !== undefined) update(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: step.afterCancel } });
       } else if (step.stop) {
         return step.stop;
       }

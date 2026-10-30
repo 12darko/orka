@@ -50,6 +50,9 @@ export function newTaskId(): string {
  * VS Code extension, the desktop app and a CLI can all read the same history.
  */
 export class FileTaskStore {
+  /** Saves and deletes run one at a time: each one rewrites the shared index. */
+  private queue: Promise<unknown> = Promise.resolve();
+
   constructor(private readonly dir: string) {}
 
   async list(): Promise<TaskSummary[]> {
@@ -69,6 +72,26 @@ export class FileTaskStore {
 
   async save(snapshot: TaskSnapshot): Promise<void> {
     if (!ID.test(snapshot.id)) throw new Error(`Invalid task id: ${snapshot.id}`);
+    return this.serial(() => this.write(snapshot));
+  }
+
+  async delete(id: string): Promise<void> {
+    if (!ID.test(id)) return;
+    return this.serial(async () => {
+      await fs.rm(this.file(id), { force: true });
+      const index = await this.readIndex();
+      delete index[id];
+      await writeAtomic(this.indexFile, JSON.stringify(index));
+    });
+  }
+
+  private serial(task: () => Promise<void>): Promise<void> {
+    const run = this.queue.then(task, task);
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async write(snapshot: TaskSnapshot): Promise<void> {
     await fs.mkdir(this.dir, { recursive: true });
     await writeAtomic(this.file(snapshot.id), JSON.stringify(snapshot));
     const index = await this.readIndex();
@@ -97,14 +120,6 @@ export class FileTaskStore {
     await writeAtomic(this.indexFile, JSON.stringify(index));
   }
 
-  async delete(id: string): Promise<void> {
-    if (!ID.test(id)) return;
-    await fs.rm(this.file(id), { force: true });
-    const index = await this.readIndex();
-    delete index[id];
-    await writeAtomic(this.indexFile, JSON.stringify(index));
-  }
-
   private get indexFile(): string {
     return path.join(this.dir, 'index.json');
   }
@@ -127,8 +142,11 @@ function countRequests(messages: ChatMessage[]): number {
   return messages.filter((m) => m.role === 'user' && m.content.some((b) => b.type === 'text' && b.text.startsWith('<context>'))).length;
 }
 
+let tempCount = 0;
+
 async function writeAtomic(file: string, data: string): Promise<void> {
-  const temp = `${file}.${process.pid}.tmp`;
+  // Unique per write: two stores on the same folder in one process never share a temp file.
+  const temp = `${file}.${process.pid}.${++tempCount}.tmp`;
   await fs.writeFile(temp, data, 'utf8');
   await fs.rename(temp, file);
 }

@@ -55,6 +55,8 @@ export interface AgentView {
   model: string;
   /** What will actually run, after inheritance and defaults. */
   effective: { provider: string; model: string };
+  /** Why it does not run at all right now (the Supervisor next to an agent CLI with no model). */
+  unavailable?: string;
 }
 
 export interface ClaudeCodeStatus {

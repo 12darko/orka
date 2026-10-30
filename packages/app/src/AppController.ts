@@ -201,6 +201,7 @@ export class AppController implements Disposable {
   private supervisorSkipNoted = false;
   /** The request that runs now: a new task waits for it to end in its own task. */
   private running?: Promise<unknown>;
+  private startingTask?: Promise<void>;
 
   constructor(private readonly shell: AppShell) {
     this.settings = readSettings(shell.settings);
@@ -593,6 +594,12 @@ export class AppController implements Disposable {
         return;
       }
     }
+    // A second click while the first one waits for the request to end starts no other task.
+    this.startingTask ??= this.startNewTask().finally(() => (this.startingTask = undefined));
+    return this.startingTask;
+  }
+
+  private async startNewTask(): Promise<void> {
     if (this.orchestrator?.isRunning) {
       this.orchestrator.stop();
       // The stopped request ends in its own task and is saved there (an agent CLI gets a few
@@ -2351,7 +2358,11 @@ export class AppController implements Disposable {
       pricing: s.pricing,
       providers: [...builtIns, ...customs, ...agents],
       main: agentView('main', { provider: this.mainProvider(), model: this.defaultModel(this.mainProvider()) }),
-      supervisor: agentView('supervisor', s.supervisor),
+      supervisor: agentView(
+        'supervisor',
+        s.supervisor,
+        this.inheritsNoModel('supervisor') ? { unavailable: t('It sits out: next to an agent CLI it needs a model provider of its own. Add an API key, or pick a provider for it here.') } : {},
+      ),
       fallback: agentView('fallback', s.fallback),
       light: agentView('light', s.light),
       subagentsEnabled: s.subagents.enabled,
@@ -2428,7 +2439,11 @@ export class AppController implements Disposable {
       return `${this.providerLabel(r.provider)} / ${r.model ? this.modelLabel(r.provider, r.model) : t('(no model)')}`;
     };
     const subs = s.subagents.enabled ? DEFAULT_SUBAGENTS.map((p) => `  ${p.name}: ${line(p.name)}`).join('\n') : `  ${t('(disabled)')}`;
-    const sup = s.supervisor.enabled ? `Supervisor: ${line('supervisor')}` : `Supervisor: ${t('off')}`;
+    const sup = !s.supervisor.enabled
+      ? `Supervisor: ${t('off')}`
+      : this.inheritsNoModel('supervisor')
+        ? `Supervisor: ${t('sits out (no model provider)')}`
+        : `Supervisor: ${line('supervisor')}`;
     this.shell.status({
       running,
       text: `${this.providerLabel(main.provider)} · ${modeLabel}`,

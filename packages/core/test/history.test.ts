@@ -42,6 +42,21 @@ describe('FileTaskStore', () => {
     assert.equal(await store.load('a-1'), undefined);
   });
 
+  it('keeps every task when saves and deletes overlap', async () => {
+    const store = new FileTaskStore(path.join(ws.root, 'tasks'));
+    await store.save(snapshot('old-1', 'Old task', '2026-09-29T09:00:00Z'));
+    // The same task saved twice at once (a request ending while a new task starts), plus others.
+    await Promise.all([
+      store.save(snapshot('a-1', 'First task', '2026-09-29T10:00:00Z')),
+      store.save(snapshot('a-1', 'First task', '2026-09-29T10:00:01Z')),
+      store.save(snapshot('b-2', 'Second task', '2026-09-29T11:00:00Z')),
+      store.delete('old-1'),
+      store.save(snapshot('c-3', 'Third task', '2026-09-29T12:00:00Z')),
+    ]);
+    assert.deepEqual((await store.list()).map((t) => t.id), ['c-3', 'b-2', 'a-1']);
+    assert.equal((await store.load('a-1'))?.updatedAt, '2026-09-29T10:00:01Z');
+  });
+
   it('refuses ids that could escape the folder', async () => {
     const store = new FileTaskStore(path.join(ws.root, 'tasks'));
     await assert.rejects(store.save(snapshot('../evil', 'x', '2026-09-29T10:00:00Z')), /Invalid task id/);
