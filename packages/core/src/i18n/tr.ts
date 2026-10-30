@@ -686,6 +686,51 @@ export const TR: Record<string, string> = {
   'Checking…': 'Kontrol ediliyor…',
   Download: 'İndir',
 
+  // Agent CLIs in the orka CLI (agent mode: --provider agent:<id>, orka agents, "agentClis" in the config)
+  '{provider} is an agent CLI: it can only be the main agent, not the Supervisor, the light model, the fallback or a sub-agent.':
+    '{provider} bir agent CLI: yalnızca ana agent olabilir; Supervisor, hafif model, fallback ya da sub-agent olamaz.',
+  '"agentClis" must be an object with "enabled", "paths" and "custom".': '"agentClis", "enabled", "paths" ve "custom" alanları olan bir nesne olmalı.',
+  '"agentClis.custom" must be a list.': '"agentClis.custom" bir liste olmalı.',
+  'Skipped an entry of "agentClis.custom": it needs a "name" and a "command" ("args" is a list of strings).':
+    '"agentClis.custom" içindeki bir kayıt atlandı: "name" ve "command" gerekir ("args" bir metin listesidir).',
+  'Skipped the custom agent "{name}": its id ({id}) may have at most 40 letters, digits and dashes.':
+    'Custom agent "{name}" atlandı: id\'si ({id}) en fazla 40 harf, rakam ve tireden oluşabilir.',
+  'Skipped the custom agent "{name}": another one already has the id {id}.': 'Custom agent "{name}" atlandı: {id} id\'si zaten başka bir agent\'ta var.',
+  'Unknown agent "{id}". Known: {known}. Add your own ACP agent under "agentClis.custom" in the config.':
+    'Bilinmeyen agent "{id}". Bilinenler: {known}. Kendi ACP agent\'ınızı config\'de "agentClis.custom" altına ekleyin.',
+  '{agent} is not turned on: add "{id}" to "agentClis.enabled" in {file}, or choose it with --provider {provider}.':
+    '{agent} açık değil: {file} dosyasında "agentClis.enabled" listesine "{id}" ekleyin ya da --provider {provider} ile seçin.',
+  '{agent} uses the model set in its own settings; Orka does not choose one for it. Leave out the model for {provider}.':
+    '{agent} kendi ayarlarındaki modeli kullanır; Orka onun yerine model seçmez. {provider} için model belirtmeyin.',
+  '{agent} uses the model set in its own settings. To switch to a model, name its provider: /model <provider>:<model>.':
+    '{agent} kendi ayarlarındaki modeli kullanır. Bir modele geçmek için provider\'ını da yazın: /model <provider>:<model>.',
+  '{agent} needs command snapshots, so every file it changes can be reviewed and reverted: remove "trackCommandChanges": false from {file}.':
+    '{agent} komut snapshot\'larına ihtiyaç duyar; böylece değiştirdiği her dosya incelenip geri alınabilir: {file} dosyasından "trackCommandChanges": false ayarını kaldırın.',
+  '{agent} needs git: Orka snapshots the folder with it, so every file the agent changes can be reviewed and reverted. Install git and try again.':
+    "{agent} git gerektirir: Orka klasörün snapshot'ını git ile alır; böylece agent'ın değiştirdiği her dosya incelenip geri alınabilir. git'i kurup tekrar deneyin.",
+  'Fix or remove its entry in "agentClis.paths" in {file}.': '{file} dosyasında "agentClis.paths" altındaki kaydını düzeltin ya da kaldırın.',
+  'Check its "command" in "agentClis.custom" in {file}.': '{file} dosyasında "agentClis.custom" altındaki "command" değerini kontrol edin.',
+  'If it is installed somewhere else, set its path in "agentClis.paths" in {file}.': 'Başka bir yerde kuruluysa yolunu {file} dosyasında "agentClis.paths" altına yazın.',
+  'No Supervisor in this session: next to an agent CLI it needs a model provider of its own. Choose one with --supervisor <provider[:model]> or "supervisor": { "provider": ... } in the config.':
+    'Bu oturumda Supervisor yok: bir agent CLI\'ın yanında kendi model provider\'ı gerekir. --supervisor <provider[:model]> ile ya da config\'de "supervisor": { "provider": ... } ile seçin.',
+  'Agent CLIs (agent mode): orka --provider agent:<id>': "Agent CLI'lar (agent modu): orka --provider agent:<id>",
+  'Orka runs the agent you installed and signed in to with its own login. It never reads or stores that sign-in, never downloads an agent and never turns on an approve-everything mode.':
+    "Orka, kurduğunuz ve kendi girişiyle oturum açtığınız agent'ı çalıştırır. Bu oturum bilgilerini asla okumaz ya da saklamaz, hiçbir agent'ı indirmez ve her şeyi onaylayan bir modu asla açmaz.",
+  'check failed: {detail}': 'kontrol başarısız: {detail}',
+  'your own ACP agent': "kendi ACP agent'ınız",
+  'public preview': 'herkese açık önizleme',
+  'turned on': 'açık',
+  'Runs: {command}': 'Çalıştırılan: {command}',
+  'Install: {command}': 'Kurulum: {command}',
+  'Sign in: run "{command}" in a terminal': 'Giriş: bir terminalde "{command}" çalıştırın',
+  'Terms: {url}': 'Koşullar: {url}',
+  'Docs: {url}': 'Belgeler: {url}',
+  'Not in the catalog': 'Katalogda olmayanlar',
+  '--provider agent:<id> runs any agent above; "provider" in {file} may only name the ones in "agentClis.enabled". More: {url}':
+    '--provider agent:<id> yukarıdaki her agent\'ı çalıştırır; {file} içindeki "provider" yalnızca "agentClis.enabled" listesindekileri seçebilir. Ayrıntılar: {url}',
+  'Agent CLIs turned on': "Açık agent CLI'lar",
+  'token use not reported': 'token kullanımı bildirilmiyor',
+
   // Desktop IDE layout: sessions, side panel, appearance
   'New session': 'Yeni oturum',
   'New session in {folder}': '{folder} içinde yeni oturum',

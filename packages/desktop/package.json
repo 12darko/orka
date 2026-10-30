@@ -1,6 +1,6 @@
 {
   "name": "orka-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Orka as a desktop app: the same chat UI and agents as the VS Code extension, in its own window.",
   "license": "MIT",

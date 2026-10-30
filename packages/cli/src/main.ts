@@ -4,6 +4,10 @@ import { closeSync, existsSync, fstatSync, openSync, readFileSync, statSync } fr
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 import {
+  AcpAgentPool,
+  agentLaunchSpec,
+  agentPolicy,
+  checkAgentCli,
   copyToClipboard,
   createProvider,
   DEFAULT_SUBAGENTS,
@@ -11,8 +15,14 @@ import {
   findExecutable,
   Handoff,
   handoffBrief,
+  installHint,
+  NOT_IN_CATALOG,
+  pooledAgent,
+  resolveAgentExecutable,
   userRequests,
+  type AgentCliEntry,
   type ExternalAgent,
+  type ExternalAgentRuntime,
   FileTaskStore,
   getLocale,
   loadSkills,
@@ -39,7 +49,24 @@ import {
   type TaskSnapshot,
 } from '@orka/core';
 import { HELP, HELP_TR, parseArgs, type CliArgs } from './args';
-import { CONFIG_FILE, defaultProvider, isProviderKind, loadConfig, ORKA_HOME, parseChoice, providerConfig, type AgentChoice, type OrkaConfig } from './config';
+import {
+  AGENT_PREFIX,
+  agentPath,
+  CONFIG_FILE,
+  configuredAgents,
+  defaultProvider,
+  enabledAgents,
+  isAgentProvider,
+  isProviderKind,
+  loadConfig,
+  ORKA_HOME,
+  parseChoice,
+  providerConfig,
+  resolveAgent,
+  type AgentChoice,
+  type AgentSelection,
+  type OrkaConfig,
+} from './config';
 import { Approver, colorDiff, formatTokens, question, Renderer, style, type Style } from './terminal';
 import { startUpdateCheck } from './updateNotice';
 
@@ -60,19 +87,25 @@ class Session {
   readonly snapshots: ShadowGit;
   skills: Skill[] = [];
   main: AgentChoice;
+  /** Agent mode: the agent CLI that is the main agent ("agent:<id>"), else undefined. */
+  agent?: AgentSelection;
   private providers = new Map<string, AIProvider>();
+  /** This session's agent CLI processes, kept running between requests and stopped on exit. */
+  private readonly agentProcesses = new AcpAgentPool();
   private mcp?: McpManager;
   private task = { id: newTaskId(), createdAt: new Date().toISOString(), title: '' };
 
   constructor(
     readonly root: string,
-    private readonly config: OrkaConfig,
+    readonly config: OrkaConfig,
     main: AgentChoice,
+    agent: AgentSelection | undefined,
     private readonly supervisorChoice: AgentChoice | undefined,
     mode: PermissionMode,
     approver: Approver,
   ) {
     this.main = main;
+    this.agent = agent;
     this.host = new NodeHost({ workspaceRoot: root, editorName: `Orka CLI ${VERSION}`, approve: (r) => approver.approve(r), browserPath: config.browserPath });
     this.permissions = new PermissionManager(mode);
     const key = createHash('sha1').update(path.resolve(root).toLowerCase()).digest('hex').slice(0, 12);
@@ -99,7 +132,29 @@ class Session {
       getFallbackProvider: () => (config.fallback ? this.provider('fallback', config.fallback) : undefined),
       commandSnapshots: config.trackCommandChanges === false ? undefined : this.snapshots,
       getExtraTools: this.mcp ? () => this.mcp!.tools() : undefined,
+      getExternalAgent: () => this.externalAgent(),
     });
+  }
+
+  /** Switch the main agent: a model, or (with its selection) an agent CLI. */
+  setMain(choice: AgentChoice, agent?: AgentSelection): void {
+    this.main = choice;
+    this.agent = agent;
+  }
+
+  /** The main agent as the user sees it: "claude:claude-opus-5-5" or "Gemini CLI (agent:gemini)". */
+  get mainLabel(): string {
+    if (this.agent) return `${this.agent.entry.label} (${this.main.provider})`;
+    return `${this.main.provider}${this.main.model ? `:${this.main.model}` : ''}`;
+  }
+
+  /**
+   * Agent mode: the agent CLI for the next request, started from this session's pool. Throws a
+   * user-facing error (with the install command) when its program cannot be found.
+   */
+  private externalAgent(): ExternalAgentRuntime | undefined {
+    if (!this.agent) return undefined;
+    return pooledAgent(this.agentProcesses, agentLaunchSpec(this.agent.entry, this.root, this.agent.path));
   }
 
   private settings(): OrchestratorSettings {
@@ -191,6 +246,7 @@ class Session {
 
   dispose(): void {
     this.orchestrator.dispose();
+    this.agentProcesses.dispose();
     this.mcp?.dispose();
     this.host.stopAllProcesses();
     for (const provider of this.providers.values()) provider.dispose?.();
@@ -292,6 +348,92 @@ async function handOff(session: Session, agent: ExternalAgent, text: string, rl:
   out(s.dim(t('/diff shows them, /undo reverts them.')));
 }
 
+// ---------------------------------------------------------------- agent CLIs (agent mode)
+
+const AGENTS_DOC = 'https://github.com/Enophia-Studio/orka/blob/main/docs/EXTERNAL_AGENTS.md';
+
+/**
+ * Agent mode: the agent CLI named by "agent:<id>", checked before the session starts. It must be
+ * known (and turned on, when the config chose it) and installed, and the folder must be
+ * snapshotted, so every file it changes, also with its own tools, can be reviewed and reverted.
+ */
+function agentMainAgent(provider: string, model: string | undefined, config: OrkaConfig, fromCommandLine: boolean): AgentSelection | { error: string } {
+  const agent = resolveAgent(provider, config, fromCommandLine);
+  if ('error' in agent) return agent;
+  const { entry } = agent;
+  if (model) return { error: t('{agent} uses the model set in its own settings; Orka does not choose one for it. Leave out the model for {provider}.', { agent: entry.label, provider }) };
+  if (!resolveAgentExecutable(entry, agent.path)) return { error: notInstalled(entry, agent.path) };
+  if (config.trackCommandChanges === false) {
+    return { error: t('{agent} needs command snapshots, so every file it changes can be reviewed and reverted: remove "trackCommandChanges": false from {file}.', { agent: entry.label, file: CONFIG_FILE }) };
+  }
+  if (!findExecutable('git')) {
+    return { error: t('{agent} needs git: Orka snapshots the folder with it, so every file the agent changes can be reviewed and reverted. Install git and try again.', { agent: entry.label }) };
+  }
+  return agent;
+}
+
+/** Why the agent's program cannot be started, and what to do: core's install command, or the path to fix. */
+function notInstalled(entry: AgentCliEntry, overridePath: string | undefined): string {
+  if (overridePath) {
+    return `${t('{agent} was not found at "{path}".', { agent: entry.label, path: overridePath })}\n${t('Fix or remove its entry in "agentClis.paths" in {file}.', { file: CONFIG_FILE })}`;
+  }
+  if (!entry.installHint) {
+    return `${t('{agent} was not found at "{path}".', { agent: entry.label, path: entry.bin })}\n${t('Check its "command" in "agentClis.custom" in {file}.', { file: CONFIG_FILE })}`;
+  }
+  return `${t('{agent} is not installed. Install it with: {command}', { agent: entry.label, command: installHint(entry) })}\n${t('If it is installed somewhere else, set its path in "agentClis.paths" in {file}.', { file: CONFIG_FILE })}`;
+}
+
+/** `orka agents [id]`: the agent CLIs Orka can run as the main agent, with their status, terms and install commands. */
+async function printAgents(filter: string | undefined, config: OrkaConfig, s: Style): Promise<number> {
+  const out = (line = '') => io.stdout.write(`${line}\n`);
+  const { agents, problems } = configuredAgents(config);
+  const id = filter?.startsWith(AGENT_PREFIX) ? filter.slice(AGENT_PREFIX.length) : filter;
+  const shown = id ? agents.filter((a) => a.id === id) : agents;
+  if (!shown.length) {
+    const unknown = resolveAgent(`${AGENT_PREFIX}${id}`, config, true);
+    io.stderr.write(`orka: ${'error' in unknown ? unknown.error : id}\n`);
+    return 1;
+  }
+  const enabled = enabledAgents(config);
+  // Runs only each program's version flag; whether it is signed in shows on the first request.
+  const statuses = await Promise.all(shown.map((entry) => checkAgentCli(entry, agentPath(config, entry.id))));
+  const quote = (arg: string) => (/\s/.test(arg) ? `"${arg}"` : arg);
+  out(s.bold(t('Agent CLIs (agent mode): orka --provider agent:<id>')));
+  out(s.dim(t('Orka runs the agent you installed and signed in to with its own login. It never reads or stores that sign-in, never downloads an agent and never turns on an approve-everything mode.')));
+  for (const [i, entry] of shown.entries()) {
+    const status = statuses[i];
+    const policy = agentPolicy(entry.policy);
+    const state =
+      status.state === 'ready'
+        ? s.green(`${t('installed')}${status.version ? ` ${status.version}` : ''}`)
+        : status.state === 'not_found'
+          ? s.yellow(t('not installed'))
+          : s.red(t('check failed: {detail}', { detail: status.detail ?? '?' }));
+    const about = [entry.label, entry.kind === 'custom' ? t('your own ACP agent') : entry.vendor, policy?.preview ? t('public preview') : ''].filter(Boolean).join(' · ');
+    out();
+    out(`${s.cyan(entry.id.padEnd(16))} ${about}  ·  ${state}${enabled.has(entry.id) ? `  ·  ${t('turned on')}` : ''}`);
+    if (policy?.note) out(`  ${t(policy.note)}`);
+    out(s.dim(`  ${t('Runs: {command}', { command: [status.executable ?? entry.bin, ...entry.acpArgs].map(quote).join(' ') })}`));
+    const setup = [
+      entry.installHint ? t('Install: {command}', { command: installHint(entry) }) : '',
+      entry.loginCommand ? t('Sign in: run "{command}" in a terminal', { command: entry.loginCommand }) : '',
+    ].filter(Boolean);
+    if (setup.length) out(s.dim(`  ${setup.join('  ·  ')}`));
+    const links = [policy?.termsUrl ? t('Terms: {url}', { url: policy.termsUrl }) : '', entry.docsUrl ? t('Docs: {url}', { url: entry.docsUrl }) : ''].filter(Boolean);
+    if (links.length) out(s.dim(`  ${links.join('  ·  ')}`));
+  }
+  if (!id) {
+    out();
+    out(s.bold(t('Not in the catalog')));
+    for (const excluded of NOT_IN_CATALOG) out(`  ${excluded.id.padEnd(18)} ${s.dim(t(excluded.reason))}`);
+  }
+  if (problems.length) out();
+  for (const problem of problems) out(s.yellow(`! ${problem}`));
+  out();
+  out(s.dim(t('--provider agent:<id> runs any agent above; "provider" in {file} may only name the ones in "agentClis.enabled". More: {url}', { file: CONFIG_FILE, url: AGENTS_DOC })));
+  return 0;
+}
+
 // ---------------------------------------------------------------- commands
 
 function printModels(provider: string | undefined, s: Style): number {
@@ -321,6 +463,7 @@ function printConfig(config: OrkaConfig, error: string | undefined, s: Style): n
   if (error) out(s.red(error));
   const main = defaultProvider(config);
   out(`${t('Provider')}: ${main ?? s.yellow(t('none found'))}${config.model ? ` (${config.model})` : ''}`);
+  out(`${t('Agent CLIs turned on')}: ${[...enabledAgents(config)].join(', ') || '-'} ${s.dim('(orka agents)')}`);
   const keys = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', ...(config.custom ?? []).map((c) => c.apiKeyEnv).filter((k): k is string => !!k)];
   out(`${t('API keys in the environment')}: ${keys.filter((k) => process.env[k]?.trim()).join(', ') || '-'}`);
   out(`${t('Skills')}: ${path.join(ORKA_HOME, 'skills')}`);
@@ -339,6 +482,7 @@ function printConfig(config: OrkaConfig, error: string | undefined, s: Style): n
           fallback: { provider: 'gemini', model: 'gemini-3.8-flash' },
           custom: [{ id: 'ollama', label: 'Ollama', baseURL: 'http://localhost:11434/v1', model: 'qwen3-coder' }],
           claudeCode: { enabled: false },
+          agentClis: { enabled: ['gemini'], paths: {}, custom: [] },
         },
         null,
         2,
@@ -441,13 +585,20 @@ async function slash(line: string, session: Session, rl: readline.Interface | un
       out(`${t('Mode')}: ${session.permissions.getMode()}`);
       return 'handled';
     case 'model': {
-      if (arg) {
+      if (isAgentProvider(arg)) {
+        // An agent CLI as the main agent from the next request on; the task goes on with a summary.
+        const agent = agentMainAgent(arg, undefined, session.config, true);
+        if ('error' in agent) out(s.red(agent.error));
+        else session.setMain({ provider: arg }, agent);
+      } else if (arg && !arg.includes(':') && session.agent) {
+        out(s.red(t('{agent} uses the model set in its own settings. To switch to a model, name its provider: /model <provider>:<model>.', { agent: session.agent.entry.label })));
+      } else if (arg) {
         const choice = arg.includes(':') ? parseChoice(arg) : { provider: session.main.provider, model: arg };
         const config = providerConfig(choice, loadConfig().config);
         if ('error' in config) out(s.red(config.error));
-        else session.main = choice;
+        else session.setMain(choice);
       }
-      out(`${t('Model')}: ${session.main.provider}${session.main.model ? `:${session.main.model}` : ''}`);
+      out(`${t('Model')}: ${session.mainLabel}`);
       return 'handled';
     }
     case 'usage': {
@@ -455,7 +606,9 @@ async function slash(line: string, session: Session, rl: readline.Interface | un
       if (!rows.length) out(s.dim(t('No tokens used in this task yet.')));
       for (const r of rows) {
         const u = r.usage;
-        out(`  ${r.agent.padEnd(12)} ${`${r.provider}:${r.model}`.padEnd(34)} ${formatTokens(u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens).padStart(7)} in ${formatTokens(u.outputTokens).padStart(7)} out  ${s.dim(`${r.calls}×`)}`);
+        // An agent CLI does not report its tokens: its calls count, its tokens are not known.
+        const unreported = r.unreported ? `  ${s.dim(t('token use not reported'))}` : '';
+        out(`  ${r.agent.padEnd(12)} ${`${r.provider}:${r.model}`.padEnd(34)} ${formatTokens(u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens).padStart(7)} in ${formatTokens(u.outputTokens).padStart(7)} out  ${s.dim(`${r.calls}×`)}${unreported}`);
       }
       return 'handled';
     }
@@ -513,6 +666,7 @@ export async function main(argv: readonly string[], streams: CliIO = { stdin: pr
   if (args.command === 'models') return printModels(args.commandArg, s);
   if (args.command === 'config') return printConfig(config, configError, s);
   if (configError) io.stderr.write(`${s.yellow('!')} ${configError}\n`);
+  if (args.command === 'agents') return printAgents(args.commandArg, config, s);
 
   const root = path.resolve(args.cwd ?? process.cwd());
   if (!existsSync(root) || !statSync(root).isDirectory()) {
@@ -528,17 +682,33 @@ export async function main(argv: readonly string[], streams: CliIO = { stdin: pr
     return 2;
   }
   const main: AgentChoice = { provider: providerId, model: args.model ?? (args.provider && args.provider !== config.provider ? undefined : config.model) };
-  const check = providerConfig(main, config);
-  if ('error' in check) {
-    io.stderr.write(`orka: ${check.error}\n`);
-    return 2;
+  // Agent mode: an agent CLI is the main agent. Chosen on the command line it may be any known
+  // agent; chosen by the config's "provider" it must be turned on in "agentClis.enabled".
+  let agent: AgentSelection | undefined;
+  if (isAgentProvider(main.provider)) {
+    const selected = agentMainAgent(main.provider, main.model, config, args.provider !== undefined);
+    if ('error' in selected) {
+      io.stderr.write(`orka: ${selected.error}\n`);
+      return 2;
+    }
+    agent = selected;
+  } else {
+    const check = providerConfig(main, config);
+    if ('error' in check) {
+      io.stderr.write(`orka: ${check.error}\n`);
+      return 2;
+    }
   }
   const supervisorEnabled = args.supervisor !== false && (typeof args.supervisor === 'string' || config.supervisor?.enabled !== false);
+  // The Supervisor is a model: next to an agent CLI it needs a provider of its own.
+  const supervisorProvider = config.supervisor?.provider ?? (agent ? undefined : main.provider);
   const supervisor: AgentChoice | undefined = !supervisorEnabled
     ? undefined
     : typeof args.supervisor === 'string'
       ? parseChoice(args.supervisor)
-      : { provider: config.supervisor?.provider ?? main.provider, model: config.supervisor?.model ?? (config.supervisor?.provider ? undefined : main.model) };
+      : supervisorProvider
+        ? { provider: supervisorProvider, model: config.supervisor?.model ?? (config.supervisor?.provider ? undefined : main.model) }
+        : undefined;
   if (supervisor) {
     const sup = providerConfig(supervisor, config);
     if ('error' in sup) {
@@ -553,7 +723,7 @@ export async function main(argv: readonly string[], streams: CliIO = { stdin: pr
   const info = print ? (text: string) => io.stderr.write(text) : out;
   const rl = interactive ? readline.createInterface({ input: io.stdin, output: io.stdout, terminal: true, historySize: 500 }) : undefined;
   const approver = new Approver(rl, info, s);
-  const session = new Session(root, config, main, supervisor, args.mode ?? config.mode ?? 'balanced', approver);
+  const session = new Session(root, config, main, agent, supervisor, args.mode ?? config.mode ?? 'balanced', approver);
   const renderer = new Renderer(out, info, print ? style(!!io.stderr.isTTY && !process.env.NO_COLOR) : s);
   session.orchestrator.on((event) => renderer.handle(event));
   const skillErrors = await session.loadSkills();
@@ -590,16 +760,29 @@ export async function main(argv: readonly string[], streams: CliIO = { stdin: pr
       rl.prompt(true);
     }
   });
-  if (!rl) process.on('SIGINT', () => (running ? session.orchestrator.stop() : process.exit(130)));
+  if (!rl) {
+    process.on('SIGINT', () => {
+      if (running) return session.orchestrator.stop();
+      // Agent CLI and MCP processes stop with Orka.
+      session.dispose();
+      process.exit(130);
+    });
+  }
 
   try {
     if (!print) {
-      const label = `${main.provider}${main.model ? ` (${main.model})` : ''}`;
+      const label = agent ? session.mainLabel : `${main.provider}${main.model ? ` (${main.model})` : ''}`;
       out(`${s.bold(s.cyan('Orka'))} ${s.dim(VERSION)}  ·  ${label}  ·  ${session.permissions.getMode()}${supervisor ? `  ·  ${t('Supervisor')}: ${supervisor.provider}${supervisor.model ? ` (${supervisor.model})` : ''}` : ''}\n`);
       out(s.dim(`${root}\n${t('/help for commands · @file attaches · Ctrl+C stops')}\n`));
+      // The terms the agent runs under, every time it starts.
+      const note = agent && agentPolicy(agent.entry.policy)?.note;
+      if (note) out(s.dim(`${t(note)}\n`));
       // A newer release found by an earlier start's background check; today's check (if due) runs in the background.
       const update = startUpdateCheck({ config, stdoutIsTTY: !!io.stdout.isTTY, print });
       if (update) out(`${s.yellow(update)}\n`);
+    }
+    if (agent && supervisorEnabled && !supervisor) {
+      info(s.dim(`${t('No Supervisor in this session: next to an agent CLI it needs a model provider of its own. Choose one with --supervisor <provider[:model]> or "supervisor": { "provider": ... } in the config.')}\n`));
     }
     if (args.resume) {
       const task = await session.resume();

@@ -20,7 +20,7 @@
   "command.selectWorkspaceFolder": "Çalışma Klasörünü Seç",
   "view.chat": "Agent",
   "config.title": "Orka",
-  "config.provider": "Ana agent'ın provider'ı: claude, openai, gemini, claude-code veya Ayarlar > Provider'lar bölümünden eklenen bir provider için custom:<id>.",
+  "config.provider": "Ana agent'ın provider'ı: claude, openai, gemini, claude-code, Ayarlar > Provider'lar bölümünden eklenen bir provider için custom:<id> ya da kurduğunuz bir agent CLI'ı ana agent yapmak için agent:<id> (gemini, codex, copilot, cursor, custom:<ad>; orka.agentClis.enabled ile açın).",
   "config.claude.model": "Claude model sürümü, ör. claude-opus-5-5 (Opus 5.5), claude-sonnet-5-5, claude-haiku-4-5. Tüm sürümleri görmek için Ayarlar > Provider'lar bölümünden seçin.",
   "config.claude.effort": "Claude effort seviyesi: model her adımda ne kadar düşünür (kaliteyi gecikme ve maliyete karşı dengeler).",
   "config.claude.refusalFallback": "Bir Claude güvenlik sınıflandırıcısı isteği reddederse, durmak yerine API'nin isteği Anthropic'in önerdiği yedek modelde tekrar denemesine izin ver (sunucu tarafı fallback, beta).",
@@ -102,5 +102,11 @@
   "command.handoffFreebuff": "Freebuff'ta Devam Et (ücretsiz terminal agent'ı)",
   "config.memory.learn": "Kod değiştiren bir görevden sonra agent'tan proje hakkında en fazla 3 kalıcı ders (çalışan komutlar, tuzaklar, kurallar) iste ve yenilerini .project-ai/lessons.md dosyasına ekle. Yalnızca .project-ai/ klasörü olan projelerde (Orka: Proje Hafızasını Başlat).",
   "config.updates.check": "Günde bir kez GitHub'da daha yeni bir Orka sürümü olup olmadığına bak ve varsa söyle (hiçbir şey indirilmez ya da kurulmaz). GitHub IP adresinizi ve Orka'nın sürümünü görür; projenizle ilgili hiçbir şeyi görmez.",
-  "config.subagents.parallelWorkers": "Birlikte çağrılan worker'lar yan yana, her biri projenin kendi kopyasında çalışır (bağımlılık klasörleri olmadan; düzenler ama derlemez); değişiklikleri sonra projeye birleştirilir, çakışan düzenlemeler ana agent'a bildirilir. git ve orka.trackCommandChanges gerekir. Kapalı: worker'lar projede tek tek çalışır."
+  "config.subagents.parallelWorkers": "Birlikte çağrılan worker'lar yan yana, her biri projenin kendi kopyasında çalışır (bağımlılık klasörleri olmadan; düzenler ama derlemez); değişiklikleri sonra projeye birleştirilir, çakışan düzenlemeler ana agent'a bildirilir. git ve orka.trackCommandChanges gerekir. Kapalı: worker'lar projede tek tek çalışır.",
+  "config.agentClis.enabled": "Agent modu için açtığınız agent CLI'lar: `gemini`, `codex`, `copilot`, `cursor` ya da `#orka.agentClis.custom#` içindeki bir agent için `custom:<ad>`. Yalnızca bunlar ana agent olabilir (`#orka.provider#` içinde `agent:<id>`). Orka, kurduğunuz ve kendi girişiyle oturum açtığınız programı çalıştırır ve bu oturum bilgilerini asla okumaz. Bir agent'ı yalnızca kullanıcı ayarlarınız açabilir. Bkz. docs/EXTERNAL_AGENTS.md.",
+  "config.agentClis.paths": "PATH'te değilse, agent id'sine göre agent CLI'ın çalıştırılabilir dosyası, ör. `{ \"gemini\": \"C:\\\\tools\\\\gemini.cmd\" }`. Makine ayarıdır: bir deponun ayarları bunu değiştiremez.",
+  "config.agentClis.custom": "Sorumluluğu size ait olmak üzere kendi eklediğiniz ACP agent'ları: bir ad ve agent'ın ACP sunucusunu stdio üzerinde başlatan komut satırının tam hâli, ör. `{ \"name\": \"My agent\", \"command\": \"my-agent\", \"args\": [\"--acp\"] }`. Id'si `custom:` ile adın küçük harfli, tireli hâlidir (`custom:my-agent`). Orka tam olarak bu komutu çalıştırır ve hiçbir şey indirmez; kullanımınızın o agent'ın koşullarına uygun olduğundan emin olun. Makine ayarıdır: bir deponun ayarları bunu değiştiremez.",
+  "config.agentClis.custom.name": "Orka'da gösterilir; agent'ın id'sini de belirler (custom:<ad>).",
+  "config.agentClis.custom.command": "Başlatılacak program: PATH'teki bir ad ya da tam yol.",
+  "config.agentClis.custom.args": "Agent'ın ACP sunucusunu stdio üzerinde başlatan argümanlar, ör. [\"--acp\"]."
 }

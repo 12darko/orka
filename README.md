@@ -33,6 +33,7 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 - [Quick start](#quick-start)
 - [Agents](#agents)
 - [Providers](#providers)
+  - [Agent CLIs (agent mode)](#agent-clis-agent-mode)
 - [Permissions and safety](#permissions-and-safety)
 - [Reviewing changes](#reviewing-changes)
 - [Hooks](#hooks)
@@ -66,7 +67,7 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 **VS Code extension (quickest):** download `orka-vscode-<version>.vsix` from the [latest release](https://github.com/Enophia-Studio/orka/releases/latest), then run **Extensions: Install from VSIX…** in VS Code (1.101 or newer), or:
 
 ```bash
-code --install-extension orka-vscode-0.2.0.vsix
+code --install-extension orka-vscode-0.3.0.vsix
 ```
 
 **Desktop app for Windows:** download `orka-desktop.exe` from the same release and run it; it needs no Node.js, only Edge or Chrome for its window. Only the Orka window opens; closing it quits Orka. If it does not start, the reason is in `~/.orka/desktop/desktop.log`. The file is not code-signed yet, so Windows SmartScreen may ask you to confirm the first start (**More info → Run anyway**), and on PCs where Windows' Smart App Control is on, it is blocked; use the CLI or run it from source there.
@@ -74,7 +75,7 @@ code --install-extension orka-vscode-0.2.0.vsix
 **CLI:** with **Node.js 22+**, install the `orka` command from the release (it is not on npm yet):
 
 ```bash
-npm install -g https://github.com/Enophia-Studio/orka/releases/download/v0.2.0/orka-agent-0.2.0.tgz
+npm install -g https://github.com/Enophia-Studio/orka/releases/download/v0.3.0/orka-agent-0.3.0.tgz
 ```
 
 The extension, the desktop app and the CLI package each include a `THIRD_PARTY_NOTICES.txt` with the licenses of the open-source software inside them.
@@ -97,7 +98,7 @@ npm run package
 ```
 
 ```bash
-code --install-extension packages/vscode-extension/dist/orka-vscode-0.2.0.vsix
+code --install-extension packages/vscode-extension/dist/orka-vscode-0.3.0.vsix
 ```
 
 **Desktop app** — run it, or build the single executable yourself (`packages/desktop/dist/orka-desktop.exe`, or `orka-desktop` on Linux):
@@ -169,6 +170,7 @@ Other modes: *On changes* (every file, command or plan step), *Every step* and *
 | **Gemini API** | API key / `GEMINI_API_KEY` | Official `@google/genai` SDK; thought signatures are preserved |
 | **Added providers** | API key or none | **Settings → Providers → Add a provider**: OpenRouter, DeepSeek, xAI (Grok), Mistral, Groq, Together AI, Ollama, LM Studio, or any OpenAI-compatible URL |
 | **Claude Code (local)** | Your Claude Code login | Optional and off by default, see below |
+| **Agent CLIs** | The agent's own login | Gemini CLI, Codex, GitHub Copilot CLI or Cursor CLI as the main agent, see [agent mode](#agent-clis-agent-mode) |
 
 Model pickers group versions by family (e.g. **Opus** 5.5, 5, 4.8 · **GPT-6** Astra, Sol, Luna · **Gemini Flash** 3.8, 3.7, ...). **Load list** fetches the provider's own model list; models Orka does not know yet are added to the right family and marked "new". Lists are refreshed once a day in the background, and **Other…** lets you type any model id. The built-in catalog lives in `packages/core/src/providers/catalog.ts`.
 
@@ -183,6 +185,12 @@ Orka can use the locally installed [Claude Code](https://code.claude.com/docs) C
 > **Please read:** Orka is not affiliated with or endorsed by Anthropic. This option runs *your own* Claude Code login, and it is your responsibility to make sure your use follows [Anthropic's terms](https://www.anthropic.com/legal). Subscription plans are meant for Claude Code itself; for teams, products or anything beyond personal use, connect with a Claude API key.
 
 How it works: each conversation opens one `claude -p --input-format stream-json` process. The CLI's own tools, MCP servers and settings are turned off, and Orka's tools are used through a text protocol. Tool results the model makes up are discarded, and a malformed tool call is sent back once to be rewritten. Updating the CLI automatically (`orka.claudeCode.autoUpdate`) is also off by default.
+
+### Agent CLIs (agent mode)
+
+A coding agent CLI you installed and signed in to yourself can be the main agent: **Gemini CLI**, **Codex** (through `codex-acp`), **GitHub Copilot CLI**, **Cursor CLI**, or an ACP agent you add on your own responsibility. Orka runs it over the [Agent Client Protocol](https://agentclientprotocol.com) and keeps its safety net around it: Orka's permission rules answer the agent's permission requests, its file access stays inside the workspace, every file it changes (also with its own tools) shows up in Changes and can be reverted, and the Supervisor reviews the final result. The agent brings its own model and context, so the light model, fallback, compaction and lessons are off in agent mode, and its token use is not reported.
+
+Orka never reads, stores or forwards an agent's sign-in, only runs the unmodified program you installed, never downloads one and never turns on an "approve everything" mode. Turn an agent on in `orka.agentClis.enabled` and choose it with `orka.provider` set to `agent:<id>` (CLI: `orka --provider agent:gemini`; `orka agents` lists them); agent mode needs git for its snapshots. Supported agents, their terms, what Orka keeps doing and how to add your own: **[docs/EXTERNAL_AGENTS.md](docs/EXTERNAL_AGENTS.md)**.
 
 ## Permissions and safety
 
@@ -287,7 +295,8 @@ The same core in the terminal: chat, Supervisor, sub-agents, Skills, MCP, permis
 
 - `orka` starts a session; `orka "fix the login bug"` starts with a request.
 - `orka -p "explain main.ts"` answers one request and exits; the reply goes to stdout and progress to stderr, so it works in scripts.
-- `orka -c` continues the last task in this folder; `orka models`, `orka config`.
+- `orka -c` continues the last task in this folder; `orka models`, `orka agents`, `orka config`.
+- `orka --provider agent:gemini` makes an agent CLI the main agent ([agent mode](#agent-clis-agent-mode)).
 - Options: `--provider`, `-m/--model`, `--mode ask|balanced|autonomous`, `-y` (autonomous), `--supervisor claude:claude-sonnet-5-5`, `--no-supervisor`, `-C <folder>`, `--lang en|tr`.
 - In a session: `/help`, `/new`, `/diff`, `/undo`, `/rewind [n]`, `/compact`, `/mode`, `/model`, `/usage`, `/skills`, `/<skill> <request>`, `/freebuff`, `/exit`; `@file` attaches a file or image; Ctrl+C stops the running request.
 - Approvals are asked in the terminal (`y` yes · `a` always · `n` no · `d` diff · or type what to do instead). Without a terminal (piped input), anything that needs approval is **declined**, never approved silently.

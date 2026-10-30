@@ -1,7 +1,7 @@
 {
   "name": "orka",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Orka - AI core, chat UI, VS Code extension, CLI and desktop app",
   "license": "MIT",
   "author": "Enophia Software",

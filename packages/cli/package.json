@@ -1,6 +1,6 @@
 {
   "name": "orka-agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Orka in the terminal: the AI coding orchestrator of the VS Code extension, as a command-line app.",
   "keywords": [
     "ai",

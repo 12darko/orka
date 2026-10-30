@@ -2,9 +2,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 import {
+  AGENT_CLIS,
+  customAgentEntry,
   PROVIDERS,
   resolveClaudeExecutable,
+  t,
+  type AgentCliEntry,
   type ClaudeEffort,
+  type CustomAgentDefinition,
   type McpServerConfig,
   type PermissionMode,
   type ProviderConfig,
@@ -54,6 +59,18 @@ export interface OrkaConfig {
    * own Claude Code login, which is theirs to use within Anthropic's terms.
    */
   claudeCode?: { enabled?: boolean; executable?: string; effort?: ClaudeEffort };
+  /**
+   * Agent mode: a coding agent CLI the user installed and signed in to (Gemini CLI, Codex, ...)
+   * runs as the main agent over ACP ("provider": "agent:<id>"). See docs/EXTERNAL_AGENTS.md.
+   */
+  agentClis?: {
+    /** Agent ids turned on ("gemini", "custom:my-agent"); a "provider" in this file may only name one of these. */
+    enabled?: string[];
+    /** The executable per agent id, when it is not on PATH. */
+    paths?: Record<string, string>;
+    /** ACP agents the user added: a name and the exact command line that starts the agent's ACP server. */
+    custom?: Array<{ name: string; command: string; args?: string[] }>;
+  };
   mcpServers?: Record<string, McpServerConfig>;
   skills?: { enabled?: boolean; disabled?: string[] };
   /** Snapshot the files terminal commands change, so /undo covers them too (needs git). */
@@ -126,6 +143,9 @@ export function defaultProvider(config: OrkaConfig, env: NodeJS.ProcessEnv = pro
 
 /** Everything needed to create a provider, with the key read from the environment. */
 export function providerConfig(choice: AgentChoice, config: OrkaConfig, env: NodeJS.ProcessEnv = process.env): ProviderConfig | { error: string } {
+  if (isAgentProvider(choice.provider)) {
+    return { error: t('{provider} is an agent CLI: it can only be the main agent, not the Supervisor, the light model, the fallback or a sub-agent.', { provider: choice.provider }) };
+  }
   const model = choice.model?.trim() || undefined;
   if (isProviderKind(choice.provider)) {
     const kind = choice.provider;
@@ -147,8 +167,93 @@ export function providerConfig(choice: AgentChoice, config: OrkaConfig, env: Nod
   return { kind: 'custom', id: custom.id, label: custom.label ?? custom.id, baseURL: custom.baseURL, apiKey, model: model ?? custom.model };
 }
 
-/** "claude-code:opus" -> { provider: "claude-code", model: "opus" }. */
+/** "claude-code:opus" -> { provider: "claude-code", model: "opus" }; "agent:custom:x" stays whole (an agent picks its own model). */
 export function parseChoice(value: string): AgentChoice {
+  if (isAgentProvider(value)) return { provider: value };
   const at = value.indexOf(':');
   return at > 0 ? { provider: value.slice(0, at), model: value.slice(at + 1) || undefined } : { provider: value };
+}
+
+// ---------------------------------------------------------------- agent CLIs (agent mode)
+
+/** A main agent "agent:<id>" is an agent CLI over ACP; <id> is a catalog id or "custom:<slug>". */
+export const AGENT_PREFIX = 'agent:';
+/** The <slug> of a custom agent's id, as the apps' settings allow it. */
+const CUSTOM_AGENT_SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
+export function isAgentProvider(id: string): boolean {
+  return id.startsWith(AGENT_PREFIX);
+}
+
+/** The agents this config knows (the catalog, then its custom agents), and what is wrong in its "agentClis" block. */
+export function configuredAgents(config: OrkaConfig): { agents: AgentCliEntry[]; problems: string[] } {
+  const agents: AgentCliEntry[] = [...AGENT_CLIS];
+  const problems: string[] = [];
+  const block: unknown = config.agentClis;
+  if (block !== undefined && (!block || typeof block !== 'object' || Array.isArray(block))) {
+    return { agents, problems: [t('"agentClis" must be an object with "enabled", "paths" and "custom".')] };
+  }
+  const custom: unknown = config.agentClis?.custom;
+  if (custom !== undefined && !Array.isArray(custom)) problems.push(t('"agentClis.custom" must be a list.'));
+  for (const item of Array.isArray(custom) ? (custom as unknown[]) : []) {
+    const definition = customDefinition(item);
+    if (!definition) {
+      problems.push(t('Skipped an entry of "agentClis.custom": it needs a "name" and a "command" ("args" is a list of strings).'));
+      continue;
+    }
+    const entry = customAgentEntry(definition);
+    if (!CUSTOM_AGENT_SLUG.test(entry.id.slice('custom:'.length))) {
+      problems.push(t('Skipped the custom agent "{name}": its id ({id}) may have at most 40 letters, digits and dashes.', { name: definition.name, id: entry.id }));
+    } else if (agents.some((a) => a.id === entry.id)) {
+      problems.push(t('Skipped the custom agent "{name}": another one already has the id {id}.', { name: definition.name, id: entry.id }));
+    } else {
+      agents.push(entry);
+    }
+  }
+  return { agents, problems };
+}
+
+function customDefinition(value: unknown): CustomAgentDefinition | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { name, command, args } = value as Record<string, unknown>;
+  if (typeof name !== 'string' || !name.trim() || typeof command !== 'string' || !command.trim()) return undefined;
+  if (args !== undefined && !(Array.isArray(args) && args.every((a) => typeof a === 'string'))) return undefined;
+  return { name, command, args: args as string[] | undefined };
+}
+
+/** The agent ids turned on in the config. */
+export function enabledAgents(config: OrkaConfig): Set<string> {
+  const enabled: unknown = config.agentClis?.enabled;
+  return new Set(Array.isArray(enabled) ? enabled.filter((id): id is string => typeof id === 'string') : []);
+}
+
+/** The executable the user set for an agent, if any. */
+export function agentPath(config: OrkaConfig, id: string): string | undefined {
+  const paths: unknown = config.agentClis?.paths;
+  if (!paths || typeof paths !== 'object' || !Object.prototype.hasOwnProperty.call(paths, id)) return undefined;
+  const value: unknown = (paths as Record<string, unknown>)[id];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+export interface AgentSelection {
+  entry: AgentCliEntry;
+  /** The user's path to its executable; without one it is looked up on PATH. */
+  path?: string;
+}
+
+/**
+ * The agent CLI behind "agent:<id>". Any known agent may be chosen on the command line; a
+ * "provider" from the config must also be turned on in "agentClis.enabled".
+ */
+export function resolveAgent(provider: string, config: OrkaConfig, fromCommandLine: boolean): AgentSelection | { error: string } {
+  const id = provider.slice(AGENT_PREFIX.length);
+  const { agents } = configuredAgents(config);
+  const entry = agents.find((a) => a.id === id);
+  if (!entry) {
+    return { error: t('Unknown agent "{id}". Known: {known}. Add your own ACP agent under "agentClis.custom" in the config.', { id, known: agents.map((a) => a.id).join(', ') }) };
+  }
+  if (!fromCommandLine && !enabledAgents(config).has(id)) {
+    return { error: t('{agent} is not turned on: add "{id}" to "agentClis.enabled" in {file}, or choose it with --provider {provider}.', { agent: entry.label, id, file: CONFIG_FILE, provider }) };
+  }
+  return { entry, path: agentPath(config, id) };
 }
