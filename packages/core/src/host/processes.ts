@@ -1,4 +1,5 @@
 import { type ChildProcess, spawnSync } from 'node:child_process';
+import { programPath } from './commands';
 
 const MAX_OUTPUT = 200_000;
 
@@ -67,7 +68,9 @@ export function killTree(pid: number | undefined): void {
   if (!pid) return;
   try {
     if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
+      const taskkill = programPath('taskkill.exe');
+      if (taskkill) spawnSync(taskkill, ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
+      else process.kill(pid, 'SIGKILL');
     } else {
       process.kill(-pid, 'SIGKILL');
     }

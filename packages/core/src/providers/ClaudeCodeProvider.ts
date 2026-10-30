@@ -1,7 +1,8 @@
-import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from 'node:child_process';
+import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import * as path from 'node:path';
+import { findExecutable } from '../host/commands';
 import { killTree } from '../host/processes';
 import { t } from '../i18n';
 import { addUsage, type AssistantMessage, type ChatMessage, type ImageBlock, type Usage } from '../types';
@@ -421,13 +422,11 @@ export function resolveClaudeExecutable(explicit?: string): string {
       candidates.push(path.join(process.env.APPDATA, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe'));
     }
     candidates.push(path.join(home, '.local', 'bin', 'claude.exe'));
-    const where = spawnSync('where', ['claude.exe'], { encoding: 'utf8', windowsHide: true });
-    if (where.status === 0) candidates.push(...where.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean));
   } else {
     candidates.push(path.join(home, '.local', 'bin', 'claude'), path.join(home, '.claude', 'local', 'claude'), '/usr/local/bin/claude', '/opt/homebrew/bin/claude');
-    const which = spawnSync('which', ['claude'], { encoding: 'utf8' });
-    if (which.status === 0) candidates.push(which.stdout.trim());
   }
+  // PATH only: "where" would also look in the current folder (the project, in the CLI).
+  candidates.push(findExecutable(process.platform === 'win32' ? 'claude.exe' : 'claude') ?? '');
   return candidates.find((c) => c && existsSync(c)) ?? '';
 }
 

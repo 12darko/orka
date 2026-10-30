@@ -606,6 +606,37 @@ describe('a third-party agent over ACP as the main agent', () => {
     assert.match(logged().find((e) => e.event === 'terminal_answer').error.message, /declined/);
   });
 
+  gitIt('git commands ask when the config of the nested repository they run in makes git run programs', async () => {
+    spawnSync('git', ['init', '-q'], { cwd: ws.root, windowsHide: true });
+    // A project unpacked from an archive: a nested repository (with a commit) whose config the root's does not show.
+    const nested = file('vendor/lib');
+    spawnSync('git', ['init', '-q', nested], { windowsHide: true });
+    spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: nested, windowsHide: true });
+    const config = path.join(nested, '.git', 'config');
+    writeFileSync(config, `${readFileSync(config, 'utf8')}[core]\n\tfsmonitor = ./hook.sh\n`);
+    const { orchestrator, approvals } = setup(
+      [
+        [
+          { terminal: { command: 'git', args: ['status'], cwd: 'vendor/lib' } },
+          { permission: { id: 'p1', kind: 'execute', title: 'git log', rawInput: { command: 'git log', cwd: 'vendor/lib' } } },
+          { terminal: { command: 'cd vendor/lib && git status' } },
+          { terminal: { command: 'git', args: ['status'] } },
+        ],
+      ],
+      { mode: 'ask', approve: () => ({ approved: false }) },
+    );
+    assert.equal(await orchestrator.run('what changed?'), 'completed');
+    assert.deepEqual(
+      approvals.map((a) => [a.toolName, a.risk]),
+      [
+        ['acp:terminal', 'dangerous'],
+        ['acp:execute', 'dangerous'],
+        ['acp:terminal', 'normal'],
+      ],
+      'git status in the root (a clean repository) runs unasked',
+    );
+  });
+
   gitIt('an execute request whose command Orka cannot read asks and shows its raw input', async () => {
     const { orchestrator, approvals } = setup([[{ permission: { id: 'p1', kind: 'execute', title: 'Run tests', rawInput: { script: 'rm -rf ~/projects' } } }]], { approve: () => ({ approved: false }) });
     assert.equal(await orchestrator.run('test'), 'completed');

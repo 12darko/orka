@@ -221,6 +221,32 @@ describe('ACP helpers', () => {
     assert.deepEqual(pick(actionFor('execute', { command: 'rm notes.txt', cwd: 'src' }, [], root)), ['command', 'normal', false], 'inside the workspace');
   });
 
+  it('reads an execute call whole: arguments next to the command, and a working directory it cannot tell asks', () => {
+    const root = path.resolve('/work/project');
+    const rm = actionFor('execute', { command: 'rm', args: ['-rf', '/home/u'] }, [], root);
+    assert.deepEqual([...pick(rm), rm.command], ['command', 'dangerous', false, 'rm -rf /home/u']);
+    assert.equal(commandOf({ command: 'cat', args: ['.env'] }), 'cat .env', 'the secrets guard sees the file');
+    for (const args of ['-rf /', [1, 2], { a: 1 }]) assert.equal(actionFor('execute', { command: 'rm', args }, [], root).reason, 'a command Orka cannot read');
+    assert.equal(commandOf({ command: 'ls', args: ['-a'], argv: ['-b'] }), undefined, 'two argument lists');
+    assert.equal(commandOf({ command: 'ls', cmd: 'rm -rf ~' }), undefined, 'two commands that differ');
+    assert.equal(commandOf({ command: 'ls', cmd: 'ls' }), 'ls');
+    assert.equal(commandOf({ command: 'ls', args: null }), 'ls');
+    for (const input of [{ cwd: '', workdir: '/etc' }, { cwd: 3, workdir: 'src' }, { cwd: 'src', workdir: 'lib' }]) {
+      const unclear = actionFor('execute', { command: 'ls', ...input }, [], root);
+      assert.deepEqual([...pick(unclear), unclear.showInput], ['command', 'safe', true, true], JSON.stringify(input));
+    }
+    assert.deepEqual(pick(actionFor('execute', { command: 'ls', cwd: 'src', workdir: 'src', directory: null }, [], root)), ['command', 'safe', false]);
+  });
+
+  it('takes the git risk of the folder an execute call runs in', () => {
+    const root = path.resolve('/work/project');
+    const nested = path.join(root, 'vendor', 'lib');
+    const gitRisk = (cwd: string) => (cwd === nested ? 'core.fsmonitor' : undefined);
+    assert.equal(actionFor('execute', { command: 'git status', cwd: 'vendor/lib' }, [], root, { gitRisk }).risk, 'dangerous');
+    assert.equal(actionFor('execute', { command: 'git status' }, [], root, { gitRisk }).risk, 'safe');
+    assert.equal(actionFor('execute', { command: 'cd vendor/lib && git status' }, [], root, { gitRisk }).risk, 'normal');
+  });
+
   it('finds a program by a name that already has its extension, and never in a relative PATH entry', () => {
     const ws = tempWorkspace();
     try {

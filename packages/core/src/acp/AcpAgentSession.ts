@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ChangeTracker } from '../changes/ChangeTracker';
 import { splitLines } from '../changes/diff';
@@ -110,8 +110,11 @@ export class AcpAgentSession {
   private readonly terminals: AcpTerminals;
   /** The task is done with this session: a turn still ending reaches neither the transcript nor the task. */
   private disposed = false;
-  /** Why the repository's git config makes git run programs, as of the last check (before each command). */
-  private gitRisk?: string;
+  /**
+   * Per folder a command ran in: why the config of the repository git uses there makes git run
+   * programs, as of the last check (before each command).
+   */
+  private readonly gitRisks = new Map<string, string | undefined>();
 
   constructor(
     readonly client: AcpClient,
@@ -159,7 +162,7 @@ export class AcpAgentSession {
         nextId: this.ctx.nextId,
         root: this.root,
         label: this.ctx.label,
-        gitRisk: () => this.gitRisk,
+        gitRisk: (cwd) => this.gitRisks.get(pathKey(cwd)),
         noteSecret: (relPath) => this.noteSecret(relPath),
       },
       `acp_${safeId(sessionId).slice(-16)}_${turnNumber}_${this.ctx.nextId('')}_`,
@@ -220,9 +223,14 @@ export class AcpAgentSession {
     if (!this.disposed) this.ctx.noteSecret(relPath);
   }
 
-  /** Read the repository's git config again: the agent may have changed it since the last command. */
-  private async checkGit(): Promise<void> {
-    this.gitRisk = (await gitConfigRisk(this.root).catch(() => [])).join(', ') || undefined;
+  /**
+   * Read the git config of the repository a command in `dir` uses (a nested one in a sub-folder
+   * too) again: the agent may have changed it since the last command.
+   */
+  private async checkGit(dir: string): Promise<string | undefined> {
+    const risk = (await gitConfigRisk(dir).catch(() => [])).join(', ') || undefined;
+    this.gitRisks.set(pathKey(dir), risk);
+    return risk;
   }
 
   private handlers(): AcpSessionHandlers {
@@ -247,8 +255,8 @@ export class AcpAgentSession {
   private async requestPermission(params: RequestPermissionParams): Promise<PermissionOutcome> {
     const turn = this.current;
     if (!turn) return { outcome: 'cancelled' };
-    // Git commands are judged with the repository's config as it is now.
-    await this.checkGit();
+    // Git commands are judged with the config, as it is now, of the repository they run in.
+    await this.checkGit(turn.mapper.dirOf(params.toolCall));
     if (turn.signal.aborted || this.disposed) return { outcome: 'cancelled' };
     const state = turn.mapper.tool(params.toolCall);
     if (!state) return { outcome: 'cancelled' };
@@ -317,7 +325,7 @@ export class AcpAgentSession {
 
   /** fs/read_text_file: a file inside the workspace (optionally a range of lines). */
   private async readTextFile(params: ReadTextFileParams): Promise<{ content: string }> {
-    const abs = await this.workspacePath(params.path);
+    const abs = this.workspacePath(params.path);
     const rel = toRelative(this.root, abs);
     const host = this.ctx.host;
     if (!(await host.exists(abs)) || (await host.isDirectory(abs))) throw new JsonRpcError(`File not found: ${rel}`, ACP_RESOURCE_NOT_FOUND);
@@ -338,7 +346,7 @@ export class AcpAgentSession {
     const turn = this.current;
     const stopped = () => new JsonRpcError('The user stopped the agent; nothing was written.', RPC_INTERNAL_ERROR);
     if (!turn || turn.signal.aborted || this.disposed) throw stopped();
-    const abs = await this.workspacePath(params.path);
+    const abs = this.workspacePath(params.path);
     const rel = toRelative(this.root, abs);
     const host = this.ctx.host;
     if (await host.isDirectory(abs)) throw new JsonRpcError(`${rel} is a folder.`, RPC_INVALID_PARAMS);
@@ -357,12 +365,14 @@ export class AcpAgentSession {
       if (answer === 'cancelled') throw stopped();
       if (answer === 'deny') throw new JsonRpcError(`Not written: the user declined writing ${rel}.`, RPC_INTERNAL_ERROR);
     }
-    // Checked again right before writing: a link may have appeared while the user decided.
-    await this.workspacePath(params.path);
-    if (turn.signal.aborted || this.disposed) throw stopped();
     await turn.recordBefore(abs);
     if (turn.signal.aborted || this.disposed) throw stopped();
-    await host.writeFile(abs, params.content);
+    // From here to the write nothing is awaited. Checked again right before writing (a link may
+    // have appeared while the user decided or the original was recorded), and the write itself
+    // never goes through a link out of the workspace that appears after this check.
+    this.workspacePath(params.path);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    if (!writeInsideWorkspace(this.root, abs, params.content)) throw this.outside(params.path);
     this.ctx.changes.notify();
     turn.mapper.noteWrite(abs);
     if (!call) turn.mapper.patchCard(cardId, { status: 'done' });
@@ -378,12 +388,13 @@ export class AcpAgentSession {
   private async createTerminal(params: CreateTerminalParams): Promise<{ terminalId: string }> {
     const turn = this.current;
     if (!turn || turn.signal.aborted || this.disposed) throw new JsonRpcError('No prompt is running, so no command can start.', RPC_INTERNAL_ERROR);
-    const cwd = params.cwd ? await this.workspacePath(params.cwd) : this.root;
+    const cwd = params.cwd ? this.workspacePath(params.cwd) : this.root;
     if (!(await this.ctx.host.isDirectory(cwd))) throw new JsonRpcError(`Not a folder: ${toRelative(this.root, cwd)}`, RPC_INVALID_PARAMS);
     const line = commandLine(params.command, params.args ?? [], this.ctx.host.shellName);
-    // Like Orka's own run_command: git started by a command is not hardened, so a risky repository config makes any git command ask.
-    await this.checkGit();
-    const risk = classifyCommand(line, { workspaceRoot: this.root, cwd, gitRisk: this.gitRisk });
+    // Like Orka's own run_command: git started by a command is not hardened, so a risky config of
+    // the repository it runs in makes any git command ask.
+    const gitRisk = await this.checkGit(cwd);
+    const risk = classifyCommand(line, { workspaceRoot: this.root, cwd, gitRisk });
     const title = t('Run: {command}', { command: oneLine(line, 80) });
     const detail = [`$ ${line}`, cwd !== this.root ? t('in {cwd}', { cwd: toRelative(this.root, cwd) }) : '', risk.reason ? t('Risk: {reason}', { reason: t(risk.reason) }) : '']
       .filter(Boolean)
@@ -419,17 +430,83 @@ export class AcpAgentSession {
   /**
    * A path the agent named, as an absolute path inside the workspace. Paths outside it, and links
    * inside it that lead outside it (also links whose target does not exist yet: writing would
-   * create it), are refused.
+   * create it), are refused. Synchronous, so a write can follow the check with nothing in between.
    */
-  private async workspacePath(input: string): Promise<string> {
-    const root = this.root;
-    const abs = path.resolve(root, input);
-    const refuse = () => new JsonRpcError(`Orka only lets agents use files inside the workspace (${root}); ${input} is outside it.`, RPC_INVALID_PARAMS);
-    if (!isInside(root, abs)) throw refuse();
-    const realRoot = await fs.realpath(root).catch(() => root);
-    const real = await realTarget(abs).catch(() => undefined);
-    if (!real || !isInside(realRoot, real)) throw refuse();
+  private workspacePath(input: string): string {
+    const abs = path.resolve(this.root, input);
+    if (!isInside(this.root, abs)) throw this.outside(input);
+    let real: string | undefined;
+    try {
+      real = realTarget(abs);
+    } catch {
+      real = undefined;
+    }
+    if (!real || !isInside(realPath(this.root), real)) throw this.outside(input);
     return abs;
+  }
+
+  private outside(input: string): JsonRpcError {
+    return new JsonRpcError(`Orka only lets agents use files inside the workspace (${this.root}); ${input} is outside it.`, RPC_INVALID_PARAMS);
+  }
+}
+
+/**
+ * Write a file inside the workspace, never through a link that leads out of it. The path is
+ * resolved first (a link inside the workspace, such as GEMINI.md -> AGENTS.md, is written through
+ * to its target) and the target and its folder must lie inside the workspace right before it is
+ * opened. The target is opened without following a link where the system can (O_NOFOLLOW; a FIFO
+ * is not waited for), and before anything is written the opened file must be the one the target
+ * names (on Windows, which cannot refuse links when opening, not a link or junction) and lie
+ * inside the workspace. Synchronous, so nothing else in Orka runs between the checks and the
+ * write. False when it was refused: nothing was written (a file that did not exist may be left
+ * empty where a folder of its path was swapped for a link between the last check and the open).
+ */
+export function writeInsideWorkspace(root: string, abs: string, content: string): boolean {
+  const { O_WRONLY, O_CREAT, O_NOFOLLOW = 0, O_NONBLOCK = 0 } = fs.constants;
+  const realRoot = realPath(root);
+  let target: string;
+  try {
+    target = realTarget(abs);
+  } catch {
+    return false; // a link loop
+  }
+  if (!isInside(realRoot, target) || !isInside(realRoot, realPath(path.dirname(target)))) return false;
+  let fd: number;
+  try {
+    fd = fs.openSync(target, O_WRONLY | O_CREAT | O_NOFOLLOW | O_NONBLOCK, 0o666);
+  } catch (error) {
+    // The target became a link (ELOOP; EMLINK on some BSDs).
+    if (['ELOOP', 'EMLINK'].includes((error as NodeJS.ErrnoException).code ?? '')) return false;
+    throw error;
+  }
+  try {
+    const opened = fs.fstatSync(fd, { bigint: true });
+    const named = fs.lstatSync(target, { bigint: true });
+    if (!opened.isFile() || named.isSymbolicLink() || named.dev !== opened.dev || named.ino !== opened.ino) return false;
+    if (!isInside(realRoot, fs.realpathSync.native(target))) return false;
+    // Linux tells which file was opened, whatever happened to the path meanwhile.
+    if (process.platform === 'linux' && !isInside(realRoot, readLink(`/proc/self/fd/${fd}`) ?? realRoot)) return false;
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, content, 'utf8');
+    return true;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function realPath(p: string): string {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return p;
+  }
+}
+
+function readLink(p: string): string | undefined {
+  try {
+    return fs.readlinkSync(p);
+  } catch {
+    return undefined;
   }
 }
 
@@ -438,16 +515,21 @@ export class AcpAgentSession {
  * (a link counts, even one whose target is missing) resolved, the rest appended. A dangling link
  * is followed to its target, as writing through it would. Throws on a link loop.
  */
-async function realTarget(target: string, depth = 0): Promise<string> {
+function realTarget(target: string, depth = 0): string {
   if (depth > 40) throw new Error(`Too many links: ${target}`);
   let probe = target;
-  while (!(await lexists(probe)) && path.dirname(probe) !== probe) probe = path.dirname(probe);
+  while (!lexists(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
   const rest = path.relative(probe, target);
-  const real = await fs.realpath(probe).catch(() => undefined);
+  let real: string | undefined;
+  try {
+    real = fs.realpathSync.native(probe);
+  } catch {
+    real = undefined;
+  }
   if (real !== undefined) return path.join(real, rest);
   // It exists but does not resolve: a link to something missing. Its target counts, relative to the link's real folder.
-  const link = await fs.readlink(probe);
-  const next = path.resolve(await fs.realpath(path.dirname(probe)), link);
+  const link = fs.readlinkSync(probe);
+  const next = path.resolve(fs.realpathSync.native(path.dirname(probe)), link);
   return realTarget(path.join(next, rest), depth + 1);
 }
 
@@ -486,9 +568,9 @@ function approveWrite(turn: Turn, file: string, hash: string | 'any'): void {
 }
 
 /** The path exists, as a file, a folder or a link (even one whose target is missing). */
-async function lexists(p: string): Promise<boolean> {
+function lexists(p: string): boolean {
   try {
-    await fs.lstat(p);
+    fs.lstatSync(p);
     return true;
   } catch {
     return false;

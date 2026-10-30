@@ -8,6 +8,7 @@ import {
   agentLaunchSpec,
   agentPolicy,
   checkAgentCli,
+  comspec,
   copyToClipboard,
   createProvider,
   DEFAULT_SUBAGENTS,
@@ -15,6 +16,7 @@ import {
   findExecutable,
   Handoff,
   handoffBrief,
+  hardenProgramLookup,
   installHint,
   loginCommand,
   NOT_IN_CATALOG,
@@ -34,6 +36,7 @@ import {
 
   Orchestrator,
   PermissionManager,
+  programPath,
   PROVIDERS,
   readHooks,
   setLocale,
@@ -331,7 +334,7 @@ async function handOff(session: Session, agent: ExternalAgent, text: string, rl:
   process.on('SIGINT', ignoreInterrupt);
   try {
     const script = /\.(cmd|bat)$/i.test(exe);
-    spawnSync(script ? `"${exe}"` : exe, [], { cwd: session.root, stdio: 'inherit', shell: script });
+    spawnSync(script ? `"${exe}"` : exe, [], { cwd: session.root, stdio: 'inherit', shell: script && comspec() });
   } finally {
     process.off('SIGINT', ignoreInterrupt);
     if (wasRaw) io.stdin.setRawMode?.(true);
@@ -367,7 +370,7 @@ function agentMainAgent(provider: string, model: string | undefined, config: Ork
   if (config.trackCommandChanges === false) {
     return { error: t('{agent} needs command snapshots, so every file it changes can be reviewed and reverted: remove "trackCommandChanges": false from {file}.', { agent: entry.label, file: CONFIG_FILE }) };
   }
-  if (!findExecutable('git')) {
+  if (!programPath('git')) {
     return { error: t('{agent} needs git: Orka snapshots the folder with it, so every file the agent changes can be reviewed and reverted. Install git and try again.', { agent: entry.label }) };
   }
   return agent;
@@ -860,6 +863,9 @@ function nextLine(rl: readline.Interface, prompt: string, prefill?: string): Pro
 }
 
 if (require.main === module) {
+  // Orka's own process, started in the project: nothing it or its children start by bare name
+  // comes from the current folder.
+  hardenProgramLookup();
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error: unknown) => {

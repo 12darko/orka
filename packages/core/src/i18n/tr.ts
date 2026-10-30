@@ -786,6 +786,8 @@ export const TR: Record<string, string> = {
   'That agent CLI is turned off. Turn it on in Settings > Providers > Agent CLIs.': "Bu agent CLI kapalı. Ayarlar > Providers > Agent CLI'lar bölümünden açın.",
   'An agent CLI can only be the main agent.': 'Bir agent CLI yalnızca ana agent olabilir.',
   '{agent}: sign in': '{agent}: giriş',
+  'cmd.exe cannot run {part} safely. Run this in a terminal yourself: {command}':
+    'cmd.exe {part} öğesini güvenle çalıştıramıyor. Şunu bir terminalde kendiniz çalıştırın: {command}',
   'Choose the {agent} program': '{agent} programını seçin',
   Programs: 'Programlar',
   'Add an ACP agent': 'ACP agent ekle',

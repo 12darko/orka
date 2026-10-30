@@ -39,7 +39,7 @@ export * from './i18n';
 export { systemLocale } from './i18n/systemLocale';
 export { copyToClipboard } from './host/clipboard';
 export { EXTERNAL_AGENTS, externalAgent, findExecutable, Handoff, handoffBrief, recordChangesSince, userRequests, type ExternalAgent } from './handoff/Handoff';
-export { childEnv, cmdArgument, resolveCommand } from './host/commands';
+export { childEnv, cmdArgument, comspec, hardenProgramLookup, programPath, resolveCommand } from './host/commands';
 export { AcpClient, type AcpClientOptions, type AcpLaunchSpec, type AcpSessionHandlers, safeEnv } from './acp/AcpClient';
 export { AcpAgentSession, type AcpPromptOptions, type AcpSessionContext, type AcpTurnResult } from './acp/AcpAgentSession';
 export { AcpAgentPool, type AcpAgentPoolOptions, type ExternalAgentRuntime, pooledAgent } from './acp/pool';

@@ -21,6 +21,8 @@ export interface AcpAction {
   outside: string[];
   /** Ask the user whatever the permission mode says (mode switches, paths outside the workspace). */
   alwaysAsk: boolean;
+  /** Show the call's raw input next to its command: part of it could not be read (its working directory). */
+  showInput?: boolean;
 }
 
 const TOOL_KINDS = new Set<ToolKind>(['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', 'fetch', 'switch_mode', 'other']);
@@ -28,15 +30,23 @@ const EDIT_KINDS = new Set<ToolKind>(['edit', 'delete', 'move']);
 const NON_CODE_EXTENSIONS = new Set(['.md', '.markdown', '.txt', '.rst']);
 const MAX_OUTPUT = 20_000;
 const ACTIVITY_LINES = 30;
+/** Keys an execute call's raw input may carry its command's arguments in, next to `command`. */
+const ARG_KEYS = ['args', 'arguments', 'argv'];
 
 /**
  * Orka's permission category and risk for an ACP tool kind: read/search/think are reads, edit and
  * move are edits, execute is a command classified like Orka's own run_command (with the git risk
- * of the repository's config, `gitRisk`, and the working directory it names), fetch is network.
- * An execute call whose command Orka cannot read is dangerous; any other unknown kind is a normal
- * command.
+ * of the config of the repository it runs in, `gitRisk`, and the working directory it names),
+ * fetch is network. An execute call whose command Orka cannot read is dangerous, one whose working
+ * directory it cannot tell always asks; any other unknown kind is a normal command.
  */
-export function actionFor(kind: ToolKind, rawInput: unknown, locations: readonly string[], root: string, context: { gitRisk?: string } = {}): AcpAction {
+export function actionFor(
+  kind: ToolKind,
+  rawInput: unknown,
+  locations: readonly string[],
+  root: string,
+  context: { gitRisk?: string | ((cwd: string) => string | undefined) } = {},
+): AcpAction {
   const outside = locations.filter((p) => !isInside(root, p));
   const base = { outside, alwaysAsk: outside.length > 0 };
   switch (kind) {
@@ -54,11 +64,14 @@ export function actionFor(kind: ToolKind, rawInput: unknown, locations: readonly
       // Nobody knows what it runs: the user sees its raw input and decides.
       if (!command) return { ...base, category: 'command', risk: 'dangerous', reason: 'a command Orka cannot read' };
       const dir = cwdOf(rawInput);
-      const cwd = dir === undefined ? root : path.resolve(root, dir);
-      const c = classifyCommand(command, { workspaceRoot: root, cwd, gitRisk: context.gitRisk });
-      // A command that runs in a folder outside the workspace always asks, like a path outside it.
+      const cwd = typeof dir === 'string' ? path.resolve(root, dir) : root;
+      const gitRisk = typeof context.gitRisk === 'function' ? context.gitRisk(cwd) : context.gitRisk;
+      const c = classifyCommand(command, { workspaceRoot: root, cwd, gitRisk });
+      // A command that runs in a folder outside the workspace always asks, like a path outside it,
+      // and so does one whose folder Orka cannot tell (the user sees the raw input).
       const all = isInside(root, cwd) ? outside : [...outside, cwd];
-      return { outside: all, alwaysAsk: all.length > 0, category: c.category, risk: c.risk, reason: c.reason, command };
+      const unclear = dir === null;
+      return { outside: all, alwaysAsk: all.length > 0 || unclear, category: c.category, risk: c.risk, reason: c.reason, command, ...(unclear ? { showInput: true } : {}) };
     }
     case 'fetch':
       return { ...base, category: 'network', risk: 'normal' };
@@ -71,31 +84,50 @@ export function actionFor(kind: ToolKind, rawInput: unknown, locations: readonly
 }
 
 /**
- * The command line in an execute call's raw input: a string, `{command: "..."}`, or an argv
- * array (`["bash", "-lc", "npm test"]` is the script itself).
+ * The command line in an execute call's raw input: a string, `{command: "..."}` (with the
+ * arguments of an `args` list next to it), or an argv array (`["bash", "-lc", "npm test"]` is the
+ * script itself). Undefined when Orka cannot read all of it: arguments that are not a list of
+ * strings, or a `command` and a `cmd` that differ, could be anything.
  */
 export function commandOf(rawInput: unknown): string | undefined {
-  const value =
-    typeof rawInput === 'string' || Array.isArray(rawInput)
-      ? rawInput
-      : rawInput && typeof rawInput === 'object'
-        ? ((rawInput as Record<string, unknown>).command ?? (rawInput as Record<string, unknown>).cmd)
-        : undefined;
+  if (typeof rawInput === 'string' || Array.isArray(rawInput)) return lineOf(rawInput);
+  if (!rawInput || typeof rawInput !== 'object') return undefined;
+  const input = rawInput as Record<string, unknown>;
+  const named = [input.command, input.cmd].filter((v) => v !== undefined && v !== null);
+  if (named.length > 1 && JSON.stringify(named[0]) !== JSON.stringify(named[1])) return undefined;
+  const line = lineOf(named[0]);
+  const args = ARG_KEYS.map((key) => input[key]).filter((v) => v !== undefined && v !== null);
+  if (line === undefined || !args.length) return line;
+  if (args.length > 1 || !isStrings(args[0])) return undefined;
+  return [line, ...args[0]].join(' ');
+}
+
+function lineOf(value: unknown): string | undefined {
   if (typeof value === 'string') return value.trim() || undefined;
-  if (Array.isArray(value) && value.every((v) => typeof v === 'string') && value.length) {
-    const [program, flag, script] = value as string[];
+  if (isStrings(value) && value.length) {
+    const [program, flag, script] = value;
     if (value.length === 3 && /^(ba|z|da)?sh$|^pwsh$|^powershell$|^cmd$/i.test(path.basename(program).replace(/\.exe$/i, '')) && /^(-l?c|-Command|\/c)$/i.test(flag)) return script;
-    return (value as string[]).join(' ');
+    return value.join(' ');
   }
   return undefined;
 }
 
-/** The working directory an execute call's raw input names (`cwd`, `workdir` or `directory`), if any. */
-export function cwdOf(rawInput: unknown): string | undefined {
+function isStrings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
+}
+
+/**
+ * The working directory an execute call's raw input names (`cwd`, `workdir` or `directory`):
+ * undefined when it names none, null when Orka cannot tell which (one that is not a usable path,
+ * or two that differ).
+ */
+export function cwdOf(rawInput: unknown): string | null | undefined {
   if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) return undefined;
   const input = rawInput as Record<string, unknown>;
-  const value = input.cwd ?? input.workdir ?? input.directory;
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  const values = [input.cwd, input.workdir, input.directory].filter((v) => v !== undefined && v !== null);
+  if (!values.length) return undefined;
+  const dirs = values.map((v) => (typeof v === 'string' ? v.trim() : ''));
+  return dirs.some((d) => !d) || new Set(dirs).size > 1 ? null : dirs[0];
 }
 
 export interface MapperContext {
@@ -106,8 +138,8 @@ export interface MapperContext {
   root: string;
   /** The agent's name, shown as the "model" of its answers. */
   label: string;
-  /** Why the repository's git config makes git run programs, if it does (see gitConfigRisk). */
-  gitRisk?(): string | undefined;
+  /** Why the config of the repository a command in `cwd` uses makes git run programs, if it does (see gitConfigRisk). */
+  gitRisk?(cwd: string): string | undefined;
   /** A tool call the agent reports as running or done touched a secret-looking file (workspace-relative). */
   noteSecret?(relPath: string): void;
 }
@@ -246,7 +278,14 @@ export class AcpTurnMapper {
 
   /** How Orka's permission rules see a call. */
   actionOf(state: ToolState): AcpAction {
-    return actionFor(state.kind, state.rawInput, [...state.locations, ...diffPaths(state.content, this.ctx.root)], this.ctx.root, { gitRisk: this.ctx.gitRisk?.() });
+    return actionFor(state.kind, state.rawInput, [...state.locations, ...diffPaths(state.content, this.ctx.root)], this.ctx.root, { gitRisk: (cwd) => this.ctx.gitRisk?.(cwd) });
+  }
+
+  /** The folder a call (as known so far, with these new fields) runs in: the working directory it names, else the root. */
+  dirOf(fields: ToolCallFields): string {
+    const known = typeof fields.toolCallId === 'string' ? this.tools.get(fields.toolCallId) : undefined;
+    const dir = cwdOf(fields.rawInput ?? known?.rawInput);
+    return typeof dir === 'string' ? path.resolve(this.ctx.root, dir) : this.ctx.root;
   }
 
   /**
@@ -358,7 +397,7 @@ export class AcpTurnMapper {
     const action = this.actionOf(state);
     const details: string[] = [];
     if (action.command) details.push(`$ ${action.command}`);
-    else if (state.kind === 'execute' && state.rawInput !== undefined) details.push(t('Input: {input}', { input: oneLine(JSON.stringify(state.rawInput) ?? '', 500) }));
+    if ((!action.command || action.showInput) && state.kind === 'execute' && state.rawInput !== undefined) details.push(t('Input: {input}', { input: oneLine(JSON.stringify(state.rawInput) ?? '', 500) }));
     const url = state.kind === 'fetch' ? urlOf(state.rawInput) : undefined;
     if (url) details.push(url);
     // Every file the call names, so an approval shows all of them (the card's path is only the first).

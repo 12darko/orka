@@ -200,7 +200,7 @@ Orka never reads, stores or forwards an agent's sign-in, only runs the unmodifie
 | **Balanced** (default) | auto | auto | auto | asks | auto | asks | asks |
 | **Autonomous** | auto | auto | auto | auto (reversible) | auto | asks | auto (push/reset ask) |
 
-\* Patterns such as `rm -rf`, `Remove-Item -Recurse`, `git push`, `git reset --hard`, `curl … | sh`, `DROP TABLE`, `npm publish`; encoded PowerShell, `Start-Process -Verb RunAs`, downloads to a file (`-OutFile`, `curl -o`, `wget`, `certutil`, `bitsadmin`), inline scripts that touch files, processes, the network or your home folder (`node -e`, `python -c`, ...), `mshta`/`regsvr32`/`rundll32`, scheduled tasks and services, `setx`, global package installs, `git config --global`, and **commands that write outside the workspace** (absolute paths, `~`, `$env:USERPROFILE`, `..\..\`; temp folders and `/dev/null` excepted). See `packages/core/src/permissions/commandRisk.ts`. Sub-agents follow the same rules.
+\* Patterns such as `rm -rf`, `Remove-Item -Recurse`, `git push`, `git reset --hard`, `curl … | sh`, `DROP TABLE`, `npm publish`; encoded PowerShell, `Start-Process -Verb RunAs`, downloads to a file (`-OutFile`, `curl -o`, `wget`, `certutil`, `bitsadmin`), inline scripts that touch files, processes, the network or your home folder (`node -e`, `python -c`, ...), `mshta`/`regsvr32`/`rundll32`, scheduled tasks and services, `setx`, global package installs, `git config --global`, and **commands that write outside the workspace** (absolute paths, `~`, `$env:USERPROFILE`, `..\..\`; temp folders and `/dev/null` excepted). A command only counts as read-only when Orka can read every part of it: command substitution (`$(…)`, backticks), a single `&`, `env <program>`, options that start programs (`rg --pre`, `find -exec`) and redirections into files are never read-only. See `packages/core/src/permissions/commandRisk.ts`. Sub-agents follow the same rules.
 
 **What the modes mean:** in *Balanced* and *Autonomous*, the agent runs your project's commands (builds, tests, scripts it writes) without asking; the risky patterns above still ask. That is what makes it fast, and it also means a model following instructions hidden in a web page or file could run project code. **For code or content you do not trust, use *Ask* mode.**
 
@@ -209,7 +209,8 @@ Orka never reads, stores or forwards an agent's sign-in, only runs the unmodifie
 - Web pages and fetched content are treated as data, not instructions. `web_fetch` and the browser never reach cloud metadata services or link-local addresses (also not through a redirect or a DNS name pointing there).
 - Once any agent in a task has read a file that may hold secrets (`.env`, keys and certificates, `credentials`, `appsettings*.json`, Terraform state, service-account files, ...), web access and MCP tools ask for approval for the rest of that task, whatever the mode, so secrets cannot be sent out silently.
 - A server's own "read-only" hint does not make its MCP tools approval-free: they follow the terminal rules, and tools marked destructive always ask.
-- A repository whose own git config makes git run programs (an `fsmonitor` hook, filters other than Git LFS, diff drivers, includes) is detected: Orka then does not run `git status` on its own, and git commands ask. Orka's own git calls never use fsmonitor, external diff or textconv programs.
+- A repository whose own git config makes git run programs (an `fsmonitor` hook, `core.hooksPath`, filters other than Git LFS, diff drivers, signature programs, pagers, includes; also in nested repositories) is detected: Orka then does not run `git status` on its own, and git commands ask. Orka's own git calls never use fsmonitor, external diff, textconv or signature programs.
+- **Windows:** Orka starts git, your shell and its other helpers by their full path from `PATH`, never from the open folder. In the desktop app and the CLI, nothing Orka starts (commands, background processes, MCP servers, agents, terminal windows) picks a program from its current folder by its bare name: use `.\name` or a full path, e.g. `.\gradlew`.
 - `open_browser` only hands web pages, images, PDFs and text files to the system, never scripts or executables.
 
 ## Reviewing changes
@@ -266,6 +267,7 @@ Agents can use tools from MCP (Model Context Protocol) servers: Unity Editor, Bl
 - **Import from Claude Code:** brings the MCP servers from `~/.claude.json` (global and this project's) into Orka in one click.
 - **Edit the list:** `orka.mcpServers`, each entry either `{"command": "uvx", "args": ["blender-mcp"]}` (stdio) or `{"url": "http://localhost:8080/mcp"}` (Streamable HTTP).
 - A project's **`.mcp.json`** (Claude Code format) is used too; because it starts programs on your machine, Orka asks the first time.
+- On Windows, a server whose `command` is a bare name that is not on `PATH` but sits in its configured `cwd` starts from there by its full path. Programs the server itself starts are not looked up in its folder by bare name.
 - Servers start when a task needs them and stay up between tasks. Their state (ready · N tools / error / off) is shown, and each one can be turned on or off. Tools are named `mcp__<server>__<tool>` and follow the terminal rules; read-only sub-agents only see tools their server marks read-only.
 
 ## Tasks, history and tokens

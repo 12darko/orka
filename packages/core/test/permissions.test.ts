@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import * as path from 'node:path';
 import { describe, it } from 'node:test';
-import { classifyCommand } from '../src/permissions/commandRisk';
+import { classifyCommand, mayRunGit } from '../src/permissions/commandRisk';
 import { PermissionManager } from '../src/permissions/PermissionManager';
 
 describe('classifyCommand', () => {
@@ -46,6 +47,71 @@ describe('classifyCommand', () => {
       assert.equal(result.risk, risk, `risk for "${command}"`);
     });
   }
+
+  it('keeps ordinary read-only lines safe', () => {
+    const safe = [
+      'git diff HEAD~1', 'git --no-pager log -5', 'git log @{u}..HEAD', `git log --format='%h %s'`, 'git log --format="%h (%an)"', 'git blame src/a.ts',
+      'git show HEAD:README.md', 'git config --get user.name', 'cat README.md', 'rg "foo(" src', `rg 'a b' src`, 'grep -rn TODO .', 'find . -name "*.ts"',
+      'tree -L 2', 'echo ${HOME}', 'cat a.txt 2>&1', 'ls 2>/dev/null', 'cd src && ls', 'env', 'printenv PATH', 'gcm node',
+      'Get-ChildItem -Recurse src | Select-String foo', 'ls\r\nls', 'node --version',
+      // Regular expressions and wildcards that cannot become options.
+      'rg "foo$" src', `rg 'a$' src`, `rg -e '$x' .`, 'cat *.md', 'ls -la src/*.ts', 'git log --format=%h:%s', 'git diff -- src/*.ts', 'cat a.txt > $null',
+    ];
+    for (const line of safe) assert.equal(classifyCommand(line).risk, 'safe', JSON.stringify(line));
+  });
+
+  it('never calls safe an option spelled with a variable, a wildcard or a quote only some shells read', () => {
+    const lines = [
+      // bash: $'...' quoting, unset variables, and wildcards that match a file named like an option ("--pre=x.sh").
+      `rg --pr$'e' ./tools/x.sh foo`, 'rg --pr$1e ./tools/x.sh foo', 'rg --pr${x}e ./tools/x.sh foo', 'rg foo *', 'rg foo --p* ./tools/x.sh', 'find . -name *.ts',
+      'git diff --out$1put=../../x.patch', 'tree -$1o out.txt',
+      // PowerShell: typographic quotes, splatting; cmd: substrings (which can also make a separator).
+      'rg \u2018--pre\u2019 ./tools/x.sh foo', 'rg @args foo', 'rg --pr%PATH:~0,0%e ./tools/x.sh foo', 'ls %CMDCMDLINE:~-1%',
+      // Programs these options start: decompressors (rg -z), a version or SDK the project names.
+      'rg -z foo', 'rg --search-zip foo', 'pnpm --version', 'dotnet --version',
+    ];
+    for (const line of lines) assert.notEqual(classifyCommand(line).risk, 'safe', JSON.stringify(line));
+  });
+
+  it('treats every redirection into a file as a write, and one into the home folder as outside the workspace', () => {
+    const root = path.resolve('/work/project');
+    for (const line of ['echo x 2> out.txt', 'ls >& out.txt', 'ls &> out.txt', 'cat a.txt 1> b.txt']) assert.notEqual(classifyCommand(line).risk, 'safe', line);
+    for (const line of ['echo x 2>~/.bashrc', 'echo x >& ~/.bashrc', 'echo evil >> ~/.bashrc', 'echo x > $HOME/.profile', 'echo x > ${HOME}/.profile']) {
+      assert.deepEqual(classifyCommand(line, { workspaceRoot: root }), { category: 'command', risk: 'dangerous', reason: 'writes outside the workspace' }, line);
+    }
+    assert.equal(classifyCommand('npm test 2> errors.log', { workspaceRoot: root }).risk, 'normal');
+  });
+
+  it('never calls safe a line that can start another program', () => {
+    const lines = [
+      // Command and process substitution, in every shell's form.
+      'echo $(./tools/x.sh)', 'ls `./tools/x.sh`', 'Get-ChildItem $(./tools/x.ps1)', 'cat <(./tools/x.sh)', 'cat =(./tools/x.sh)', 'echo ${ ./tools/x.sh; }',
+      'echo "$(./tools/x.sh)"', `echo \\' $(./tools/x.sh) \\'`, "echo \u2018 ' $(./tools/x.ps1) ' \u2019",
+      // A single &, a lone CR or another line break, PowerShell's call and dot-source operators, groups and script blocks.
+      'ls & ./tools/x.sh', 'ls |& cat', 'Get-Location\r./tools/x.ps1', 'ls\u2028./tools/x.sh', '& ./tools/x.ps1', '. ./tools/x.ps1', 'Get-ChildItem (./tools/x.ps1)',
+      'Get-ChildItem | Get-Content -Path { ./tools/x.ps1 }', 'git log @{a=./tools/x.ps1}',
+      // Read-only commands with options that run a program or write a file.
+      'env ./tools/x.sh', 'rg --pre ./tools/x.sh foo', `rg '--pre' ./tools/x.sh foo`, 'rg --hostname-bin ./tools/x.sh foo', 'find . -fprint out.txt',
+      'find . -okdir ./tools/x.sh {} +', `find . '-exec' ./tools/x.sh {} +`, 'find . -fls out.txt', 'tree -o out.txt', 'tree -R', 'git diff --output=../x.patch',
+      'git difftool -y -x ./tools/x.sh', 'git logs', 'git remote -v add x y', 'gcm ./tools/x.ps1 -Syntax', 'cat.sh', 'yarn --version',
+      // Git in another folder than the one whose config was checked.
+      'cd vendor/lib && git status', 'pushd vendor/lib; git log', 'Set-Location vendor/lib; git diff', 'git -C vendor/lib status',
+    ];
+    for (const line of lines) assert.notEqual(classifyCommand(line).risk, 'safe', JSON.stringify(line));
+    for (const line of ['powershell -enco ZQBjAGgAbwA=', 'pwsh -ec ZQBjAGgAbwA=', 'powershell /e ZQBjAGgAbwA=', 'pwsh --ec ZQBjAGgAbwA=', 'pwsh \u2013ec ZQBjAGgAbwA=']) {
+      assert.equal(classifyCommand(line).risk, 'dangerous', line);
+    }
+    assert.equal(classifyCommand('pwsh -ExecutionPolicy Bypass -File build.ps1').risk, 'normal');
+  });
+
+  it('a risky git config makes git dangerous also when it is quoted, escaped or named by its path', () => {
+    const lines = ['"git" status', '/usr/bin/git log', 'C:\\Git\\cmd\\git.exe diff', `g''it status`, 'g\\it log', 'gi$1t status', 'git.cmd status'];
+    for (const line of lines) {
+      assert.ok(mayRunGit(line), line);
+      assert.equal(classifyCommand(line, { gitRisk: 'core.fsmonitor' }).risk, 'dangerous', line);
+    }
+    assert.equal(classifyCommand('ls', { gitRisk: 'core.fsmonitor' }).risk, 'safe');
+  });
 });
 
 describe('PermissionManager', () => {

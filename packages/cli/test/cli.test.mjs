@@ -2,7 +2,7 @@
 // turns; everything else is real - argument parsing, providers, the orchestrator, file writes,
 // commands, approvals and task history (in a temporary ORKA_HOME).
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import * as http from 'node:http';
 import { tmpdir } from 'node:os';
@@ -268,5 +268,23 @@ describe('orka CLI', { skip: !existsSync(ORKA) && 'build the CLI first (npm run 
     for (const name of ['@anthropic-ai/sdk', 'openai', '@google/genai']) assert.match(notices, new RegExp(`^${name} \\d+\\.\\d+\\.\\d+ \\(`, 'm'));
     assert.match(notices, /Apache License/);
     assert.doesNotMatch(notices, /^@orka\//m);
+  });
+});
+
+describe('orka CLI on Windows', { skip: (process.platform !== 'win32' && 'Windows-only') || (!existsSync(ORKA) && 'build the CLI first (npm run build -w orka-agent)') }, () => {
+  it('sets up its own process at start: nothing it or its children start by bare name comes from the project folder', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'orka-lookup-'));
+    try {
+      // Loaded before the CLI; reports the variable as the CLI leaves it.
+      const probe = path.join(dir, 'probe.cjs');
+      writeFileSync(probe, "process.on('exit', () => process.stderr.write(`lookup=${process.env.NoDefaultCurrentDirectoryInExePath}\\n`));\n");
+      const env = { ...process.env };
+      for (const key of Object.keys(env)) if (key.toLowerCase() === 'nodefaultcurrentdirectoryinexepath') delete env[key];
+      const run = spawnSync(process.execPath, ['--require', probe, ORKA, '--version'], { cwd: dir, env, encoding: 'utf8' });
+      assert.equal(run.status, 0, run.stderr);
+      assert.match(run.stderr, /lookup=1/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

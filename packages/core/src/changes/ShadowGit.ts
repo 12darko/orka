@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
+import { programPath } from '../host/commands';
 import { IGNORED_DIRS } from '../tools/workspace';
 
 export interface CommandChange {
@@ -199,8 +200,11 @@ export class ShadowGit {
       ...args,
     ];
     const env = copy ? { ...process.env, ...copy.env } : process.env;
+    // By its full path: started by name in the workspace, Windows would run a git.exe it ships.
+    const git = programPath('git');
+    if (!git) return Promise.reject(new Error('git was not found on PATH'));
     return new Promise((resolve, reject) =>
-      execFile('git', full, { cwd: workTree, env, timeout, maxBuffer: 64 * 1024 * 1024, windowsHide: true, encoding: 'buffer' }, (error, stdout, stderr) =>
+      execFile(git, full, { cwd: workTree, env, timeout, maxBuffer: 64 * 1024 * 1024, windowsHide: true, encoding: 'buffer' }, (error, stdout, stderr) =>
         error ? reject(new Error(`${error.message}\n${stderr.toString('utf8')}`)) : resolve(stdout),
       ),
     );
@@ -231,12 +235,14 @@ function parseNameStatus(out: string): CommandChange[] {
  * false when the changes overlap.
  */
 export async function mergeText(current: string, base: string, theirs: string): Promise<{ clean: boolean; text: string }> {
+  const git = programPath('git');
+  if (!git) return { clean: false, text: '' };
   const dir = await fs.mkdtemp(path.join(tmpdir(), 'orka-merge-'));
   try {
     const files = ['current', 'base', 'theirs'].map((name) => path.join(dir, name));
     await Promise.all([current, base, theirs].map((text, i) => fs.writeFile(files[i], text, 'utf8')));
     return await new Promise((resolve) =>
-      execFile('git', ['merge-file', '-p', ...files], { cwd: dir, windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' }, (error, stdout) =>
+      execFile(git, ['merge-file', '-p', ...files], { cwd: dir, windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' }, (error, stdout) =>
         // The exit code is the number of conflicts (negative on errors).
         resolve({ clean: !error, text: stdout }),
       ),

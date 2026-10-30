@@ -1,5 +1,7 @@
-import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from 'node:child_process';
-import { childEnv, resolveCommand } from '../host/commands';
+import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import * as path from 'node:path';
+import { childEnv, findExecutable, resolveCommand } from '../host/commands';
+import { killTree } from '../host/processes';
 import type { JsonSchema } from '../types';
 import { VERSION } from '../version';
 
@@ -31,6 +33,17 @@ export interface McpHttpConfig {
 
 export function isHttpConfig(config: McpServerConfig): config is McpHttpConfig {
   return typeof (config as McpHttpConfig).url === 'string';
+}
+
+/**
+ * The program of a server with a "cwd" of its own, named without a path ("start-server.cmd"): on
+ * Windows, when PATH has no such program, the one in that folder, by its full path. The server's
+ * environment keeps cmd.exe from looking in the current folder, so the bare name alone is not found.
+ */
+export function serverCommand(config: McpStdioConfig, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
+  const { command, cwd } = config;
+  if (platform !== 'win32' || !cwd || /[\\/]/.test(command) || findExecutable(command, env, platform)) return command;
+  return findExecutable(command, { PATH: path.resolve(cwd), PATHEXT: env.PATHEXT }, platform) ?? command;
 }
 
 export interface McpToolInfo {
@@ -85,10 +98,11 @@ export class McpClient {
     try {
       if (!isHttpConfig(this.config)) {
         const config = this.config;
-        const { file, args, shell } = resolveCommand(config.command, config.args ?? []);
+        const env = { ...process.env, ...(config.env ?? {}) };
+        const { file, args, shell } = resolveCommand(serverCommand(config, env), config.args ?? []);
         this.child = spawn(file, args, {
           cwd: config.cwd,
-          env: childEnv({ ...process.env, ...(config.env ?? {}) }),
+          env: childEnv(env),
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true,
           shell,
@@ -149,7 +163,7 @@ export class McpClient {
     this.child?.removeAllListeners();
     if (pid) {
       try {
-        if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
+        if (process.platform === 'win32') killTree(pid);
         else this.child?.kill();
       } catch {
         /* already gone */

@@ -1,5 +1,5 @@
 import type { SecretStore } from '@orka/app';
-import { shellEnv } from '@orka/core';
+import { programPath, shellEnv } from '@orka/core';
 import { execFile } from 'node:child_process';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -25,7 +25,9 @@ function run(file: string, args: string[], options: { env?: NodeJS.ProcessEnv; i
 
 /** PowerShell with the value in an environment variable: never on a command line, and UTF-16 safe. */
 function powershell(script: string, env: Record<string, string>): Promise<string> {
-  return run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env: shellEnv('powershell.exe', env) });
+  const file = programPath('powershell.exe');
+  if (!file) return Promise.reject(new Error('powershell.exe was not found.'));
+  return run(file, ['-NoProfile', '-NonInteractive', '-Command', script], { env: shellEnv(file, env) });
 }
 
 const PROTECT = 'ConvertFrom-SecureString -SecureString (ConvertTo-SecureString -String $env:ORKA_SECRET -AsPlainText -Force)';

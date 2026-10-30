@@ -3,5 +3,5 @@ export { findFilesByName } from './files';
 export type * from './protocol';
 export * from './settings';
 export type * from './shell';
-export { cmdLine, comspec, shLine, shQuote } from './terminal';
-export type { TerminalProgram } from './terminal';
+export { cmdLine, comspec, editorTerminal, shLine, shQuote, terminalWindow } from './terminal';
+export type { CmdForm, EditorTerminalOptions, TerminalProgram } from './terminal';
