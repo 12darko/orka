@@ -106,7 +106,8 @@ describe('Orka desktop app', { skip: (!existsSync(APP) && 'build first (npm run 
   /** Start the app without a window; resolves with its start URL. */
   function launch(folder = work) {
     app = spawn(process.execPath, [APP, folder, '--no-window'], {
-      env: { ...process.env, ORKA_HOME: home, ORKA_DEBUG: '1', ANTHROPIC_BASE_URL: baseURL, ANTHROPIC_API_KEY: 'test-key-for-fake-server' },
+      // No update check against GitHub from tests.
+      env: { ...process.env, ORKA_HOME: home, ORKA_DEBUG: '1', ORKA_NO_UPDATE_CHECK: '1', ANTHROPIC_BASE_URL: baseURL, ANTHROPIC_API_KEY: 'test-key-for-fake-server' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = '';
@@ -165,6 +166,46 @@ describe('Orka desktop app', { skip: (!existsSync(APP) && 'build first (npm run 
     rmSync(other, { recursive: true, force: true });
   });
 
+  it('lists sessions on the left, reopens one, and follows the theme and layout settings', async () => {
+    const url = await launch();
+    await browser.navigate(url);
+    await until(async () => (await text()).includes('What should we build?'), 'the chat UI');
+    assert.equal(await browser.evaluate('document.documentElement.dataset.layout'), 'ide');
+    assert.equal(await browser.evaluate('!!document.querySelector("#sidebar:not([hidden]) .side-new")'), true, 'the session list is shown');
+    // Closed, the list becomes a rail of icons, and the conversation still fills the window.
+    await browser.clickSelector('.side-head [data-action="toggle-sidebar"]');
+    await until(() => browser.evaluate('document.querySelector("#sidebar").classList.contains("collapsed")'), 'the rail');
+    assert.equal(await browser.evaluate('document.querySelector(".main-col").getBoundingClientRect().width > innerWidth - 160'), true, 'the conversation fills the window');
+    await browser.clickSelector('.side-rail [data-action="toggle-sidebar"]');
+    await until(() => browser.evaluate('!document.querySelector("#sidebar").classList.contains("collapsed")'), 'the list again');
+
+    script = [() => reply('All set.')];
+    await browser.clickSelector('#input');
+    await browser.type('Tidy up the readme');
+    await browser.clickSelector('#send');
+    await until(async () => (await text()).includes('All set.'), 'the reply');
+    // Saved when the request finished, then listed under its folder.
+    const id = await until(() => browser.evaluate('document.querySelector(".side-item .side-open[data-id]")?.dataset.id'), 'the saved session');
+    assert.match(await browser.evaluate('document.querySelector("#side-list").textContent'), /Tidy up the readme/);
+    assert.equal(await browser.evaluate(`document.querySelector('.side-open[data-id="${id}"]').closest('.side-item').classList.contains('current')`), true);
+
+    await browser.clickSelector('.side-new');
+    await until(async () => !(await text()).includes('All set.'), 'a new session');
+    await browser.clickSelector(`.side-open[data-id="${id}"]`);
+    await until(async () => (await text()).includes('All set.'), 'the session reopened');
+
+    await browser.clickSelector('#theme-switch [data-value="light"]');
+    await until(async () => (await browser.evaluate('document.documentElement.dataset.theme')) === 'light', 'the light theme');
+    assert.equal(JSON.parse(readFileSync(path.join(home, 'desktop', 'settings.json'), 'utf8'))['desktop.theme'], 'light');
+
+    // The layout is chosen as the page loads: changing it reloads the window once.
+    assert.equal(await post({ type: 'setSetting', key: 'desktop.layout', value: 'classic' }), 204);
+    await until(async () => (await browser.evaluate('document.documentElement.dataset.layout').catch(() => undefined)) === 'classic', 'the classic layout');
+    await until(async () => (await text()).includes('All set.'), 'the chat after the reload');
+    assert.equal(await browser.evaluate('!!document.querySelector("#sidebar")'), false);
+    assert.equal(await browser.evaluate('document.documentElement.dataset.theme'), 'light', 'the theme stays');
+  });
+
   it('only lets its own window in', async () => {
     const url = await launch();
     const { port } = new URL(url);
@@ -207,5 +248,32 @@ describe('Orka desktop app', { skip: (!existsSync(APP) && 'build first (npm run 
     await browser.clickSelector('[data-action="open-settings"]');
     await browser.clickSelector('[data-action="tab"][data-tab="providers"]');
     await until(async () => (await text()).includes('sk-tes••••7890'), 'the stored key hint', 120_000);
+  });
+});
+
+// orka-desktop.exe is a windowed program on Windows: started from Explorer it has no console, so
+// the log file is where a failed start can be read.
+describe('Orka desktop log', { skip: !existsSync(APP) && 'build first (npm run build -w orka-desktop)' }, () => {
+  it('records a failed start in desktop.log', async () => {
+    const busy = http.createServer();
+    await new Promise((r) => busy.listen(0, '127.0.0.1', r));
+    const home = mkdtempSync(path.join(tmpdir(), 'orka-desktop-home-'));
+    try {
+      const app = spawn(process.execPath, [APP, '--no-window', '--port', String(busy.address().port)], {
+        env: { ...process.env, ORKA_HOME: home, ORKA_NO_UPDATE_CHECK: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      app.stderr.on('data', (c) => (stderr += c));
+      const code = await new Promise((r) => app.once('exit', r));
+      assert.equal(code, 1, stderr);
+      assert.match(stderr, /EADDRINUSE/);
+      const log = readFileSync(path.join(home, 'desktop', 'desktop.log'), 'utf8');
+      assert.match(log, /Orka Desktop \S+ starting/);
+      assert.match(log, /Could not start: Error: listen EADDRINUSE/);
+    } finally {
+      busy.close();
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

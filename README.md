@@ -66,18 +66,20 @@ It runs in three places on one shared core: a **VS Code extension**, the **Orka 
 **VS Code extension (quickest):** download `orka-vscode-<version>.vsix` from the [latest release](https://github.com/12darko/orka/releases/latest), then run **Extensions: Install from VSIX…** in VS Code (1.101 or newer), or:
 
 ```bash
-code --install-extension orka-vscode-0.1.1.vsix
+code --install-extension orka-vscode-0.2.0.vsix
 ```
 
-**Desktop app for Windows:** download `orka-desktop.exe` from the same release and run it; it needs no Node.js, only Edge or Chrome for its window. A console window opens next to the app; closing it quits Orka. The file is not code-signed yet, so Windows SmartScreen may ask you to confirm the first start (**More info → Run anyway**), and on PCs where Windows' Smart App Control is on, it is blocked; use the CLI or run it from source there.
+**Desktop app for Windows:** download `orka-desktop.exe` from the same release and run it; it needs no Node.js, only Edge or Chrome for its window. Only the Orka window opens; closing it quits Orka. If it does not start, the reason is in `~/.orka/desktop/desktop.log`. The file is not code-signed yet, so Windows SmartScreen may ask you to confirm the first start (**More info → Run anyway**), and on PCs where Windows' Smart App Control is on, it is blocked; use the CLI or run it from source there.
 
 **CLI:** with **Node.js 22+**, install the `orka` command from the release (it is not on npm yet):
 
 ```bash
-npm install -g https://github.com/12darko/orka/releases/download/v0.1.1/orka-agent-0.1.1.tgz
+npm install -g https://github.com/12darko/orka/releases/download/v0.2.0/orka-agent-0.2.0.tgz
 ```
 
-The extension, the desktop app and the CLI package each include a `THIRD_PARTY_NOTICES.txt` with the licenses of the open-source software inside them. To hear about new versions, **Watch → Custom → Releases** on GitHub.
+The extension, the desktop app and the CLI package each include a `THIRD_PARTY_NOTICES.txt` with the licenses of the open-source software inside them.
+
+**New versions:** once a day Orka asks GitHub whether a newer release is out and, if so, tells you with a link to its page. It never downloads or installs anything, and GitHub only sees your IP address and Orka's version. **Settings → Control** shows your version and checks on request; turn the daily check off with the setting `orka.updates.check` (VS Code) or `updates.check` (desktop), `"updateCheck": false` in the CLI config, or the environment variable `ORKA_NO_UPDATE_CHECK=1`. You can also **Watch → Custom → Releases** on GitHub.
 
 **From source** (the desktop app on other systems, or to change Orka): you need **Node.js 22+** and **git**. The browser tool and the desktop app use an installed **Chrome or Edge**.
 
@@ -95,7 +97,7 @@ npm run package
 ```
 
 ```bash
-code --install-extension packages/vscode-extension/dist/orka-vscode-0.1.1.vsix
+code --install-extension packages/vscode-extension/dist/orka-vscode-0.2.0.vsix
 ```
 
 **Desktop app** — run it, or build the single executable yourself (`packages/desktop/dist/orka-desktop.exe`, or `orka-desktop` on Linux):
@@ -293,9 +295,20 @@ The same core in the terminal: chat, Supervisor, sub-agents, Skills, MCP, permis
 
 ## Orka Desktop
 
-Orka in its own window, without VS Code: the same chat, Agents panel, settings, Skills, MCP, history, diffs and approvals.
+Orka in its own window, without VS Code: the same chat, Agents panel, settings, Skills, MCP, history, diffs and approvals, in a calm layout of its own.
 
+<p align="center">
+  <img src="docs/images/desktop.png" width="90%" alt="Orka Desktop: sessions on the left, the conversation in the middle, the plan and changes on the right">
+</p>
+
+- **Sessions on the left:** the tasks of your recent project folders, newest first, with a search box. **New session** starts one in the open folder (the **+** next to a folder starts one there), clicking a session opens it (switching folders when needed), and the bin deletes it.
+- **The conversation in the middle**, in a readable column. Tool calls are quiet one-line entries that open to show their result; approvals, sub-agents and the Supervisor keep their cards.
+- **The message box holds its controls:** **+** attaches a file (`@`), adds an image or picks a skill or command (`/`); next to it the permission mode, on the right the main agent's model and the send button. A new session starts with the box in the middle of the window and a few suggestions under it.
+- **The plan and the changes on the right**, in their own panel while a task has them; keep or revert files and parts of files there.
+- **Shortcuts:** Ctrl+B shows or hides the sessions (closed, they become a narrow rail of icons), Ctrl+K searches them, Ctrl+Alt+B shows or hides the plan and changes, Ctrl+Alt+N starts a new session. A finished reply has a copy button, and while you scroll back a button takes you to the newest message.
+- **Orka's own light and dark theme**: it follows the system, or pick one at the bottom of the session list or in **Settings → Control → Appearance** (setting `desktop.theme`). The single-column window of earlier versions is still there: **Layout → Single column** (`desktop.layout`).
 - Open a project with **Open folder…** (recent folders are listed), or start with a folder: `orka-desktop.exe D:\Projects\Game` (from source: `node packages/desktop/dist/orka-desktop.js D:\Projects\Game`).
+- `orka-desktop.exe` is a windowed program: only the Orka window opens. If it cannot start, it says why in a message box, and `~/.orka/desktop/desktop.log` has the details. Run from a terminal, it prints nothing (`--version`, `--help`) unless its output is redirected; `node packages/desktop/dist/orka-desktop.js` prints as usual.
 - `orka-desktop.exe` is a single file with Node.js built in; on first start it unpacks its UI files to `~/.orka/desktop/runtime/`.
 - The window is Edge or Chrome in **app mode** (no tabs or address bar, a separate profile), so there is no extra Electron download. Closing the window quits Orka.
 - The UI is served by a local server bound to `127.0.0.1` on a random port, with a per-window secret cookie (the window gets it through a one-time start link, so the browser's command line holds nothing reusable); requests with another host name (DNS rebinding) or not coming from the page itself are rejected, and a strict CSP blocks external scripts and images.

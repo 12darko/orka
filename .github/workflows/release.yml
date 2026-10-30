@@ -26,7 +26,16 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npm run desktop:exe
-      - run: ./packages/desktop/dist/orka-desktop.exe --version
+      # A windowed program (no console): PowerShell neither waits for it nor shows its output
+      # unless both are asked for.
+      - name: orka-desktop.exe --version
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP orka-desktop-version.txt
+          $p = Start-Process (Resolve-Path packages/desktop/dist/orka-desktop.exe).Path -ArgumentList '--version' -RedirectStandardOutput $out -Wait -PassThru
+          $version = Get-Content $out -Raw
+          Write-Output $version
+          if ($p.ExitCode -ne 0 -or -not $version) { throw "orka-desktop.exe --version printed nothing (exit code $($p.ExitCode))." }
       - uses: actions/upload-artifact@v7
         with:
           name: orka-desktop-exe
@@ -85,7 +94,7 @@ jobs:
           ## Install
 
           - **VS Code** (1.101 or newer): download \`orka-vscode-$version.vsix\` below, then run **Extensions: Install from VSIX…**, or \`code --install-extension orka-vscode-$version.vsix\`.
-          - **Desktop app for Windows:** download \`orka-desktop.exe\` and run it. It needs Edge or Chrome for its window, not Node.js. A console window opens next to the app; closing it quits Orka. The file is not code-signed yet: SmartScreen asks you to confirm the first start (**More info → Run anyway**), and where Windows' Smart App Control is on, it is blocked.
+          - **Desktop app for Windows:** download \`orka-desktop.exe\` and run it. It needs Edge or Chrome for its window, not Node.js. Only the Orka window opens; closing it quits Orka. If it does not start, see \`~/.orka/desktop/desktop.log\`. The file is not code-signed yet: SmartScreen asks you to confirm the first start (**More info → Run anyway**), and where Windows' Smart App Control is on, it is blocked.
           - **CLI** (Node.js 22 or newer): \`npm install -g https://github.com/$GITHUB_REPOSITORY/releases/download/v$version/orka-agent-$version.tgz\`, then run \`orka\`.
 
           Setup, providers and settings: [README](https://github.com/$GITHUB_REPOSITORY#readme). The licenses of the open-source software inside each app are in its \`THIRD_PARTY_NOTICES.txt\` (for the desktop app: \`orka-desktop-THIRD_PARTY_NOTICES.txt\` below).

@@ -45,7 +45,16 @@ jobs:
       - run: npm run build
       - run: npm run package
       - run: npm run desktop:exe
-      - run: ./packages/desktop/dist/orka-desktop.exe --version
+      # A windowed program (no console): PowerShell neither waits for it nor shows its output
+      # unless both are asked for.
+      - name: orka-desktop.exe --version
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP orka-desktop-version.txt
+          $p = Start-Process (Resolve-Path packages/desktop/dist/orka-desktop.exe).Path -ArgumentList '--version' -RedirectStandardOutput $out -Wait -PassThru
+          $version = Get-Content $out -Raw
+          Write-Output $version
+          if ($p.ExitCode -ne 0 -or -not $version) { throw "orka-desktop.exe --version printed nothing (exit code $($p.ExitCode))." }
       # The minified CLI the release attaches, through the CLI's end-to-end tests.
       - run: npm run prepublishOnly -w orka-agent
       - run: node --test "test/*.test.mjs"

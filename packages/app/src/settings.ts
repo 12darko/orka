@@ -101,6 +101,10 @@ export interface AppSettings {
   browserPath?: string;
   /** The hooks come from the open folder's settings (they run commands, so they need the user's OK first). */
   hooksFromWorkspace: boolean;
+  /** Look for a newer Orka release once a day (notify only). */
+  checkUpdates: boolean;
+  /** The desktop app's window: sessions and side panels ("ide") or one column ("classic"), and its colors. */
+  desktop: { layout: 'ide' | 'classic'; theme: 'system' | 'light' | 'dark' };
 }
 
 export function isCustomRef(ref: string): ref is `custom:${string}` {
@@ -198,6 +202,11 @@ export function readSettings(c: SettingsStore): AppSettings {
     browserPath: c.get<string>('browser.path', '').trim() || undefined,
     hooksFromWorkspace: c.scopeOf?.('hooks') === 'workspace',
     mcp: { enabled: c.get<boolean>('mcp.enabled', true), servers: readMcpServers(c.get<Record<string, unknown>>('mcpServers', {})) },
+    checkUpdates: c.get<boolean>('updates.check', true) !== false,
+    desktop: {
+      layout: c.get<string>('desktop.layout', '') === 'classic' ? 'classic' : 'ide',
+      theme: (['light', 'dark'] as const).find((v) => v === c.get<string>('desktop.theme', '')) ?? 'system',
+    },
   };
 }
 
@@ -286,7 +295,14 @@ export const WEBVIEW_SETTINGS: Record<string, (value: unknown) => boolean> = {
   'claudeCode.enabled': (v) => typeof v === 'boolean',
   'claudeCode.autoUpdate': (v) => typeof v === 'boolean',
   'claudeCode.effort': (v) => ['', 'low', 'medium', 'high', 'xhigh', 'max'].includes(v as string),
+  'updates.check': (v) => typeof v === 'boolean',
+  // Desktop only (the VS Code extension ignores them).
+  'desktop.layout': (v) => v === 'ide' || v === 'classic',
+  'desktop.theme': (v) => v === 'system' || v === 'light' || v === 'dark',
 };
+
+/** Settings only the desktop app has. */
+export const DESKTOP_SETTINGS = new Set(['desktop.layout', 'desktop.theme']);
 
 /**
  * Settings a folder's own settings must not change: programs Orka starts, where API keys are sent,
@@ -308,4 +324,15 @@ export const MACHINE_SETTINGS = new Set([
 ]);
 
 /** Settings that describe the user rather than a project; written globally unless already set elsewhere. */
-export const USER_LEVEL_SETTINGS = new Set(['mcp.enabled', 'claudeCode.enabled', 'claudeCode.autoUpdate', 'language', 'skills.disabled', 'skills.enabled', 'pricing', ...MACHINE_SETTINGS]);
+export const USER_LEVEL_SETTINGS = new Set([
+  'mcp.enabled',
+  'claudeCode.enabled',
+  'claudeCode.autoUpdate',
+  'language',
+  'skills.disabled',
+  'skills.enabled',
+  'pricing',
+  'updates.check',
+  ...DESKTOP_SETTINGS,
+  ...MACHINE_SETTINGS,
+]);

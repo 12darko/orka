@@ -4,6 +4,7 @@ import { findFilesByName, USER_SKILLS_DIR } from '@orka/app';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, type FSWatcher, mkdirSync, promises as fs, statSync, watch } from 'node:fs';
 import * as path from 'node:path';
+import { log } from './log';
 import { openExternal, openTerminalWindow, pickFile, pickFolder } from './native';
 import { OsSecretStore } from './secrets';
 import type { UiServer } from './server';
@@ -156,8 +157,12 @@ export class DesktopShell implements AppShell, Disposable {
   }
 
   async message(level: 'info' | 'warning' | 'error', text: string, options: { modal?: boolean; detail?: string } = {}, ...actions: string[]): Promise<string | undefined> {
-    // Errors also go to the terminal the app was started from, where they outlive the in-window notice.
-    if (level === 'error') console.error(`[orka] ${text}${options.detail ? `\n${options.detail}` : ''}`);
+    // Errors also go to the terminal the app was started from and to the log, where they outlive the in-window notice.
+    if (level === 'error') {
+      const line = `${text}${options.detail ? `\n${options.detail}` : ''}`;
+      console.error(`[orka] ${line}`);
+      log(line);
+    }
     const answer = this.ask({ kind: 'message', level, text, detail: options.detail, modal: !!options.modal, actions });
     // A notice without choices does not hold anyone up.
     if (!options.modal && !actions.length) return undefined;

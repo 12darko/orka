@@ -21,6 +21,8 @@ const exe = path.join(dist, process.platform === 'win32' ? 'orka-desktop.exe' : 
 // Must match src/sea.ts.
 const MANIFEST_ASSET = 'orka-manifest.json';
 const FUSE = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
+// The PE optional header's Subsystem for a windowed program (node.exe is IMAGE_SUBSYSTEM_WINDOWS_CUI, 3).
+const IMAGE_SUBSYSTEM_WINDOWS_GUI = 2;
 
 // The app needs Node 22 (see engines), and the executable is this very Node.
 const [major] = process.versions.node.split('.').map(Number);
@@ -74,7 +76,7 @@ execFileSync(process.execPath, ['--experimental-sea-config', config], { cwd: roo
 //    version and icon (otherwise Explorer, Task Manager and SmartScreen call it "Node.js
 //    JavaScript Runtime"), which also drops the signature. That comes after the injection: the
 //    injection moves the resources to the end of the file, where changing their size shifts
-//    nothing else.
+//    nothing else. It also becomes a windowed program, so starting it opens no console window.
 copyFileSync(process.execPath, exe);
 if (process.platform === 'darwin') execFileSync('codesign', ['--remove-signature', exe], { stdio: 'inherit' });
 await inject(exe, 'NODE_SEA_BLOB', readFileSync(blob), {
@@ -109,12 +111,19 @@ function nodeLicense() {
 }
 
 /**
- * Puts Orka's icon and version information into the copied node.exe. resedit writes the file
- * without Node's Authenticode signature, which would no longer match anyway.
+ * Puts Orka's icon and version information into the copied node.exe and makes it a windowed
+ * (GUI subsystem) program. resedit writes the file without Node's Authenticode signature, which
+ * would no longer match anyway.
  */
 function brandWindowsExecutable(file) {
   const binary = ResEdit.NtExecutable.from(readFileSync(file), { ignoreCert: true });
   const resources = ResEdit.NtExecutableResource.from(binary);
+
+  // node.exe is a console program: started from Explorer, Windows gives it a console window of
+  // its own, and closing that window kills the app. As a windowed program it gets none. Node then
+  // has no stdout or stderr unless the caller redirects them (src/log.ts keeps a log file), and the
+  // console programs it starts open a window each unless they are spawned with windowsHide.
+  binary.newHeader.optionalHeader.subsystem = IMAGE_SUBSYSTEM_WINDOWS_GUI;
 
   const media = path.join(root, '..', 'vscode-extension', 'media');
   const ico = icoFromPngs([path.join(media, 'orka-256.png'), path.join(media, 'orka-128.png')]);
@@ -143,6 +152,18 @@ function brandWindowsExecutable(file) {
   info.outputToResourceEntries(resources.entries);
   resources.outputResource(binary);
   writeFileSync(file, Buffer.from(binary.generate()));
+  if (peSubsystem(readFileSync(file)) !== IMAGE_SUBSYSTEM_WINDOWS_GUI) fail(`${file} is still a console program.`);
+}
+
+/**
+ * The Subsystem field of a PE file, read without resedit: e_lfanew at 0x3C points to "PE\0\0",
+ * followed by the 20-byte COFF header and the optional header, which has Subsystem at offset 68
+ * in both PE32 and PE32+.
+ */
+function peSubsystem(bytes) {
+  const pe = bytes.readUInt32LE(0x3c);
+  if (bytes.readUInt32LE(pe) !== 0x00004550) fail('Not a PE file.');
+  return bytes.readUInt16LE(pe + 4 + 20 + 68);
 }
 
 /** An .ico holding the PNG images as they are (Windows reads PNG icon images). */

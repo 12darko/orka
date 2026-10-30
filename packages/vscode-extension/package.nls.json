@@ -101,5 +101,6 @@
   "config.browser.path": "Chrome, Edge or Chromium executable the agent's browser tool uses to look at pages (headless). Empty = auto-detect the installed browser.",
   "command.handoffFreebuff": "Continue in Freebuff (free terminal agent)",
   "config.memory.learn": "After a task that changed code, ask the agent for up to 3 lasting lessons about the project (working commands, pitfalls, conventions) and add the new ones to .project-ai/lessons.md. Only in folders that have a .project-ai/ folder (Orka: Initialize Project Memory).",
+  "config.updates.check": "Once a day, look on GitHub for a newer Orka release and say so (nothing is downloaded or installed). GitHub sees your IP address and Orka's version, nothing about your project.",
   "config.subagents.parallelWorkers": "Workers called together run side by side, each in its own copy of the project (without dependency folders, so they edit but do not build); their changes are merged into the project afterwards and overlapping edits are reported to the main agent. Needs git and orka.trackCommandChanges. Off: workers run one at a time in the project."
 }

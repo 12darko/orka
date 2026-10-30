@@ -1,10 +1,12 @@
-import { AppController } from '@orka/app';
+import { AppController, readSettings } from '@orka/app';
+import { t } from '@orka/core';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 import { DesktopShell } from './DesktopShell';
-import { openAppWindow, openExternal } from './native';
-import { appDir } from './sea';
+import { log, logFile, startLog } from './log';
+import { openAppWindow, openExternal, showErrorBox } from './native';
+import { appDir, isSingleExecutable } from './sea';
 import { UiServer } from './server';
 
 declare const ORKA_VERSION: string;
@@ -14,6 +16,11 @@ const VERSION = typeof ORKA_VERSION === 'string' ? ORKA_VERSION : '0.0.0-dev';
 const IDLE_EXIT_MS = 20_000;
 /** Give up when no window connects at all. */
 const START_TIMEOUT_MS = 90_000;
+/**
+ * orka-desktop.exe on Windows is a windowed program (scripts/build-exe.mjs): it has no console,
+ * so a failed start also shows a message box.
+ */
+const NO_CONSOLE = process.platform === 'win32' && isSingleExecutable();
 
 const HELP = `Orka Desktop ${VERSION}
 
@@ -59,6 +66,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
   const args = parsed;
   const home = process.env.ORKA_HOME || path.join(homedir(), '.orka');
+  startLog(path.join(home, 'desktop', 'desktop.log'));
+  log(`Orka Desktop ${VERSION} starting (Node ${process.versions.node}${args.window ? '' : ', no window'})`);
   // dist, or the same files extracted from orka-desktop.exe.
   const files = appDir(home, VERSION);
   const uiStateFile = path.join(home, 'desktop', 'ui-state.json');
@@ -67,10 +76,12 @@ export async function main(argv: readonly string[]): Promise<number> {
   let shell: DesktopShell | undefined;
   let controller: AppController | undefined;
   let idleTimer: NodeJS.Timeout | undefined;
+  let windowConnected = false;
   let stopping = false;
   const shutdown = async (code: number) => {
     if (stopping) return;
     stopping = true;
+    log(`Quitting (exit code ${code})`);
     await controller?.dispose().catch(() => undefined);
     shell?.dispose();
     server.close();
@@ -90,7 +101,10 @@ export async function main(argv: readonly string[]): Promise<number> {
         /* only the unsent draft is lost */
       }
     },
+    // The same reading of the settings as the UI's, so the page and the UI agree on the layout.
+    getLook: () => (shell ? readSettings(shell.settings).desktop : { layout: 'ide', theme: 'system' }),
     onConnect: () => {
+      windowConnected = true;
       clearTimeout(idleTimer);
       shell?.resendDialogs();
     },
@@ -116,12 +130,26 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (!window) {
     // No Chrome/Edge/Chromium: the default browser will do.
     process.stdout.write('No Edge or Chrome found; opening Orka in your default browser.\n');
+    log('No Edge or Chrome found; opening the default browser.');
     await openExternal(server.startUrl);
   }
   setTimeout(() => {
-    if (!server.connected) void shutdown(1);
+    // A window that connected and closed again quits through the idle timer.
+    if (windowConnected) return;
+    void reportFailedStart(t("Orka's window did not connect within {n} seconds.", { n: START_TIMEOUT_MS / 1000 }), true).finally(() => shutdown(1));
   }, START_TIMEOUT_MS).unref();
   return new Promise<number>(() => undefined);
+}
+
+/** On stderr and in the log; in a message box too from orka-desktop.exe, unless it was started without a window. */
+async function reportFailedStart(error: unknown, window: boolean): Promise<void> {
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  process.stderr.write(`orka-desktop: ${detail}\n`);
+  log(`Could not start: ${detail}`);
+  if (!NO_CONSOLE || !window) return;
+  const file = logFile();
+  const text = [t('Orka could not start.'), error instanceof Error ? error.message : String(error), file ? t('Details are in {file}.', { file }) : ''];
+  await showErrorBox('Orka Desktop', text.filter(Boolean).join('\n\n'));
 }
 
 function readJson(file: string): unknown {
@@ -133,11 +161,9 @@ function readJson(file: string): unknown {
 }
 
 if (require.main === module) {
-  main(process.argv.slice(2)).then(
+  const argv = process.argv.slice(2);
+  main(argv).then(
     (code) => process.exit(code),
-    (error: unknown) => {
-      process.stderr.write(`orka-desktop: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
-      process.exit(1);
-    },
+    (error: unknown) => void reportFailedStart(error, !argv.includes('--no-window')).finally(() => process.exit(1)),
   );
 }

@@ -1,0 +1,77 @@
+/* Orka desktop: the chat UI reads VS Code's theme variables; outside VS Code they come from here.
+   Orka's own palette: soft graphite neutrals and the blue of its logo. Every color is
+   light-dark(light, dark): it follows the system, unless html[data-theme] (the desktop.theme
+   setting) picks one. */
+:root {
+  color-scheme: light dark;
+  --vscode-font-family: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --vscode-font-size: 13px;
+  --vscode-editor-font-family: 'Cascadia Code', 'Cascadia Mono', Consolas, 'SF Mono', Menlo, monospace;
+  --vscode-foreground: light-dark(#2d2d2b, #d9d9d5);
+  --vscode-descriptionForeground: light-dark(#6c6c66, #9b9b95);
+  --vscode-sideBar-background: light-dark(#fbfbfa, #232322);
+  --vscode-editor-background: light-dark(#ffffff, #262625);
+  --vscode-editorWidget-background: light-dark(#ffffff, #2b2b29);
+  --vscode-panel-border: light-dark(#e2e2de, #383836);
+  --vscode-input-background: light-dark(#ffffff, #2b2b29);
+  --vscode-input-foreground: light-dark(#2d2d2b, #d9d9d5);
+  --vscode-input-border: light-dark(#d5d5d0, #40403d);
+  --vscode-button-background: light-dark(#2563eb, #3b72e0);
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: light-dark(#1d55d0, #4a7fe8);
+  --vscode-button-secondaryBackground: light-dark(#ececea, #333331);
+  --vscode-button-secondaryForeground: light-dark(#2d2d2b, #d9d9d5);
+  --vscode-button-secondaryHoverBackground: light-dark(#e2e2df, #3c3c39);
+  --vscode-dropdown-background: light-dark(#ffffff, #2b2b29);
+  --vscode-dropdown-foreground: light-dark(#2d2d2b, #d9d9d5);
+  --vscode-dropdown-border: light-dark(#d5d5d0, #40403d);
+  --vscode-focusBorder: light-dark(#2563eb, #6b9ef5);
+  --vscode-textLink-foreground: light-dark(#1d4ed8, #82acf7);
+  --vscode-textCodeBlock-background: light-dark(#f2f2f0, #1d1d1c);
+  --vscode-errorForeground: light-dark(#c4262e, #f2777a);
+  --vscode-editorWarning-foreground: light-dark(#a86f00, #d9a93f);
+  --vscode-testing-iconPassed: light-dark(#1f8a52, #4fc28a);
+  --vscode-inputValidation-errorBackground: light-dark(#fbe4e4, #4a1f22);
+  --vscode-toolbar-hoverBackground: light-dark(rgba(40, 40, 30, 0.07), rgba(220, 220, 210, 0.1));
+  --vscode-list-hoverBackground: light-dark(#f0f0ee, #2e2e2c);
+  --vscode-gitDecoration-addedResourceForeground: light-dark(#2f8a4f, #5fbf86);
+  --vscode-gitDecoration-modifiedResourceForeground: light-dark(#9a6b00, #d6b36a);
+  --vscode-gitDecoration-deletedResourceForeground: light-dark(#c4402e, #e0705f);
+  --vscode-charts-yellow: light-dark(#b58407, #e2b340);
+  --vscode-terminal-ansiCyan: light-dark(#0f9488, #2dd4bf);
+  --vscode-editor-foreground: light-dark(#141413, #f3f3f0);
+  /* Around the panes: the session list sits on it. */
+  --window-bg: light-dark(#f1f1ef, #1a1a19);
+  /* Your messages. */
+  --bubble: light-dark(#efefec, #333331);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--window-bg);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--vscode-descriptionForeground) 40%, transparent) transparent;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--vscode-focusBorder) 30%, transparent);
+}
+
+/* Classic layout: a window is wider than VS Code's side bar, so the chat keeps a readable width. */
+:root:not([data-layout='ide']) #app {
+  max-width: 900px;
+  margin: 0 auto;
+  background: var(--vscode-sideBar-background);
+  border-left: 1px solid var(--vscode-panel-border);
+  border-right: 1px solid var(--vscode-panel-border);
+}

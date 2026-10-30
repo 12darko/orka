@@ -27,5 +27,12 @@ export function webviewBuilds(outdir, { production = false } = {}) {
       bundle: true,
       minify: production,
     },
+    // The desktop app's IDE layout (only its page loads it).
+    {
+      entryPoints: [path.join(here, 'webview/ide.css')],
+      outfile: path.join(outdir, 'ide.css'),
+      bundle: true,
+      minify: production,
+    },
   ];
 }

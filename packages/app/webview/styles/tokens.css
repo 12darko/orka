@@ -1,0 +1,19 @@
+/* Sizes as tokens. The panel layout (VS Code's side bar, the desktop app's classic window) keeps
+   the sizes it always had at a 13px base; the desktop IDE layout (ide.css) raises the base and the
+   radii, and every text size follows. */
+:root {
+  --font-base: 13px;
+  --fs-10: calc(var(--font-base) * 10 / 13);
+  --fs-10-5: calc(var(--font-base) * 10.5 / 13);
+  --fs-11: calc(var(--font-base) * 11 / 13);
+  --fs-11-5: calc(var(--font-base) * 11.5 / 13);
+  --fs-12: calc(var(--font-base) * 12 / 13);
+  --fs-12-5: calc(var(--font-base) * 12.5 / 13);
+  --fs-13: var(--font-base);
+  --fs-15: calc(var(--font-base) * 15 / 13);
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-bubble: 10px;
+}

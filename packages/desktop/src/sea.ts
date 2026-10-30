@@ -23,6 +23,11 @@ function singleExecutable(): Sea | undefined {
   }
 }
 
+/** Running as orka-desktop.exe (a windowed program on Windows), not from dist with Node. */
+export function isSingleExecutable(): boolean {
+  return singleExecutable() !== undefined;
+}
+
 /**
  * The folder with the files the app reads at runtime (the chat UI, theme.css, icon.png, built-in
  * skills): dist, next to the script. The single-file executable carries them as assets instead and

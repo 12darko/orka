@@ -3,7 +3,8 @@
   Standalone preview of the chat webview for UI work: stubs the VS Code API, applies VS Code-like
   theme variables and replays a scripted agent session. Build first (npm run build), then open
   this file in a browser. Append ?light for the light theme, ?empty for the empty state, ?tr for Turkish,
-  ?settings=skills (or agents/providers/control) to open a settings tab.
+  ?settings=skills (or agents/providers/control) to open a settings tab, ?ide for the desktop app's
+  window (its IDE layout and its own theme), with ?collapsed for its sidebar closed.
 -->
 <html lang="en">
 <head>
@@ -11,8 +12,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Orka – webview preview</title>
   <link rel="stylesheet" href="../dist/webview.css">
+  <script>
+    // ?ide: the desktop page sets these attributes and loads these two stylesheets.
+    if (new URLSearchParams(location.search).has('ide')) {
+      document.documentElement.dataset.layout = 'ide';
+      document.documentElement.dataset.theme = new URLSearchParams(location.search).has('light') ? 'light' : 'dark';
+      document.write('<link rel="stylesheet" href="../dist/ide.css"><link rel="stylesheet" href="desktop-theme.css">');
+    }
+  </script>
   <style>
-    :root {
+    /* VS Code's fonts; ?ide uses the desktop theme's instead. */
+    html:not([data-layout]) {
       --vscode-font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
       --vscode-font-size: 13px;
       --vscode-editor-font-family: Consolas, 'Cascadia Code', monospace;
@@ -80,15 +90,19 @@
       --vscode-terminal-ansiCyan: #0f8a7a;
       --vscode-editor-foreground: #1f1f1f;
     }
-    body { max-width: 420px; margin: 0 auto; border-left: 1px solid #8884; border-right: 1px solid #8884; }
+    html:not([data-layout]) body { max-width: 420px; margin: 0 auto; border-left: 1px solid #8884; border-right: 1px solid #8884; }
   </style>
 </head>
 <body>
   <div id="app"></div>
   <script>
     const params = new URLSearchParams(location.search);
-    document.documentElement.className = params.has('light') ? 'light' : 'dark';
+    const ide = params.has('ide');
+    if (!ide) document.documentElement.className = params.has('light') ? 'light' : 'dark';
+    let theme = params.has('light') ? 'light' : 'dark';
     const sent = [];
+    const ago = (s) => new Date(Date.now() - s * 1000).toISOString();
+    const task = (id, title, updated, requests = 1) => ({ id, title, createdAt: ago(updated + 600), updatedAt: ago(updated), requests });
     window.acquireVsCodeApi = () => ({
       postMessage(message) {
         sent.push(message);
@@ -112,9 +126,22 @@
             { type: '+', text: '        Ready.Set(player, false);' }, { type: ' ', text: '    }' } ] },
         ] }), 60);
         if (message.type === 'setSetting' && message.key === 'language') setTimeout(() => { lang = message.value === 'tr' ? 'tr' : 'en'; deliver({ type: 'config', config: makeConfig(false) }); }, 0);
+        if (message.type === 'setSetting' && message.key === 'desktop.theme') setTimeout(() => { theme = message.value; deliver({ type: 'config', config: makeConfig(false) }); }, 0);
+        if (message.type === 'listSessions') setTimeout(() => deliver({ type: 'sessions', taskId: 't-now', groups: [
+          { folder: root, name: 'LobbyDemo', tasks: [
+            task('t-now', L('Rework the lobby in my Unity project: add a ready state and a 4-player limit.', 'Unity projemde lobby sistemini yeniden düzenle: hazır (ready) durumu ekle ve 4 oyuncu sınırı koy.'), 120, 3),
+            task('t-2', L('Fix the jitter when the camera follows the player', 'Kamera oyuncuyu takip ederken oluşan titremeyi düzelt'), 5400),
+            task('t-3', L('Explain the networking architecture', 'Networking mimarisini açıkla'), 2 * 86400),
+            task('t-4', L('Add a settings menu with volume sliders', 'Ses kaydırıcılarıyla bir ayarlar menüsü ekle'), 4 * 86400, 2),
+          ] },
+          { folder: 'D:/game/SharedLib', name: 'SharedLib', tasks: [
+            task('s-1', L('Write unit tests for the inventory system', 'Envanter sistemi için unit testler yaz'), 3 * 3600, 2),
+            task('s-2', L('Upgrade the package to .NET 9', 'Paketi .NET 9\'a yükselt'), 6 * 86400),
+          ] },
+        ] }), 0);
         if (message.type === 'searchFiles') setTimeout(() => deliver({ type: 'fileMatches', query: message.query, files: ['Assets/Scripts/Net/LobbyManager.cs', 'Assets/Scripts/UI/LobbyView.cs'].filter((f) => f.toLowerCase().includes(message.query.toLowerCase())) }), 0);
       },
-      getState: () => undefined,
+      getState: () => (params.has('collapsed') ? { sidebarClosed: true } : undefined),
       setState: () => {},
     });
 
@@ -150,6 +177,9 @@
         workspaceOpen: true,
         folders: [{ name: 'LobbyDemo', path: root }, { name: 'SharedLib', path: 'D:/game/SharedLib' }],
         folder: root,
+        canOpenFolder: ide,
+        app: { version: '0.2.0', checkUpdates: true, checkedAt: Date.now() - 3600e3 },
+        ui: ide ? { layout: 'ide', theme } : undefined,
         skillsEnabled: true,
         skills: [
           skill('code-review', 'Reviewing code or a diff for bugs, risks and quality.', 'builtin'),

@@ -117,6 +117,30 @@ export interface ConfigView {
   externalAgents: ExternalAgentView[];
   pricing: PriceTable;
   settings: SettingsView;
+  /** Orka's own version and the newest release, if an update check found one. */
+  app: AppVersionView;
+  /** Desktop only: the window's layout and color theme. */
+  ui?: { layout: 'ide' | 'classic'; theme: 'system' | 'light' | 'dark' };
+}
+
+export interface AppVersionView {
+  version: string;
+  /** Check for new Orka versions once a day (setting updates.check). */
+  checkUpdates: boolean;
+  /** A newer release than the one running. */
+  update?: { version: string; url: string };
+  /** When the last check ran (ms since epoch). */
+  checkedAt?: number;
+  /** The last check got no answer: why. */
+  error?: string;
+  checking?: boolean;
+}
+
+/** One project folder in the desktop app's session list, with its newest tasks. */
+export interface SessionGroup {
+  folder: string;
+  name: string;
+  tasks: TaskSummary[];
 }
 
 export interface ExternalAgentView {
@@ -173,6 +197,8 @@ export type ToWebview =
   | { type: 'showSettings'; tab?: SettingsTab }
   | { type: 'showHistory' }
   | { type: 'history'; tasks: TaskSummary[]; currentId?: string }
+  /** Desktop: the tasks of the recent folders, for the session list; taskId: the task open now (saved or not). */
+  | { type: 'sessions'; groups: SessionGroup[]; taskId?: string }
   | { type: 'fileMatches'; query: string; files: string[] }
   | { type: 'hunks'; path: string; hunks: HunkView[] }
   | { type: 'dialog'; id: string; dialog: DialogView }
@@ -186,7 +212,8 @@ export type FromWebview =
   | { type: 'stop' }
   /** Go back to just before this user message (conversation and files). */
   | { type: 'rewind'; id: string }
-  | { type: 'newTask' }
+  /** A new task; with a folder (desktop), in that recent folder. */
+  | { type: 'newTask'; folder?: string }
   | { type: 'compact' }
   | { type: 'approve'; id: string; approved: boolean; feedback?: string; always?: boolean }
   | { type: 'previewApproval'; id: string }
@@ -204,13 +231,19 @@ export type FromWebview =
   /** Continue the task in an external agent; text: what the user typed but did not send. */
   | { type: 'handoff'; agent: string; text?: string }
   | { type: 'checkForUpdates' }
+  /** Look for a newer Orka release now. */
+  | { type: 'checkAppUpdate' }
+  /** Open the release page of the update found. */
+  | { type: 'openRelease' }
   | { type: 'pickClaudeExecutable' }
   | { type: 'resetClaudeExecutable' }
   | { type: 'initMemory' }
   | { type: 'openSettings' }
   | { type: 'listTasks' }
-  | { type: 'openTask'; id: string }
-  | { type: 'deleteTask'; id: string }
+  | { type: 'listSessions' }
+  /** folder: a recent folder the task belongs to (desktop session list); default the current one. */
+  | { type: 'openTask'; id: string; folder?: string }
+  | { type: 'deleteTask'; id: string; folder?: string }
   | { type: 'searchFiles'; query: string }
   | { type: 'openDiff'; path: string }
   | { type: 'openFile'; path: string }

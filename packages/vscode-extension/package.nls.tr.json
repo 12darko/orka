@@ -101,5 +101,6 @@
   "config.browser.path": "Agent'ın browser aracının sayfalara bakmak için kullandığı Chrome, Edge ya da Chromium (headless). Boş = kurulu tarayıcıyı otomatik bul.",
   "command.handoffFreebuff": "Freebuff'ta Devam Et (ücretsiz terminal agent'ı)",
   "config.memory.learn": "Kod değiştiren bir görevden sonra agent'tan proje hakkında en fazla 3 kalıcı ders (çalışan komutlar, tuzaklar, kurallar) iste ve yenilerini .project-ai/lessons.md dosyasına ekle. Yalnızca .project-ai/ klasörü olan projelerde (Orka: Proje Hafızasını Başlat).",
+  "config.updates.check": "Günde bir kez GitHub'da daha yeni bir Orka sürümü olup olmadığına bak ve varsa söyle (hiçbir şey indirilmez ya da kurulmaz). GitHub IP adresinizi ve Orka'nın sürümünü görür; projenizle ilgili hiçbir şeyi görmez.",
   "config.subagents.parallelWorkers": "Birlikte çağrılan worker'lar yan yana, her biri projenin kendi kopyasında çalışır (bağımlılık klasörleri olmadan; düzenler ama derlemez); değişiklikleri sonra projeye birleştirilir, çakışan düzenlemeler ana agent'a bildirilir. git ve orka.trackCommandChanges gerekir. Kapalı: worker'lar projede tek tek çalışır."
 }

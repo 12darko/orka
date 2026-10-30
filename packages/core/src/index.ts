@@ -33,6 +33,8 @@ export {
 export * from './ui/transcript';
 export { type CostEstimate, estimateCost, isPrice, type Price, type PriceTable } from './usage/pricing';
 export { FileTaskStore, newTaskId, type TaskSnapshot, type TaskSummary } from './persistence/TaskStore';
+export { VERSION } from './version';
+export { checkAppUpdate, isNewerVersion, LATEST_RELEASE_API, releasePageUrl, type UpdateCheckOptions, type UpdateCheckResult } from './updates/UpdateCheck';
 export * from './i18n';
 export { systemLocale } from './i18n/systemLocale';
 export { copyToClipboard } from './host/clipboard';

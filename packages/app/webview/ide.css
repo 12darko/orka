@@ -1,0 +1,1033 @@
+/* The desktop app's IDE layout (html[data-layout="ide"]): the session list on the left, the
+   conversation in a calm centered column, the task's plan and changes in a panel on the right.
+   Loaded after webview.css by the desktop page only; colors come from the desktop theme. */
+
+:root[data-layout='ide'] {
+  --font-base: 14px;
+  --radius-xs: 4px;
+  --radius-sm: 7px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-bubble: 18px;
+  --sidebar-w: 272px;
+  --aside-w: 360px;
+  /* The width of the conversation and of the message box. */
+  --column: 760px;
+  --pane-gap: 8px;
+  --hover: color-mix(in srgb, var(--fg) 7%, transparent);
+  --selected: color-mix(in srgb, var(--fg) 10%, transparent);
+  --hairline: color-mix(in srgb, var(--border) 70%, transparent);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 28px rgba(0, 0, 0, 0.1);
+  --shadow-pop: 0 4px 10px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.18);
+}
+
+:root[data-layout='ide'][data-theme='dark'],
+:root[data-layout='ide']:not([data-theme='light']) {
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 4px 10px rgba(0, 0, 0, 0.35), 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-layout='ide'][data-theme='system'] {
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 28px rgba(0, 0, 0, 0.1);
+    --shadow-pop: 0 4px 10px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.18);
+  }
+}
+
+:root[data-layout='ide'] body {
+  font-size: var(--font-base);
+  background: var(--window-bg, var(--bg));
+  -webkit-font-smoothing: antialiased;
+}
+
+:root[data-layout='ide'] #app {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  height: 100vh;
+}
+
+/* Each pane keeps its own column, also while another one is hidden or floats. */
+:root[data-layout='ide'] .sidebar {
+  grid-column: 1;
+}
+
+:root[data-layout='ide'] .main-col {
+  grid-column: 2;
+}
+
+:root[data-layout='ide'] .aside {
+  grid-column: 3;
+}
+
+/* ---------------------------------------------------------------- panes */
+
+:root[data-layout='ide'] .main-col,
+:root[data-layout='ide'] .aside {
+  min-height: 0;
+  margin: var(--pane-gap) var(--pane-gap) var(--pane-gap) 0;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+:root[data-layout='ide'] .main-col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+:root[data-layout='ide'] .aside {
+  width: var(--aside-w);
+  overflow-y: auto;
+}
+
+:root[data-layout='ide'] .aside .panel {
+  max-height: none;
+  overflow: visible;
+  padding: 16px 18px 18px;
+  border-bottom-color: var(--hairline);
+}
+
+:root[data-layout='ide'] .aside .panel:last-child {
+  border-bottom: none;
+}
+
+:root[data-layout='ide'] .aside .panel-head {
+  font-size: var(--fs-13);
+}
+
+:root[data-layout='ide'] .aside .steps li,
+:root[data-layout='ide'] .aside .changes .file {
+  font-size: var(--fs-13);
+}
+
+/* ---------------------------------------------------------------- session list */
+
+.sidebar {
+  width: var(--sidebar-w);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 10px 10px;
+}
+
+.side-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 2px 2px 10px 8px;
+  font-size: var(--fs-15);
+  color: var(--fg-strong);
+}
+
+.side-logo {
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+
+.side-new,
+.side-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 8px;
+  font-size: var(--fs-13);
+  border-radius: var(--radius-sm);
+}
+
+.side-new {
+  font-weight: 600;
+  color: var(--fg-strong);
+  background: none;
+  border: none;
+}
+
+.side-new:hover {
+  background: var(--hover);
+}
+
+.side-new-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--vscode-button-foreground, #fff);
+  background: var(--vscode-button-background, var(--accent));
+}
+
+.side-new-icon .icon {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
+}
+
+.side-search {
+  color: var(--muted);
+}
+
+.side-search .icon {
+  margin: 0 4px;
+}
+
+.side-search:focus-within {
+  background: var(--hover);
+}
+
+.side-search input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0;
+  font-size: var(--fs-13);
+  color: var(--fg);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.side-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 10px -4px 0;
+  padding: 0 4px;
+}
+
+.side-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.side-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 4px 0 8px;
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.side-group-head .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.side-group-head .icon-btn {
+  width: 22px;
+  height: 22px;
+  opacity: 0;
+}
+
+.side-group-head:hover .icon-btn,
+.side-group-head .icon-btn:focus-visible {
+  opacity: 1;
+}
+
+.side-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.side-item:hover {
+  background: var(--hover);
+}
+
+.side-item.current {
+  background: var(--selected);
+}
+
+.side-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  font-size: var(--fs-13);
+  text-align: left;
+  color: var(--fg);
+  background: none;
+  border: none;
+}
+
+.side-item.current .side-open {
+  color: var(--fg-strong);
+}
+
+.side-item.draft .side-open {
+  cursor: default;
+}
+
+.side-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.side-item:hover .side-title {
+  /* Room for the delete button. */
+  padding-right: 22px;
+}
+
+.side-del {
+  position: absolute;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  opacity: 0;
+}
+
+.side-item:hover .side-del,
+.side-del:focus-visible {
+  opacity: 1;
+}
+
+.run-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* Closed: a narrow rail of icons instead of the list. */
+.side-rail {
+  display: none;
+}
+
+.sidebar.collapsed {
+  width: auto;
+  padding: 12px 8px 10px;
+}
+
+.sidebar.collapsed > :not(.side-rail) {
+  display: none;
+}
+
+.sidebar.collapsed > .side-rail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.side-rail .icon-btn {
+  width: 36px;
+  height: 36px;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+
+.side-rail .icon-btn:hover {
+  color: var(--fg-strong);
+}
+
+.side-rail .icon-btn .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.rail-new .icon-btn {
+  color: var(--vscode-button-foreground, #fff);
+  background: var(--vscode-button-background, var(--accent));
+  border-radius: 50%;
+}
+
+.rail-new .icon-btn:hover {
+  color: var(--vscode-button-foreground, #fff);
+  background: var(--vscode-button-hoverBackground, var(--accent));
+}
+
+.side-empty {
+  padding: 4px 10px;
+  font-size: var(--fs-12);
+  color: var(--muted);
+}
+
+.side-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+.side-foot-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.side-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding: 0 10px;
+  font-size: var(--fs-13);
+  color: var(--fg);
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+}
+
+.side-link:hover {
+  background: var(--hover);
+}
+
+.theme-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--hover);
+  border-radius: var(--radius-sm);
+}
+
+.theme-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+}
+
+.theme-switch button.on {
+  color: var(--fg-strong);
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+/* ---------------------------------------------------------------- title bar */
+
+:root[data-layout='ide'] .topbar {
+  height: 50px;
+  gap: 6px;
+  padding: 0 12px 0 20px;
+  border-bottom: none;
+}
+
+:root[data-layout='ide'] .topbar .icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+}
+
+:root[data-layout='ide'] .topbar .icon-btn:first-child {
+  margin-left: -8px;
+}
+
+.session-head {
+  min-width: 120px;
+  gap: 9px;
+  font-size: var(--fs-13);
+}
+
+.session-head[data-phase='idle'] .dot {
+  display: none;
+}
+
+.session-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--fg-strong);
+}
+
+.session-head .phase-label {
+  flex: none;
+  color: var(--muted);
+}
+
+/* The session list shows the folders; here it is a quiet label that still switches folders. */
+:root[data-layout='ide'] .topbar .folder-btn,
+.usage-btn {
+  flex: 0 1 auto;
+  max-width: 200px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: var(--fs-12-5);
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+}
+
+.usage-btn {
+  flex: none;
+}
+
+:root[data-layout='ide'] .topbar .folder-btn:hover,
+.usage-btn:hover,
+.usage-btn.open {
+  color: var(--fg);
+  background: var(--hover);
+}
+
+:root[data-layout='ide'] .topbar .aside-btn {
+  width: auto;
+  min-width: 30px;
+  gap: 5px;
+  padding: 0 7px;
+}
+
+.aside-btn.on {
+  color: var(--accent);
+}
+
+.aside-btn .count {
+  font-size: var(--fs-11-5);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- conversation */
+
+:root[data-layout='ide'] .transcript {
+  gap: 20px;
+  /* Full-width scrolling, content in the centered column. */
+  padding: 12px max(28px, calc((100% - var(--column)) / 2)) 24px;
+}
+
+:root[data-layout='ide'] .msg.assistant {
+  font-size: calc(var(--font-base) + 1.5px);
+  line-height: 1.7;
+  color: var(--fg-strong);
+}
+
+:root[data-layout='ide'] .markdown p,
+:root[data-layout='ide'] .markdown ul,
+:root[data-layout='ide'] .markdown ol {
+  margin: 0.6em 0;
+}
+
+:root[data-layout='ide'] .markdown li + li {
+  margin-top: 0.25em;
+}
+
+:root[data-layout='ide'] .msg.user {
+  max-width: 78%;
+}
+
+:root[data-layout='ide'] .msg.user .bubble {
+  padding: 10px 16px;
+  font-size: calc(var(--font-base) + 0.5px);
+  line-height: 1.55;
+  color: var(--fg-strong);
+  background: var(--bubble, color-mix(in srgb, var(--fg) 7%, var(--bg)));
+  border: none;
+  border-radius: var(--radius-bubble);
+}
+
+:root[data-layout='ide'] .markdown pre,
+:root[data-layout='ide'] .tool pre {
+  padding: 12px 14px;
+  font-size: var(--fs-12-5);
+  border-radius: var(--radius);
+}
+
+:root[data-layout='ide'] .reasoning {
+  font-size: var(--fs-13);
+}
+
+/* Under a finished reply: copy it (shown on hover, like the "Go back" of your messages). */
+.msg-actions {
+  display: flex;
+  gap: 2px;
+  margin: 6px 0 0 -6px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.msg.assistant:hover .msg-actions,
+.msg-actions:focus-within {
+  opacity: 1;
+}
+
+.msg-actions .icon-btn {
+  width: 28px;
+  height: 28px;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+
+.msg-actions .icon-btn:hover {
+  color: var(--fg-strong);
+}
+
+/* Shown while the conversation is scrolled up. */
+.to-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 12px);
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+}
+
+.to-bottom:hover {
+  color: var(--fg-strong);
+}
+
+/* Tool calls read as quiet lines: what the agent did, with its result a click away. Cards remain for
+   what needs attention (approvals) and for sub-agents. */
+:root[data-layout='ide'] .transcript > .tool:not(.subagent):not(.ask-sup):not(.status-awaiting_approval) {
+  background: transparent;
+  border-color: transparent;
+}
+
+:root[data-layout='ide'] .transcript > .tool:not(.subagent):not(.ask-sup):not(.status-awaiting_approval) .tool-head {
+  padding: 4px 8px;
+  margin: 0 -8px;
+  font-size: var(--fs-13);
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+
+:root[data-layout='ide'] .transcript > .tool:not(.subagent):not(.ask-sup):not(.status-awaiting_approval) .tool-title {
+  color: var(--muted);
+}
+
+.tool-row > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.tool-row > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-row > summary:hover,
+.tool-row[open] > summary {
+  background: var(--hover);
+}
+
+.tool-row > summary:hover .tool-title,
+.tool-row[open] > summary .tool-title {
+  color: var(--fg);
+}
+
+:root[data-layout='ide'] .tool-row > pre {
+  max-height: 280px;
+  margin: 6px 0 4px 22px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+:root[data-layout='ide'] .transcript > .tool + .tool {
+  margin-top: -16px;
+}
+
+:root[data-layout='ide'] .tool,
+:root[data-layout='ide'] .notice,
+:root[data-layout='ide'] .supervisor-card-msg {
+  font-size: var(--fs-13);
+}
+
+:root[data-layout='ide'] .tool.status-awaiting_approval,
+:root[data-layout='ide'] .tool.subagent,
+:root[data-layout='ide'] .supervisor-card-msg {
+  border-radius: var(--radius-lg);
+}
+
+:root[data-layout='ide'] .tool.status-awaiting_approval .tool-head,
+:root[data-layout='ide'] .tool.subagent .tool-head {
+  padding: 9px 14px;
+}
+
+:root[data-layout='ide'] .approval {
+  padding: 10px 14px 14px;
+}
+
+:root[data-layout='ide'] .notice {
+  padding: 8px 12px;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-radius: var(--radius);
+}
+
+/* ---------------------------------------------------------------- message box */
+
+:root[data-layout='ide'] .composer {
+  width: min(var(--column), calc(100% - 32px));
+  margin: 0 auto 16px;
+  padding: 12px 10px 10px 16px;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+}
+
+:root[data-layout='ide'] .composer:focus-within {
+  border-color: color-mix(in srgb, var(--fg) 22%, transparent);
+}
+
+:root[data-layout='ide'] .composer textarea {
+  min-height: 44px;
+  padding: 4px 6px 4px 0;
+  font-size: calc(var(--font-base) + 1px);
+  line-height: 1.5;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+:root[data-layout='ide'] .composer-row {
+  gap: 4px;
+}
+
+.composer-add {
+  width: 32px;
+  height: 32px;
+  margin-left: -6px;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+}
+
+.composer-add:hover,
+.composer-add[aria-expanded='true'] {
+  color: var(--fg-strong);
+}
+
+.composer-mode select {
+  height: 32px;
+  max-width: 170px;
+  /* As wide as the chosen mode, with the arrow right after it. */
+  field-sizing: content;
+  padding: 0 6px 0 10px;
+  font-size: var(--fs-12-5);
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.composer-mode select:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+
+.composer-agent {
+  min-width: 0;
+  display: flex;
+}
+
+:root[data-layout='ide'] .composer-agent .agent-btn {
+  max-width: 240px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: var(--fs-12-5);
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+}
+
+:root[data-layout='ide'] .composer-agent .agent-btn:hover,
+:root[data-layout='ide'] .composer-agent .agent-btn.open {
+  color: var(--fg);
+  background: var(--hover);
+}
+
+:root[data-layout='ide'] .composer-agent .agent-btn.warn {
+  color: var(--warn);
+}
+
+/* A round send button with just its icon. */
+:root[data-layout='ide'] #send {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  margin-left: 4px;
+  border-radius: 50%;
+}
+
+:root[data-layout='ide'] #send span {
+  display: none;
+}
+
+:root[data-layout='ide'] #send .icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+}
+
+:root[data-layout='ide'] #send.danger .icon {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+/* Popovers over the message box: suggestions, the + menu and the agents. */
+:root[data-layout='ide'] .suggest,
+.composer-menu,
+:root[data-layout='ide'] .composer > .agents-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 15;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+:root[data-layout='ide'] .suggest {
+  padding: 6px;
+}
+
+.composer-menu {
+  right: auto;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  font-size: var(--fs-13);
+  text-align: left;
+  color: var(--fg);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+
+.menu-hint {
+  margin-left: auto;
+  font-size: var(--fs-12);
+  color: var(--muted);
+}
+
+:root[data-layout='ide'] .composer > .agents-panel {
+  max-height: min(62vh, 620px);
+  padding: 14px;
+}
+
+/* Token usage drops down from the title bar. */
+:root[data-layout='ide'] .main-col > .usage-panel {
+  position: absolute;
+  top: 48px;
+  right: 14px;
+  z-index: 12;
+  width: min(440px, calc(100% - 28px));
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+/* ---------------------------------------------------------------- a new session */
+
+/* The greeting and the message box in the middle of the pane, suggestions under them. */
+:root[data-layout='ide'] .main-col.is-empty .transcript {
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding-bottom: 20px;
+  overflow: visible;
+}
+
+:root[data-layout='ide'] .main-col.is-empty .starters,
+:root[data-layout='ide'] .main-col.is-empty .composer:has(+ .starters[hidden]) {
+  margin-bottom: auto;
+}
+
+:root[data-layout='ide'] .main-col.is-empty .composer textarea {
+  min-height: 64px;
+}
+
+.starters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: min(var(--column), calc(100% - 32px));
+  margin: 0 auto 24px;
+}
+
+.starter {
+  max-width: 100%;
+  padding: 7px 14px;
+  font-size: var(--fs-12-5);
+  color: var(--muted);
+  text-align: left;
+  background: none;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+}
+
+.starter:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+
+:root[data-layout='ide'] .empty {
+  margin: 0 auto;
+  max-width: 600px;
+  padding: 0 8px;
+  text-align: center;
+}
+
+:root[data-layout='ide'] .empty .logo {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 16px;
+}
+
+:root[data-layout='ide'] .empty h2 {
+  margin-bottom: 6px;
+  font-size: calc(var(--font-base) * 2);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+:root[data-layout='ide'] .empty .empty-intro {
+  display: none;
+}
+
+:root[data-layout='ide'] .empty p {
+  margin: 8px 0 18px;
+  line-height: 1.6;
+}
+
+:root[data-layout='ide'] .empty .callout {
+  margin: 18px 0 0;
+  text-align: left;
+  border-radius: var(--radius);
+}
+
+:root[data-layout='ide'] .empty .examples {
+  display: grid;
+  gap: 8px;
+  text-align: left;
+}
+
+:root[data-layout='ide'] .example {
+  padding: 11px 14px;
+  border-radius: var(--radius);
+}
+
+/* ---------------------------------------------------------------- settings and history */
+
+:root[data-layout='ide'] .tabs,
+:root[data-layout='ide'] .settings-body {
+  width: 100%;
+  max-width: calc(var(--column) + 48px);
+  margin: 0 auto;
+}
+
+:root[data-layout='ide'] .settings-body {
+  padding: 20px 24px 28px;
+  gap: 14px;
+}
+
+:root[data-layout='ide'] .tabs {
+  border-bottom: none;
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+
+:root[data-layout='ide'] .tabs button {
+  height: 42px;
+  font-size: var(--fs-13);
+}
+
+:root[data-layout='ide'] .card {
+  padding: 14px;
+  gap: 10px;
+  border-color: var(--hairline);
+}
+
+/* ---------------------------------------------------------------- narrow windows */
+
+@media (max-width: 1100px) {
+  :root[data-layout='ide'] {
+    --sidebar-w: 240px;
+    --aside-w: 320px;
+  }
+}
+
+/* The side panel floats over the conversation instead of squeezing it. */
+@media (max-width: 960px) {
+  :root[data-layout='ide'] .aside {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    box-shadow: var(--shadow-pop);
+  }
+}
+
+@media (max-width: 720px) {
+  :root[data-layout='ide'] .sidebar:not(.collapsed) {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 30;
+    background: var(--window-bg, var(--bg));
+    box-shadow: var(--shadow-pop);
+  }
+
+  :root[data-layout='ide'] .main-col {
+    margin-left: var(--pane-gap);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-dot {
+    animation: none;
+  }
+}
