@@ -128,6 +128,17 @@ const CMD_META = /([()\][%!^"`<>&|;, *?])/g;
  * because cmd parses the line once and again when the batch file passes %* on.
  */
 export function cmdArgument(arg: string): string {
-  const quoted = `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
+  // A loop, not a regex: a long run of backslashes must stay linear.
+  let quoted = '"';
+  let slashes = 0;
+  for (const c of arg) {
+    if (c === '\\') {
+      slashes++;
+      continue;
+    }
+    quoted += '\\'.repeat(c === '"' ? slashes * 2 + 1 : slashes) + c;
+    slashes = 0;
+  }
+  quoted += `${'\\'.repeat(slashes * 2)}"`;
   return quoted.replace(CMD_META, '^$1').replace(CMD_META, '^$1');
 }

@@ -159,8 +159,19 @@ const DIR_CHANGE = /^(cd|chdir|pushd|popd|set-location|sl|push-location|pop-loca
 const RUNS_GIT = /(^|[\s;&|(`'"\\/])git(\.exe|\.cmd|\.bat|\.com)?(['"\s]|$)/i;
 /** Forms that look like grouping but run nothing: ${name}, ${env:NAME}, git's HEAD@{1} and @{u}. */
 const INERT_BRACES = /\$\{[A-Za-z_][\w:]*\}|@\{[\w.:/-]*\}/g;
-/** cmd's substring and replace forms (%PATH:~0,0%, %PATH:a=%) make characters the line does not show, separators too. */
-const CMD_SUBSTRING = /%[^%\s]*:(~|[^%]*=)[^%]*%/;
+/**
+ * cmd's substring and replace forms (%PATH:~0,0%, %PATH:a=%) make characters the line does not
+ * show, separators too: text between two percent signs with a name, a colon, then ~ or =. A scan,
+ * not a regex, so a long run of percent signs and colons stays linear.
+ */
+function cmdSubstring(line: string): boolean {
+  const parts = line.split('%');
+  for (let i = 1; i < parts.length - 1; i++) {
+    const colon = parts[i].indexOf(':');
+    if (colon >= 0 && !/\s/.test(parts[i].slice(0, colon)) && /[~=]/.test(parts[i].slice(colon + 1))) return true;
+  }
+  return false;
+}
 /** Redirections that write no file: copying or closing a stream (2>&1, >&2, 2>&-), or into the null device. */
 const HARMLESS_REDIRECT = /[\d*]?>&(\d+|-)|[\d*&]?>{1,2}\s*(\$null|\/dev\/null|nul)(?![\w./\\:-])/gi;
 
@@ -266,8 +277,9 @@ export function mayRunGit(command: string): boolean {
  * them alike.
  */
 function startsOtherPrograms(line: string): boolean {
-  if (/[`\u0085\u2028\u2029]|\r(?!\n)/.test(line) || CMD_SUBSTRING.test(line)) return true;
-  if (line.replace(/&&|\d*>&\d*|&>/g, '').includes('&')) return true;
+  if (/[`\u0085\u2028\u2029]|\r(?!\n)/.test(line) || cmdSubstring(line)) return true;
+  // The & of &&, 2>&1 and &> is no call; the digits around a redirection don't matter here.
+  if (line.replace(/&&|>&|&>/g, '').includes('&')) return true;
   const text = line.replace(INERT_BRACES, '');
   const tracksQuotes = !quotesAmbiguous(text);
   let quote = '';

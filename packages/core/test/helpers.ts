@@ -6,7 +6,8 @@ import type { AssistantMessage, ChatMessage } from '../src/types';
 
 export function tempWorkspace(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(path.join(tmpdir(), 'ai-orch-test-'));
-  return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  // Windows: a virus scanner or the search indexer can hold the folder for a moment.
+  return { root, cleanup: () => rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 
 type Step = (request: ChatRequest) => AssistantMessage['content'] | ChatResponse;
